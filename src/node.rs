@@ -16,10 +16,10 @@ pub enum Node {
     BlockExpression(Vec<Node>),
     RangeIterator(Box<Node>, Box<Node>), // temporary
     AssignmentExpression(String, Box<Node>),
-    AdditiveExpression(Box<Node>, PunctuatorKind, Box<Node>),
-    MultiplicativeExpression(Box<Node>, PunctuatorKind, Box<Node>),
+    BinaryExpression(Box<Node>, PunctuatorKind, Box<Node>),
     UnaryExpression(PunctuatorKind, Box<Node>),
     CallExpression(Box<Node>, Vec<Node>),
-    NumericLiteral(f64),
+    Number(f64),
+    Bool(bool),
     Identifier(String),
 }

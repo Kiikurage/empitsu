@@ -11,4 +11,7 @@ pub enum PunctuatorKind {
     SemiColon,
     Comma,
     Equal,
+    LogicalNot,
+    LogicalAnd,
+    LogicalOr,
 }

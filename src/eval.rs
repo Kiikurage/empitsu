@@ -5,8 +5,37 @@ use crate::node::Node;
 use crate::parser::parse;
 use crate::punctuator_kind::PunctuatorKind;
 
+#[derive(Debug, Clone, PartialEq)]
+enum Value {
+    Number(f64),
+    Bool(bool),
+}
+
+impl Value {
+    fn get_type(&self) -> &'static str {
+        match self {
+            Value::Number(_) => "number",
+            Value::Bool(_) => "bool",
+        }
+    }
+
+    fn as_number(&self) -> f64 {
+        match self {
+            Value::Number(value) => *value,
+            _ => panic!("TypeError: Expected type number, actual type {:?}", self.get_type()),
+        }
+    }
+
+    fn as_bool(&self) -> bool {
+        match self {
+            Value::Bool(value) => *value,
+            _ => panic!("TypeError: Expected type bool, actual type {:?}", self.get_type()),
+        }
+    }
+}
+
 struct Environment {
-    variables: HashMap<String, f64>,
+    variables: HashMap<String, Value>,
 }
 
 impl Environment {
@@ -16,17 +45,17 @@ impl Environment {
         }
     }
 
-    fn declare_variable(&mut self, name: &str, value: f64) {
-        self.variables.insert(name.to_string(), value);
+    fn declare_variable(&mut self, name: &str, value: &Value) {
+        self.variables.insert(name.to_string(), value.clone());
     }
 
-    fn get_variable(&self, name: &str) -> Option<&f64> {
+    fn get_variable(&self, name: &str) -> Option<&Value> {
         self.variables.get(name)
     }
 
-    fn set_variable(&mut self, name: &str, value: f64) -> Result<(), String> {
+    fn set_variable(&mut self, name: &str, value: &Value) -> Result<(), String> {
         if self.variables.contains_key(name) {
-            self.variables.insert(name.to_string(), value);
+            self.variables.insert(name.to_string(), value.clone());
             Ok(())
         } else {
             Err(format!("Undefined variable: {}", name))
@@ -43,10 +72,10 @@ impl VM {
         VM { environments: vec![Environment::new()] }
     }
 
-    fn eval(&mut self, node: &Node) -> Result<f64, String> {
+    fn eval(&mut self, node: &Node) -> Result<Value, String> {
         match node {
             Node::Program(nodes) => {
-                let mut ret = 0.0;
+                let mut ret = Value::Number(0.0);
                 for node in nodes {
                     ret = self.eval(node)?;
                 }
@@ -54,22 +83,22 @@ impl VM {
             }
 
             // Statement
-            Node::EmptyStatement => Ok(0.0),
+            Node::EmptyStatement => Ok(Value::Number(0.0)),
             Node::IfStatement(condition, true_branch, false_branch) => {
-                let condition = self.eval(condition)?;
-                if condition != 0.0 {
+                let condition = self.eval(condition)?.as_bool();
+                if condition {
                     self.eval(true_branch)
                 } else {
                     match false_branch {
                         Some(false_branch) => self.eval(false_branch),
-                        None => Ok(0.0),
+                        None => Ok(Value::Number(0.0)),
                     }
                 }
             }
             Node::BlockStatement(nodes) => {
                 self.enter_new_environment();
 
-                let mut ret = 0.0;
+                let mut ret = Value::Number(0.0);
                 for node in nodes {
                     ret = self.eval(node)?;
                 }
@@ -80,10 +109,10 @@ impl VM {
             Node::VariableDeclaration(name, value) => {
                 let value = match value {
                     Some(value) => self.eval(value)?,
-                    None => 0.0,
+                    None => Value::Number(0.0),
                 };
-                self.declare_variable(name, value);
-                Ok(0.0)
+                self.declare_variable(name, &value);
+                Ok(Value::Number(0.0))
             }
             Node::ForStatement(variable, iterator, body) => {
                 self.enter_new_environment();
@@ -94,28 +123,28 @@ impl VM {
                     }
                     _ => return Err("Unsupported iterator type".to_string())
                 };
-                let mut i = start;
-                self.declare_variable(variable, start);
-                while i < end {
-                    self.set_variable(variable, i)?;
+                let mut i = start.as_number();
+                self.declare_variable(variable, &start);
+                while i < end.as_number() {
+                    self.set_variable(variable, &Value::Number(i))?;
                     self.eval(body)?;
                     i += 1f64;
                 }
 
                 self.exit_environment();
-                Ok(0.0)
+                Ok(Value::Number(0.0))
             }
 
             // Expression
             Node::IfExpression(condition, true_branch, false_branch) => {
-                let condition = self.eval(condition)?;
+                let condition = self.eval(condition)?.as_bool();
 
-                if condition != 0.0 { self.eval(true_branch) } else { self.eval(false_branch) }
+                if condition { self.eval(true_branch) } else { self.eval(false_branch) }
             }
             Node::BlockExpression(nodes) => {
                 self.enter_new_environment();
 
-                let mut ret = 0.0;
+                let mut ret = Value::Number(0.0);
                 for node in nodes {
                     ret = self.eval(node)?;
                 }
@@ -125,26 +154,20 @@ impl VM {
             }
             Node::AssignmentExpression(name, value) => {
                 let value = self.eval(value)?;
-                self.set_variable(name, value)?;
+                self.set_variable(name, &value)?;
                 Ok(value)
             }
-            Node::AdditiveExpression(left, operator, right) => {
+            Node::BinaryExpression(left, operator, right) => {
                 let left = self.eval(left)?;
                 let right = self.eval(right)?;
 
                 match operator {
-                    PunctuatorKind::Plus => Ok(left + right),
-                    PunctuatorKind::Minus => Ok(left - right),
-                    _ => Err(format!("Unexpected operator: {:?}", operator)),
-                }
-            }
-            Node::MultiplicativeExpression(left, operator, right) => {
-                let left = self.eval(left)?;
-                let right = self.eval(right)?;
-
-                match operator {
-                    PunctuatorKind::Multiply => Ok(left * right),
-                    PunctuatorKind::Divide => Ok(left / right),
+                    PunctuatorKind::Plus => Ok(Value::Number(left.as_number() + right.as_number())),
+                    PunctuatorKind::Minus => Ok(Value::Number(left.as_number() - right.as_number())),
+                    PunctuatorKind::Multiply => Ok(Value::Number(left.as_number() * right.as_number())),
+                    PunctuatorKind::Divide => Ok(Value::Number(left.as_number() / right.as_number())),
+                    PunctuatorKind::LogicalOr => Ok(Value::Bool(left.as_bool() || right.as_bool())),
+                    PunctuatorKind::LogicalAnd => Ok(Value::Bool(left.as_bool() && right.as_bool())),
                     _ => Err(format!("Unexpected operator: {:?}", operator)),
                 }
             }
@@ -152,8 +175,8 @@ impl VM {
                 let operand = self.eval(operand)?;
 
                 match operator {
-                    PunctuatorKind::Plus => Ok(operand),
-                    PunctuatorKind::Minus => Ok(-operand),
+                    PunctuatorKind::Plus => Ok(Value::Number(operand.as_number())),
+                    PunctuatorKind::Minus => Ok(Value::Number(-operand.as_number())),
                     _ => Err(format!("Unexpected operator: {:?}", operator)),
                 }
             }
@@ -161,16 +184,29 @@ impl VM {
                 match callee.deref() {
                     Node::Identifier(name) => {
                         match name.as_str() {
-                            "double" => {
+                            "number" => {
                                 let val = self.eval(arguments.first().unwrap())?;
-                                Ok(val * 2f64)
+                                match val {
+                                    Value::Number(value) => Ok(Value::Number(value)),
+                                    Value::Bool(value) => Ok(Value::Number(if value { 1.0 } else { 0.0 })),
+                                }
+                            }
+                            "bool" => {
+                                let val = self.eval(arguments.first().unwrap())?;
+                                match val {
+                                    Value::Number(value) => Ok(Value::Bool(value != 0.0)),
+                                    Value::Bool(value) => Ok(Value::Bool(value)),
+                                }
                             }
                             "print" => {
                                 for argument in arguments {
                                     let value = self.eval(argument)?;
-                                    println!("{}", value);
+                                    match value {
+                                        Value::Number(value) => println!("{}", value),
+                                        Value::Bool(value) => println!("{}", value),
+                                    }
                                 }
-                                Ok(0.0)
+                                Ok(Value::Number(0.0))
                             }
                             _ => Err(format!("Unknown function: {}", name))
                         }
@@ -178,7 +214,8 @@ impl VM {
                     _ => Err(format!("Failed to call {:?}", callee))
                 }
             }
-            Node::NumericLiteral(value) => Ok(*value),
+            Node::Number(value) => Ok(Value::Number(*value)),
+            Node::Bool(value) => Ok(Value::Bool(*value)),
             Node::Identifier(name) => self.get_variable(name),
 
             // tmp
@@ -196,24 +233,24 @@ impl VM {
         self.environments.pop();
     }
 
-    fn declare_variable(&mut self, name: &str, value: f64) {
+    fn declare_variable(&mut self, name: &str, value: &Value) {
         match self.environments.last_mut() {
-            Some(environment) => environment.declare_variable(name, value),
+            Some(environment) => environment.declare_variable(name, &value),
             None => panic!("No environment"),
         }
     }
 
-    fn get_variable(&self, name: &String) -> Result<f64, String> {
+    fn get_variable(&self, name: &String) -> Result<Value, String> {
         for environment in self.environments.iter().rev() {
             if let Some(value) = environment.get_variable(name) {
-                return Ok(*value);
+                return Ok(value.clone());
             }
         }
 
         Err(format!("Undefined variable: {}", name))
     }
 
-    fn set_variable(&mut self, name: &String, value: f64) -> Result<(), String> {
+    fn set_variable(&mut self, name: &String, value: &Value) -> Result<(), String> {
         for environment in self.environments.iter_mut().rev() {
             if environment.set_variable(name, value).is_ok() {
                 return Ok(());
@@ -224,33 +261,41 @@ impl VM {
     }
 }
 
-pub fn eval(input: &str) -> Result<f64, String> {
+pub fn eval(input: &str) -> Result<Value, String> {
     VM::new().eval(&parse(input)?)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::eval;
+    use super::{eval, Value};
 
     #[test]
     fn test_eval() {
-        assert_eq!(eval("1+2").unwrap(), 3.0);
-        assert_eq!(eval("1+2*\n3").unwrap(), 7.0);
-        assert_eq!(eval("(1+2)*3").unwrap(), 9.0);
-        assert_eq!(eval("print(1)").unwrap(), 0.0);
-        assert_eq!(eval("double(1)+double(double(3))").unwrap(), 14.0);
-        assert_eq!(eval("{1+2}").unwrap(), 3.0);
-        assert_eq!(eval("if (1) 2 else 3").unwrap(), 2.0);
-        assert_eq!(eval("if (double(3)) 2 else 3").unwrap(), 2.0);
-        assert_eq!(eval("if (1) { print(123); 2 } else { 3 }").unwrap(), 2.0);
-        assert_eq!(eval("if (1) 2 else 3*3").unwrap(), 2.0);
-        assert_eq!(eval("1 + if (0) 2 else 3 * 3").unwrap(), 10.0);
-        assert_eq!(eval("1 + if (0) 2 else if (0) 3 else 4").unwrap(), 5.0);
-        assert_eq!(eval("let x; if (x) 1 else 2").unwrap(), 2.0);
-        assert_eq!(eval("let x=1; if (x) 1 else 2").unwrap(), 1.0);
-        assert_eq!(eval("let x=1; let y=if (x) 2 else 3; let z=y*y; z").unwrap(), 4.0);
-        assert_eq!(eval("let x=1; x=2; x").unwrap(), 2.0);
-        assert_eq!(eval("let x=5; x=x*x; x").unwrap(), 25.0);
+        assert_eq!(eval("1+2").unwrap(), Value::Number(3.0));
+        assert_eq!(eval("1+2*\n3").unwrap(), Value::Number(7.0));
+        assert_eq!(eval("(1+2)*3").unwrap(), Value::Number(9.0));
+        assert_eq!(eval("print(1)").unwrap(), Value::Number(0.0));
+        assert_eq!(eval("number(1)+number(true)").unwrap(), Value::Number(2.0));
+        assert_eq!(eval("{1+2}").unwrap(), Value::Number(3.0));
+        assert_eq!(eval("if (true) 2 else 3").unwrap(), Value::Number(2.0));
+        assert_eq!(eval("if (true) 2 else 3").unwrap(), Value::Number(2.0));
+        assert_eq!(eval("if (true) { print(123); 2 } else { 3 }").unwrap(), Value::Number(2.0));
+        assert_eq!(eval("if (true) 2 else 3*3").unwrap(), Value::Number(2.0));
+        assert_eq!(eval("1 + if (false) 2 else 3 * 3").unwrap(), Value::Number(10.0));
+        assert_eq!(eval("1 + if (false) 2 else if (false) 3 else 4").unwrap(), Value::Number(5.0));
+        assert_eq!(eval("let x=false; if (x) 1 else 2").unwrap(), Value::Number(2.0));
+        assert_eq!(eval("let x=true; if (x) 1 else 2").unwrap(), Value::Number(1.0));
+        assert_eq!(eval("let x=true; let y=if (x) 2 else 3; let z=y*y; z").unwrap(), Value::Number(4.0));
+        assert_eq!(eval("let x=1; x=2; x").unwrap(), Value::Number(2.0));
+        assert_eq!(eval("let x=5; x=x*x; x").unwrap(), Value::Number(25.0));
+        assert_eq!(eval("true && true").unwrap(), Value::Bool(true));
+        assert_eq!(eval("true && false").unwrap(), Value::Bool(false));
+        assert_eq!(eval("false && true").unwrap(), Value::Bool(false));
+        assert_eq!(eval("false && false").unwrap(), Value::Bool(false));
+        assert_eq!(eval("true || true").unwrap(), Value::Bool(true));
+        assert_eq!(eval("true || false").unwrap(), Value::Bool(true));
+        assert_eq!(eval("false || true").unwrap(), Value::Bool(true));
+        assert_eq!(eval("false || false").unwrap(), Value::Bool(false));
 
         assert_eq!(eval("\
         let x = 0;
@@ -259,7 +304,7 @@ mod tests {
             x = x + i;\
         }\
         x\
-        ").unwrap(), 45.0);
+        ").unwrap(), Value::Number(45.0));
     }
 
     #[test]
@@ -271,7 +316,7 @@ mod tests {
         }
         print(i)
         i
-        ").unwrap(), 100.0);
+        ").unwrap(), Value::Number(100.0));
     }
 
     #[test]
@@ -285,7 +330,7 @@ mod tests {
         }
         print(x)
         x
-        ").unwrap(), 0.0);
+        ").unwrap(), Value::Number(0.0));
     }
 
     #[test]
@@ -298,6 +343,25 @@ mod tests {
         }
         print(x)
         x
-        ").unwrap(), 100.0);
+        ").unwrap(), Value::Number(100.0));
+    }
+
+    mod built_in_functions {
+        #[test]
+        fn number() {
+            assert_eq!(super::eval("number(1)").unwrap(), super::Value::Number(1.0));
+            assert_eq!(super::eval("number(0)").unwrap(), super::Value::Number(0.0));
+            assert_eq!(super::eval("number(true)").unwrap(), super::Value::Number(1.0));
+            assert_eq!(super::eval("number(false)").unwrap(), super::Value::Number(0.0));
+        }
+
+        #[test]
+        fn bool() {
+            assert_eq!(super::eval("bool(1)").unwrap(), super::Value::Bool(true));
+            assert_eq!(super::eval("bool(0)").unwrap(), super::Value::Bool(false));
+            assert_eq!(super::eval("bool(100)").unwrap(), super::Value::Bool(true));
+            assert_eq!(super::eval("bool(true)").unwrap(), super::Value::Bool(true));
+            assert_eq!(super::eval("bool(false)").unwrap(), super::Value::Bool(false));
+        }
     }
 }

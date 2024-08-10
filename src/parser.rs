@@ -176,7 +176,7 @@ fn parse_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
         return Ok(Some(node));
     }
 
-    if let Some(node) = parse_additive_expression(tokens)? {
+    if let Some(node) = parse_logical_or_expression(tokens)? {
         return Ok(Some(node));
     }
 
@@ -221,6 +221,52 @@ fn parse_assignment_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, 
     Ok(Some(Node::AssignmentExpression(identifier.clone(), Box::new(value))))
 }
 
+fn parse_logical_or_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
+    let mut lhs = match parse_logical_and_expression(tokens)? {
+        Some(node) => node,
+        None => return Ok(None),
+    };
+
+    loop {
+        if !matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::LogicalOr))) {
+            break;
+        }
+        tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+
+        let rhs = match parse_logical_and_expression(tokens)? {
+            Some(node) => node,
+            None => return Err("Expected expression".to_string()),
+        };
+
+        lhs = Node::BinaryExpression(Box::new(lhs), PunctuatorKind::LogicalOr, Box::new(rhs));
+    }
+
+    Ok(Some(lhs))
+}
+
+fn parse_logical_and_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
+    let mut lhs = match parse_additive_expression(tokens)? {
+        Some(node) => node,
+        None => return Ok(None),
+    };
+
+    loop {
+        if !matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::LogicalAnd))) {
+            break;
+        }
+        tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+
+        let rhs = match parse_additive_expression(tokens)? {
+            Some(node) => node,
+            None => return Err("Expected expression".to_string()),
+        };
+
+        lhs = Node::BinaryExpression(Box::new(lhs), PunctuatorKind::LogicalAnd, Box::new(rhs));
+    }
+
+    Ok(Some(lhs))
+}
+
 fn parse_additive_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
     let mut lhs = match parse_multiplicative_expression(tokens)? {
         Some(node) => node,
@@ -245,7 +291,7 @@ fn parse_additive_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, St
             None => return Ok(None),
         };
 
-        lhs = Node::AdditiveExpression(Box::new(lhs), operator, Box::new(rhs));
+        lhs = Node::BinaryExpression(Box::new(lhs), operator, Box::new(rhs));
     }
 
     Ok(Some(lhs))
@@ -275,7 +321,7 @@ fn parse_multiplicative_expression(tokens: &mut Vec<Token>) -> Result<Option<Nod
             None => return Ok(None),
         };
 
-        lhs = Node::MultiplicativeExpression(Box::new(lhs), operator, Box::new(rhs));
+        lhs = Node::BinaryExpression(Box::new(lhs), operator, Box::new(rhs));
     }
 
     Ok(Some(lhs))
@@ -290,6 +336,10 @@ fn parse_unary_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, Strin
         Some(Token::Punctuator(PunctuatorKind::Minus)) => {
             tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
             PunctuatorKind::Minus
+        }
+        Some(Token::Punctuator(PunctuatorKind::LogicalNot)) => {
+            tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+            PunctuatorKind::LogicalNot
         }
         _ => return parse_statement_expression(tokens),
     };
@@ -432,7 +482,13 @@ fn parse_primary_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, Str
             let value = *value;
 
             tokens.remove(0);
-            Ok(Some(Node::NumericLiteral(value)))
+            Ok(Some(Node::Number(value)))
+        }
+        Some(Token::Bool(value)) => {
+            let value = *value;
+
+            tokens.remove(0);
+            Ok(Some(Node::Bool(value)))
         }
         _ => Ok(None),
     }
@@ -451,9 +507,9 @@ mod tests {
                     parse("if (1) 2 else 3"),
                     Ok(Node::Program(vec![
                         Node::IfStatement(
-                            Box::new(Node::NumericLiteral(1f64)),
-                            Box::new(Node::NumericLiteral(2f64)),
-                            Some(Box::new(Node::NumericLiteral(3f64))),
+                            Box::new(Node::Number(1f64)),
+                            Box::new(Node::Number(2f64)),
+                            Some(Box::new(Node::Number(3f64))),
                         ),
                     ]))
                 );
@@ -465,8 +521,8 @@ mod tests {
                     parse("if (1) 2"),
                     Ok(Node::Program(vec![
                         Node::IfStatement(
-                            Box::new(Node::NumericLiteral(1f64)),
-                            Box::new(Node::NumericLiteral(2f64)),
+                            Box::new(Node::Number(1f64)),
+                            Box::new(Node::Number(2f64)),
                             None,
                         ),
                     ]))
@@ -479,12 +535,12 @@ mod tests {
                     parse("if (1) 2 else if (3) 4 else 5"),
                     Ok(Node::Program(vec![
                         Node::IfStatement(
-                            Box::new(Node::NumericLiteral(1f64)),
-                            Box::new(Node::NumericLiteral(2f64)),
+                            Box::new(Node::Number(1f64)),
+                            Box::new(Node::Number(2f64)),
                             Some(Box::new(Node::IfStatement(
-                                Box::new(Node::NumericLiteral(3f64)),
-                                Box::new(Node::NumericLiteral(4f64)),
-                                Some(Box::new(Node::NumericLiteral(5f64))),
+                                Box::new(Node::Number(3f64)),
+                                Box::new(Node::Number(4f64)),
+                                Some(Box::new(Node::Number(5f64))),
                             ))),
                         ),
                     ]))
@@ -503,8 +559,8 @@ mod tests {
                     parse("{1 2}"),
                     Ok(Node::Program(vec![
                         Node::BlockStatement(vec![
-                            Node::NumericLiteral(1f64),
-                            Node::NumericLiteral(2f64),
+                            Node::Number(1f64),
+                            Node::Number(2f64),
                         ]),
                     ]))
                 );
@@ -528,10 +584,10 @@ mod tests {
                         Node::BlockStatement(vec![
                             Node::BlockStatement(vec![
                                 Node::BlockStatement(vec![]),
-                                Node::AdditiveExpression(
-                                    Box::new(Node::NumericLiteral(1f64)),
+                                Node::BinaryExpression(
+                                    Box::new(Node::Number(1f64)),
                                     PunctuatorKind::Plus,
-                                    Box::new(Node::NumericLiteral(2f64)),
+                                    Box::new(Node::Number(2f64)),
                                 ),
                                 Node::BlockStatement(vec![]),
                             ]),
@@ -560,7 +616,7 @@ mod tests {
                 assert_eq!(
                     parse("let x = 1"),
                     Ok(Node::Program(vec![
-                        Node::VariableDeclaration("x".to_string(), Some(Box::new(Node::NumericLiteral(1.0f64)))),
+                        Node::VariableDeclaration("x".to_string(), Some(Box::new(Node::Number(1.0f64)))),
                     ]))
                 );
             }
@@ -578,7 +634,7 @@ mod tests {
                         Node::ForStatement(
                             "i".to_string(),
                             Box::new(Node::Identifier("range".to_string())),
-                            Box::new(Node::NumericLiteral(1f64)),
+                            Box::new(Node::Number(1f64)),
                         ),
                     ]))
                 );
@@ -633,7 +689,7 @@ mod tests {
                             "i".to_string(),
                             Box::new(Node::Identifier("range".to_string())),
                             Box::new(Node::BlockStatement(vec![
-                                Node::NumericLiteral(1f64),
+                                Node::Number(1f64),
                             ])),
                         ),
                     ]))
@@ -653,13 +709,13 @@ mod tests {
                 assert_eq!(
                     parse("1 + if (1) 2 else 3"),
                     Ok(Node::Program(vec![
-                        Node::AdditiveExpression(
-                            Box::new(Node::NumericLiteral(1f64)),
+                        Node::BinaryExpression(
+                            Box::new(Node::Number(1f64)),
                             PunctuatorKind::Plus,
                             Box::new(Node::IfExpression(
-                                Box::new(Node::NumericLiteral(1f64)),
-                                Box::new(Node::NumericLiteral(2f64)),
-                                Box::new(Node::NumericLiteral(3f64)),
+                                Box::new(Node::Number(1f64)),
+                                Box::new(Node::Number(2f64)),
+                                Box::new(Node::Number(3f64)),
                             )),
                         )
                     ]))
@@ -679,16 +735,16 @@ mod tests {
                 assert_eq!(
                     parse("1 + if (2) 3 else if (4) 5 else 6"),
                     Ok(Node::Program(vec![
-                        Node::AdditiveExpression(
-                            Box::new(Node::NumericLiteral(1f64)),
+                        Node::BinaryExpression(
+                            Box::new(Node::Number(1f64)),
                             PunctuatorKind::Plus,
                             Box::new(Node::IfExpression(
-                                Box::new(Node::NumericLiteral(2f64)),
-                                Box::new(Node::NumericLiteral(3f64)),
+                                Box::new(Node::Number(2f64)),
+                                Box::new(Node::Number(3f64)),
                                 Box::new(Node::IfExpression(
-                                    Box::new(Node::NumericLiteral(4f64)),
-                                    Box::new(Node::NumericLiteral(5f64)),
-                                    Box::new(Node::NumericLiteral(6f64)),
+                                    Box::new(Node::Number(4f64)),
+                                    Box::new(Node::Number(5f64)),
+                                    Box::new(Node::Number(6f64)),
                                 )),
                             )),
                         ),
@@ -706,7 +762,7 @@ mod tests {
                 assert_eq!(
                     parse("x = 1"),
                     Ok(Node::Program(vec![
-                        Node::AssignmentExpression("x".to_string(), Box::new(Node::NumericLiteral(1f64))),
+                        Node::AssignmentExpression("x".to_string(), Box::new(Node::Number(1f64))),
                     ]))
                 );
             }
@@ -716,6 +772,82 @@ mod tests {
                 assert_eq!(
                     parse("x ="),
                     Err("Expected expression".to_string())
+                );
+            }
+        }
+
+        mod logical_or_expression {
+            use crate::node::Node;
+            use crate::parser::parse;
+            use crate::punctuator_kind::PunctuatorKind;
+
+            #[test]
+            fn logical_or() {
+                assert_eq!(
+                    parse("true || false"),
+                    Ok(Node::Program(vec![
+                        Node::BinaryExpression(
+                            Box::new(Node::Bool(true)),
+                            PunctuatorKind::LogicalOr,
+                            Box::new(Node::Bool(false)),
+                        )
+                    ]))
+                );
+            }
+
+            #[test]
+            fn prioritize_logical_and_over_logical_or() {
+                assert_eq!(
+                    parse("true || false && true"),
+                    Ok(Node::Program(vec![
+                        Node::BinaryExpression(
+                            Box::new(Node::Bool(true)),
+                            PunctuatorKind::LogicalOr,
+                            Box::new(Node::BinaryExpression(
+                                Box::new(Node::Bool(false)),
+                                PunctuatorKind::LogicalAnd,
+                                Box::new(Node::Bool(true)),
+                            )),
+                        )
+                    ]))
+                );
+            }
+        }
+
+        mod logical_and_expression {
+            use crate::node::Node;
+            use crate::parser::parse;
+            use crate::punctuator_kind::PunctuatorKind;
+
+            #[test]
+            fn logical_and() {
+                assert_eq!(
+                    parse("true && false"),
+                    Ok(Node::Program(vec![
+                        Node::BinaryExpression(
+                            Box::new(Node::Bool(true)),
+                            PunctuatorKind::LogicalAnd,
+                            Box::new(Node::Bool(false)),
+                        )
+                    ]))
+                );
+            }
+
+            #[test]
+            fn prioritize_additive_over_logical_and() {
+                assert_eq!(
+                    parse("true && false + 1"),
+                    Ok(Node::Program(vec![
+                        Node::BinaryExpression(
+                            Box::new(Node::Bool(true)),
+                            PunctuatorKind::LogicalAnd,
+                            Box::new(Node::BinaryExpression(
+                                Box::new(Node::Bool(false)),
+                                PunctuatorKind::Plus,
+                                Box::new(Node::Number(1f64)),
+                            )),
+                        )
+                    ]))
                 );
             }
         }
@@ -730,10 +862,10 @@ mod tests {
                 assert_eq!(
                     parse("1+2"),
                     Ok(Node::Program(vec![
-                        Node::AdditiveExpression(
-                            Box::new(Node::NumericLiteral(1f64)),
+                        Node::BinaryExpression(
+                            Box::new(Node::Number(1f64)),
                             PunctuatorKind::Plus,
-                            Box::new(Node::NumericLiteral(2f64)),
+                            Box::new(Node::Number(2f64)),
                         )
                     ]))
                 );
@@ -744,10 +876,10 @@ mod tests {
                 assert_eq!(
                     parse("1-2"),
                     Ok(Node::Program(vec![
-                        Node::AdditiveExpression(
-                            Box::new(Node::NumericLiteral(1f64)),
+                        Node::BinaryExpression(
+                            Box::new(Node::Number(1f64)),
                             PunctuatorKind::Minus,
-                            Box::new(Node::NumericLiteral(2f64)),
+                            Box::new(Node::Number(2f64)),
                         )
                     ]))
                 );
@@ -758,14 +890,14 @@ mod tests {
                 assert_eq!(
                     parse("1+2-3"),
                     Ok(Node::Program(vec![
-                        Node::AdditiveExpression(
-                            Box::new(Node::AdditiveExpression(
-                                Box::new(Node::NumericLiteral(1f64)),
+                        Node::BinaryExpression(
+                            Box::new(Node::BinaryExpression(
+                                Box::new(Node::Number(1f64)),
                                 PunctuatorKind::Plus,
-                                Box::new(Node::NumericLiteral(2f64)),
+                                Box::new(Node::Number(2f64)),
                             )),
                             PunctuatorKind::Minus,
-                            Box::new(Node::NumericLiteral(3f64)),
+                            Box::new(Node::Number(3f64)),
                         )
                     ]))
                 );
@@ -782,10 +914,10 @@ mod tests {
                 assert_eq!(
                     parse("1*2"),
                     Ok(Node::Program(vec![
-                        Node::MultiplicativeExpression(
-                            Box::new(Node::NumericLiteral(1f64)),
+                        Node::BinaryExpression(
+                            Box::new(Node::Number(1f64)),
                             PunctuatorKind::Multiply,
-                            Box::new(Node::NumericLiteral(2f64)),
+                            Box::new(Node::Number(2f64)),
                         )
                     ]))
                 );
@@ -796,10 +928,10 @@ mod tests {
                 assert_eq!(
                     parse("1/2"),
                     Ok(Node::Program(vec![
-                        Node::MultiplicativeExpression(
-                            Box::new(Node::NumericLiteral(1f64)),
+                        Node::BinaryExpression(
+                            Box::new(Node::Number(1f64)),
                             PunctuatorKind::Divide,
-                            Box::new(Node::NumericLiteral(2f64)),
+                            Box::new(Node::Number(2f64)),
                         )
                     ]))
                 );
@@ -810,14 +942,14 @@ mod tests {
                 assert_eq!(
                     parse("1*2/3"),
                     Ok(Node::Program(vec![
-                        Node::MultiplicativeExpression(
-                            Box::new(Node::MultiplicativeExpression(
-                                Box::new(Node::NumericLiteral(1f64)),
+                        Node::BinaryExpression(
+                            Box::new(Node::BinaryExpression(
+                                Box::new(Node::Number(1f64)),
                                 PunctuatorKind::Multiply,
-                                Box::new(Node::NumericLiteral(2f64)),
+                                Box::new(Node::Number(2f64)),
                             )),
                             PunctuatorKind::Divide,
-                            Box::new(Node::NumericLiteral(3f64)),
+                            Box::new(Node::Number(3f64)),
                         )
                     ]))
                 );
@@ -828,13 +960,13 @@ mod tests {
                 assert_eq!(
                     parse("1+2*3"),
                     Ok(Node::Program(vec![
-                        Node::AdditiveExpression(
-                            Box::new(Node::NumericLiteral(1f64)),
+                        Node::BinaryExpression(
+                            Box::new(Node::Number(1f64)),
                             PunctuatorKind::Plus,
-                            Box::new(Node::MultiplicativeExpression(
-                                Box::new(Node::NumericLiteral(2f64)),
+                            Box::new(Node::BinaryExpression(
+                                Box::new(Node::Number(2f64)),
                                 PunctuatorKind::Multiply,
-                                Box::new(Node::NumericLiteral(3f64)),
+                                Box::new(Node::Number(3f64)),
                             )),
                         )
                     ]))
@@ -846,14 +978,14 @@ mod tests {
                 assert_eq!(
                     parse("1*2+3"),
                     Ok(Node::Program(vec![
-                        Node::AdditiveExpression(
-                            Box::new(Node::MultiplicativeExpression(
-                                Box::new(Node::NumericLiteral(1f64)),
+                        Node::BinaryExpression(
+                            Box::new(Node::BinaryExpression(
+                                Box::new(Node::Number(1f64)),
                                 PunctuatorKind::Multiply,
-                                Box::new(Node::NumericLiteral(2f64)),
+                                Box::new(Node::Number(2f64)),
                             )),
                             PunctuatorKind::Plus,
-                            Box::new(Node::NumericLiteral(3f64)),
+                            Box::new(Node::Number(3f64)),
                         )
                     ]))
                 );
@@ -864,17 +996,17 @@ mod tests {
                 assert_eq!(
                     parse("1*2+3/4"),
                     Ok(Node::Program(vec![
-                        Node::AdditiveExpression(
-                            Box::new(Node::MultiplicativeExpression(
-                                Box::new(Node::NumericLiteral(1f64)),
+                        Node::BinaryExpression(
+                            Box::new(Node::BinaryExpression(
+                                Box::new(Node::Number(1f64)),
                                 PunctuatorKind::Multiply,
-                                Box::new(Node::NumericLiteral(2f64)),
+                                Box::new(Node::Number(2f64)),
                             )),
                             PunctuatorKind::Plus,
-                            Box::new(Node::MultiplicativeExpression(
-                                Box::new(Node::NumericLiteral(3f64)),
+                            Box::new(Node::BinaryExpression(
+                                Box::new(Node::Number(3f64)),
                                 PunctuatorKind::Divide,
-                                Box::new(Node::NumericLiteral(4f64)),
+                                Box::new(Node::Number(4f64)),
                             )),
                         )
                     ]))
@@ -894,7 +1026,7 @@ mod tests {
                     Ok(Node::Program(vec![
                         Node::UnaryExpression(
                             PunctuatorKind::Plus,
-                            Box::new(Node::NumericLiteral(1f64)),
+                            Box::new(Node::Number(1f64)),
                         )
                     ]))
                 );
@@ -907,7 +1039,7 @@ mod tests {
                     Ok(Node::Program(vec![
                         Node::UnaryExpression(
                             PunctuatorKind::Minus,
-                            Box::new(Node::NumericLiteral(1f64)),
+                            Box::new(Node::Number(1f64)),
                         )
                     ]))
                 );
@@ -926,12 +1058,12 @@ mod tests {
                 assert_eq!(
                     parse("1++1"),
                     Ok(Node::Program(vec![
-                        Node::AdditiveExpression(
-                            Box::new(Node::NumericLiteral(1f64)),
+                        Node::BinaryExpression(
+                            Box::new(Node::Number(1f64)),
                             PunctuatorKind::Plus,
                             Box::new(Node::UnaryExpression(
                                 PunctuatorKind::Plus,
-                                Box::new(Node::NumericLiteral(1f64)),
+                                Box::new(Node::Number(1f64)),
                             )),
                         ),
                     ]))
@@ -965,9 +1097,9 @@ mod tests {
                         Node::CallExpression(
                             Box::new(Node::Identifier("func".to_string())),
                             vec![
-                                Node::NumericLiteral(1f64),
-                                Node::NumericLiteral(2f64),
-                                Node::NumericLiteral(3f64),
+                                Node::Number(1f64),
+                                Node::Number(2f64),
+                                Node::Number(3f64),
                             ],
                         )
                     ]))
@@ -982,14 +1114,14 @@ mod tests {
                         Node::CallExpression(
                             Box::new(Node::Identifier("func".to_string())),
                             vec![
-                                Node::NumericLiteral(1f64),
-                                Node::MultiplicativeExpression(
-                                    Box::new(Node::NumericLiteral(2f64)),
+                                Node::Number(1f64),
+                                Node::BinaryExpression(
+                                    Box::new(Node::Number(2f64)),
                                     PunctuatorKind::Multiply,
-                                    Box::new(Node::AdditiveExpression(
-                                        Box::new(Node::NumericLiteral(3f64)),
+                                    Box::new(Node::BinaryExpression(
+                                        Box::new(Node::Number(3f64)),
                                         PunctuatorKind::Plus,
-                                        Box::new(Node::NumericLiteral(4f64)),
+                                        Box::new(Node::Number(4f64)),
                                     )),
                                 ),
                             ],
@@ -1008,11 +1140,11 @@ mod tests {
                             vec![
                                 Node::CallExpression(
                                     Box::new(Node::Identifier("g".to_string())),
-                                    vec![Node::NumericLiteral(1f64)],
+                                    vec![Node::Number(1f64)],
                                 ),
                                 Node::CallExpression(
                                     Box::new(Node::Identifier("h".to_string())),
-                                    vec![Node::NumericLiteral(2f64)],
+                                    vec![Node::Number(2f64)],
                                 ),
                             ],
                         )
@@ -1027,11 +1159,48 @@ mod tests {
             use crate::punctuator_kind::PunctuatorKind;
 
             #[test]
-            fn literal() {
+            fn number() {
                 assert_eq!(
                     parse("1"),
                     Ok(Node::Program(vec![
-                        Node::NumericLiteral(1f64),
+                        Node::Number(1f64),
+                    ]))
+                );
+            }
+
+            #[test]
+            fn bool_true() {
+                assert_eq!(
+                    parse("true"),
+                    Ok(Node::Program(vec![
+                        Node::Bool(true),
+                    ]))
+                );
+            }
+
+            #[test]
+            fn bool_false() {
+                assert_eq!(
+                    parse("false"),
+                    Ok(Node::Program(vec![
+                        Node::Bool(false),
+                    ]))
+                );
+            }
+
+            #[test]
+            fn bool_in_expression() {
+                assert_eq!(
+                    parse("-true+false"),
+                    Ok(Node::Program(vec![
+                        Node::BinaryExpression(
+                            Box::new(Node::UnaryExpression(
+                                PunctuatorKind::Minus,
+                                Box::new(Node::Bool(true)),
+                            )),
+                            PunctuatorKind::Plus,
+                            Box::new(Node::Bool(false)),
+                        ),
                     ]))
                 );
             }
@@ -1047,11 +1216,11 @@ mod tests {
             }
 
             #[test]
-            fn literal_with_paren() {
+            fn number_with_paren() {
                 assert_eq!(
                     parse("(1)"),
                     Ok(Node::Program(vec![
-                        Node::NumericLiteral(1f64),
+                        Node::Number(1f64),
                     ]))
                 );
             }
@@ -1061,17 +1230,17 @@ mod tests {
                 assert_eq!(
                     parse("(1+2)*(3+4)"),
                     Ok(Node::Program(vec![
-                        Node::MultiplicativeExpression(
-                            Box::new(Node::AdditiveExpression(
-                                Box::new(Node::NumericLiteral(1f64)),
+                        Node::BinaryExpression(
+                            Box::new(Node::BinaryExpression(
+                                Box::new(Node::Number(1f64)),
                                 PunctuatorKind::Plus,
-                                Box::new(Node::NumericLiteral(2f64)),
+                                Box::new(Node::Number(2f64)),
                             )),
                             PunctuatorKind::Multiply,
-                            Box::new(Node::AdditiveExpression(
-                                Box::new(Node::NumericLiteral(3f64)),
+                            Box::new(Node::BinaryExpression(
+                                Box::new(Node::Number(3f64)),
                                 PunctuatorKind::Plus,
-                                Box::new(Node::NumericLiteral(4f64)),
+                                Box::new(Node::Number(4f64)),
                             )),
                         )
                     ]))
@@ -1083,10 +1252,10 @@ mod tests {
                 assert_eq!(
                     parse("((1+((2))))"),
                     Ok(Node::Program(vec![
-                        Node::AdditiveExpression(
-                            Box::new(Node::NumericLiteral(1f64)),
+                        Node::BinaryExpression(
+                            Box::new(Node::Number(1f64)),
                             PunctuatorKind::Plus,
-                            Box::new(Node::NumericLiteral(2f64)),
+                            Box::new(Node::Number(2f64)),
                         ),
                     ]))
                 );
@@ -1114,10 +1283,10 @@ mod tests {
                         Node::ForStatement(
                             "x".to_string(),
                             Box::new(Node::RangeIterator(
-                                Box::new(Node::NumericLiteral(0f64)),
-                                Box::new(Node::NumericLiteral(10f64)),
+                                Box::new(Node::Number(0f64)),
+                                Box::new(Node::Number(10f64)),
                             )),
-                            Box::new(Node::NumericLiteral(1f64)),
+                            Box::new(Node::Number(1f64)),
                         ),
                     ]))
                 );
@@ -1132,13 +1301,13 @@ mod tests {
                             "x".to_string(),
                             Box::new(Node::RangeIterator(
                                 Box::new(Node::Identifier("y".to_string())),
-                                Box::new(Node::AdditiveExpression(
-                                    Box::new(Node::NumericLiteral(1f64)),
+                                Box::new(Node::BinaryExpression(
+                                    Box::new(Node::Number(1f64)),
                                     PunctuatorKind::Plus,
-                                    Box::new(Node::NumericLiteral(2f64)),
+                                    Box::new(Node::Number(2f64)),
                                 )),
                             )),
-                            Box::new(Node::NumericLiteral(1f64)),
+                            Box::new(Node::Number(1f64)),
                         ),
                     ]))
                 );

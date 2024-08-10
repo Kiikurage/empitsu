@@ -33,6 +33,21 @@ fn scan_token(input: &str) -> (&str, Option<Token>) {
         Some(';') => (chars.as_str(), Some(Token::Punctuator(PunctuatorKind::SemiColon))),
         Some(',') => (chars.as_str(), Some(Token::Punctuator(PunctuatorKind::Comma))),
         Some('=') => (chars.as_str(), Some(Token::Punctuator(PunctuatorKind::Equal))),
+        Some('!') => (chars.as_str(), Some(Token::Punctuator(PunctuatorKind::LogicalNot))),
+        Some('&') => {
+            if chars.next() == Some('&') {
+                (chars.as_str(), Some(Token::Punctuator(PunctuatorKind::LogicalAnd)))
+            } else {
+                (input, None)
+            }
+        }
+        Some('|') => {
+            if chars.next() == Some('|') {
+                (chars.as_str(), Some(Token::Punctuator(PunctuatorKind::LogicalOr)))
+            } else {
+                (input, None)
+            }
+        }
         Some('0'..='9') => scan_number(input),
         Some('a'..='z' | 'A'..='Z' | '_') => scan_identifier(input),
         _ => (input, None)
@@ -103,7 +118,13 @@ fn scan_identifier(mut input: &str) -> (&str, Option<Token>) {
         input = chars.as_str();
     }
 
-    (input, Some(Token::Identifier(identifier_name.iter().collect())))
+    let name = identifier_name.iter().collect::<String>();
+
+    match name.as_str() {
+        "true" => (input, Some(Token::Bool(true))),
+        "false" => (input, Some(Token::Bool(false))),
+        _ => (input, Some(Token::Identifier(name)))
+    }
 }
 
 
@@ -213,6 +234,41 @@ mod tests {
         fn test_semicolon() {
             assert_eq!(scan_token(";"), ("", Some(Token::Punctuator(PunctuatorKind::SemiColon))));
             assert_eq!(scan_token(";a"), ("a", Some(Token::Punctuator(PunctuatorKind::SemiColon))));
+        }
+
+        #[test]
+        fn test_logical_not() {
+            assert_eq!(scan_token("!"), ("", Some(Token::Punctuator(PunctuatorKind::LogicalNot))));
+            assert_eq!(scan_token("!a"), ("a", Some(Token::Punctuator(PunctuatorKind::LogicalNot))));
+        }
+
+        #[test]
+        fn test_logical_and() {
+            assert_eq!(scan_token("&&"), ("", Some(Token::Punctuator(PunctuatorKind::LogicalAnd))));
+            assert_eq!(scan_token("&&a"), ("a", Some(Token::Punctuator(PunctuatorKind::LogicalAnd))));
+        }
+
+        #[test]
+        fn test_logical_or() {
+            assert_eq!(scan_token("||"), ("", Some(Token::Punctuator(PunctuatorKind::LogicalOr))));
+            assert_eq!(scan_token("||a"), ("a", Some(Token::Punctuator(PunctuatorKind::LogicalOr))));
+        }
+    }
+
+    mod identifier {
+        use crate::lexer::scan_token;
+        use crate::token::Token;
+
+        #[test]
+        fn bool_true() {
+            assert_eq!(scan_token("true"), ("", Some(Token::Bool(true))));
+            assert_eq!(scan_token("truea"), ("", Some(Token::Identifier("truea".to_string()))));
+        }
+
+        #[test]
+        fn bool_false() {
+            assert_eq!(scan_token("false"), ("", Some(Token::Bool(false))));
+            assert_eq!(scan_token("falsea"), ("", Some(Token::Identifier("falsea".to_string()))));
         }
     }
 }
