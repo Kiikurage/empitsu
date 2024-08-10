@@ -1,6 +1,6 @@
 use crate::punctuator_kind::PunctuatorKind;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Node {
     Program(Vec<Node>),
 
@@ -8,8 +8,9 @@ pub enum Node {
     EmptyStatement,
     IfStatement(Box<Node>, Box<Node>, Option<Box<Node>>), // condition, true-branch, false-branch
     BlockStatement(Vec<Node>),
-    VariableDeclaration(String, Option<Box<Node>>), // name, initial_value
     ForStatement(String, Box<Node>, Box<Node>), // variable, iterator, body
+    VariableDeclaration(String, Option<Box<Node>>), // name, initial_value
+    FunctionDeclaration(String, Vec<String>, Box<Node>), // name, parameters, body
 
     // Expressions
     IfExpression(Box<Node>, Box<Node>, Box<Node>), // condition, true-branch, false-branch
@@ -24,3 +25,4 @@ pub enum Node {
     String(String),
     Identifier(String),
 }
+

@@ -37,11 +37,15 @@ fn parse_statement(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
         return Ok(Some(node));
     }
 
+    if let Some(node) = parse_for_statement(tokens)? {
+        return Ok(Some(node));
+    }
+
     if let Some(node) = parse_variable_declaration(tokens)? {
         return Ok(Some(node));
     }
 
-    if let Some(node) = parse_for_statement(tokens)? {
+    if let Some(node) = parse_function_declaration(tokens)? {
         return Ok(Some(node));
     }
 
@@ -99,32 +103,6 @@ fn parse_block_statement(tokens: &mut Vec<Token>) -> Result<Option<Node>, String
     }
 }
 
-fn parse_variable_declaration(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
-    if !matches!(tokens.first(), Some(Token::Identifier(ref name)) if name == "let") {
-        return Ok(None);
-    }
-    tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
-
-    let identifier = match tokens.first() {
-        Some(Token::Identifier(identifier)) => identifier.clone(),
-        _ => return Err("Expected identifier".to_string()),
-    };
-    tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
-
-    let value = if matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::Equal))) {
-        tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
-
-        match parse_expression(tokens)? {
-            Some(value) => Some(value),
-            None => return Err("Expected expression".to_string()),
-        }
-    } else {
-        None
-    };
-
-    Ok(Some(Node::VariableDeclaration(identifier, value.map(Box::new))))
-}
-
 fn parse_for_statement(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
     if !matches!(tokens.first(), Some(Token::Identifier(ref name)) if name == "for") {
         return Ok(None);
@@ -163,6 +141,73 @@ fn parse_for_statement(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> 
     };
 
     Ok(Some(Node::ForStatement(identifier, Box::new(iterator), Box::new(body))))
+}
+
+fn parse_variable_declaration(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
+    if !matches!(tokens.first(), Some(Token::Identifier(ref name)) if name == "let") {
+        return Ok(None);
+    }
+    tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+
+    let identifier = match tokens.first() {
+        Some(Token::Identifier(identifier)) => identifier.clone(),
+        _ => return Err("Expected identifier".to_string()),
+    };
+    tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+
+    let value = if matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::Equal))) {
+        tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+
+        match parse_expression(tokens)? {
+            Some(value) => Some(value),
+            None => return Err("Expected expression".to_string()),
+        }
+    } else {
+        None
+    };
+
+    Ok(Some(Node::VariableDeclaration(identifier, value.map(Box::new))))
+}
+
+fn parse_function_declaration(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
+    if !matches!(tokens.first(), Some(Token::Identifier(ref name)) if name == "function") {
+        return Ok(None);
+    }
+    tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+
+    let name = match tokens.first() {
+        Some(Token::Identifier(name)) => name.clone(),
+        _ => return Err("Expected identifier".to_string()),
+    };
+    tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+
+    if !matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::LeftParen))) {
+        return Err("Expected '('".to_string());
+    }
+    tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+
+    let mut parameters = Vec::new();
+    while let Some(Token::Identifier(identifier)) = tokens.first() {
+        parameters.push(identifier.clone());
+        tokens.remove(0);
+
+        if !matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::Comma))) {
+            break;
+        }
+        tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+    }
+
+    if !matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::RightParen))) {
+        return Err("Expected ')'".to_string());
+    }
+    tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+
+    let block = match parse_block_statement(tokens)? {
+        Some(block) => block,
+        None => return Err("Expected block".to_string()),
+    };
+
+    Ok(Some(Node::FunctionDeclaration(name, parameters, Box::new(block))))
 }
 
 fn parse_expression_statement(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {

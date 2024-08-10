@@ -1,5 +1,7 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ops::Deref;
+use std::rc::Rc;
 
 use crate::node::Node;
 use crate::parser::parse;
@@ -10,6 +12,12 @@ enum Value {
     Number(f64),
     Bool(bool),
     String(String),
+    Function {
+        name: String,
+        parameters: Vec<String>,
+        body: Box<Node>,
+        closure: Rc<RefCell<Environment>>,
+    },
 }
 
 impl Value {
@@ -18,6 +26,7 @@ impl Value {
             Value::Number(_) => "number",
             Value::Bool(_) => "bool",
             Value::String(_) => "string",
+            Value::Function { .. } => "function",
         }
     }
 
@@ -43,14 +52,17 @@ impl Value {
     }
 }
 
+#[derive(Debug, PartialEq)]
 struct Environment {
     variables: HashMap<String, Value>,
+    parent: Option<Rc<RefCell<Environment>>>,
 }
 
 impl Environment {
     fn new() -> Self {
         Environment {
             variables: HashMap::new(),
+            parent: None,
         }
     }
 
@@ -58,8 +70,16 @@ impl Environment {
         self.variables.insert(name.to_string(), value.clone());
     }
 
-    fn get_variable(&self, name: &str) -> Option<&Value> {
-        self.variables.get(name)
+    fn get_variable(&self, name: &str) -> Result<Value, String> {
+        match self.variables.get(name) {
+            Some(value) => Ok(value.clone()),
+            None => {
+                match &self.parent {
+                    Some(parent) => parent.borrow().get_variable(name),
+                    None => Err(format!("Undefined variable: {}", name)),
+                }
+            }
+        }
     }
 
     fn set_variable(&mut self, name: &str, value: &Value) -> Result<(), String> {
@@ -67,18 +87,21 @@ impl Environment {
             self.variables.insert(name.to_string(), value.clone());
             Ok(())
         } else {
-            Err(format!("Undefined variable: {}", name))
+            match &self.parent {
+                Some(parent) => parent.borrow_mut().set_variable(name, value),
+                None => Err(format!("Undefined variable: {}", name)),
+            }
         }
     }
 }
 
 pub struct VM {
-    environments: Vec<Environment>,
+    environments: Vec<Rc<RefCell<Environment>>>,
 }
 
 impl VM {
     fn new() -> Self {
-        VM { environments: vec![Environment::new()] }
+        VM { environments: vec![Rc::new(RefCell::new(Environment::new()))] }
     }
 
     fn eval(&mut self, node: &Node) -> Result<Value, String> {
@@ -204,6 +227,7 @@ impl VM {
                                             Err(_) => Ok(Value::Number(0.0)),
                                         }
                                     }
+                                    Value::Function { .. } => Ok(Value::Number(0.0)),
                                 }
                             }
                             "bool" => {
@@ -212,6 +236,7 @@ impl VM {
                                     Value::Number(value) => Ok(Value::Bool(value != 0.0)),
                                     Value::Bool(value) => Ok(Value::Bool(value)),
                                     Value::String(value) => Ok(Value::Bool(value != "false")),
+                                    Value::Function { .. } => Ok(Value::Bool(true)),
                                 }
                             }
                             "string" => {
@@ -220,6 +245,7 @@ impl VM {
                                     Value::Number(value) => Ok(Value::String(value.to_string())),
                                     Value::Bool(value) => Ok(Value::String(value.to_string())),
                                     Value::String(value) => Ok(Value::String(value.clone())),
+                                    Value::Function { name, parameters, .. } => Ok(Value::String(format!("function {}({})", name, parameters.join(", ")))),
                                 }
                             }
                             "print" => {
@@ -235,11 +261,33 @@ impl VM {
                                         Value::Number(value) => println!("{}", value),
                                         Value::Bool(value) => println!("{}", value),
                                         Value::String(value) => println!("{}", value),
+                                        Value::Function { name, parameters, .. } => println!("function {}({})", name, parameters.join(", ")),
                                     }
                                 }
                                 Ok(Value::Number(0.0))
                             }
-                            _ => Err(format!("Unknown function: {}", name))
+                            _ => {
+                                match self.get_variable(name)? {
+                                    Value::Function { parameters, body, closure, .. } => {
+                                        let arguments = arguments.iter().map(|argument| self.eval(argument)).collect::<Result<Vec<Value>, String>>()?;
+
+                                        let environment = Rc::new(RefCell::new(Environment {
+                                            variables: HashMap::new(),
+                                            parent: Some(closure),
+                                        }));
+                                        self.environments.push(environment);
+
+                                        for (argument, parameter) in arguments.iter().zip(parameters.iter()) {
+                                            self.declare_variable(parameter, argument);
+                                        }
+                                        let ret = self.eval(body.deref());
+
+                                        self.environments.pop();
+                                        ret
+                                    }
+                                    _ => Err(format!("{} is not a function", name)),
+                                }
+                            }
                         }
                     }
                     _ => Err(format!("Failed to call {:?}", callee))
@@ -254,11 +302,25 @@ impl VM {
             Node::RangeIterator(_start, _end) => {
                 Err("Unsupported".to_string())
             }
+            Node::FunctionDeclaration(name, parameters, body) => {
+                let function = Value::Function {
+                    name: name.clone(),
+                    parameters: parameters.clone(),
+                    body: body.clone(),
+                    closure: self.environments.last().unwrap().clone(),
+                };
+                self.declare_variable(name, &function);
+
+                Ok(function)
+            }
         }
     }
 
     fn enter_new_environment(&mut self) {
-        self.environments.push(Environment::new());
+        self.environments.push(Rc::new(RefCell::new(Environment {
+            variables: HashMap::new(),
+            parent: self.environments.last().map(Rc::clone),
+        })));
     }
 
     fn exit_environment(&mut self) {
@@ -266,30 +328,24 @@ impl VM {
     }
 
     fn declare_variable(&mut self, name: &str, value: &Value) {
-        match self.environments.last_mut() {
-            Some(environment) => environment.declare_variable(name, value),
+        match self.environments.last() {
+            Some(environment) => environment.borrow_mut().declare_variable(name, value),
             None => panic!("No environment"),
         }
     }
 
     fn get_variable(&self, name: &String) -> Result<Value, String> {
-        for environment in self.environments.iter().rev() {
-            if let Some(value) = environment.get_variable(name) {
-                return Ok(value.clone());
-            }
+        match self.environments.last() {
+            Some(environment) => environment.borrow().get_variable(name),
+            None => panic!("No environment"),
         }
-
-        Err(format!("Undefined variable: {}", name))
     }
 
     fn set_variable(&mut self, name: &String, value: &Value) -> Result<(), String> {
-        for environment in self.environments.iter_mut().rev() {
-            if environment.set_variable(name, value).is_ok() {
-                return Ok(());
-            }
+        match self.environments.last() {
+            Some(environment) => environment.borrow_mut().set_variable(name, value),
+            None => panic!("No environment"),
         }
-
-        Err(format!("Undefined variable: {}", name))
     }
 }
 
@@ -299,7 +355,7 @@ pub fn eval(input: &str) -> Result<Value, String> {
 
 #[cfg(test)]
 mod tests {
-    use crate::eval::{eval, Value};
+    use crate::vm::{eval, Value};
 
     #[test]
     fn test_eval() {
@@ -353,6 +409,56 @@ mod tests {
     }
 
     #[test]
+    fn declare_function() {
+        assert_eq!(eval("
+            function test (x) {
+                print(string(x*2))
+            }
+
+            test(1)
+            test(10)
+            test(100)
+        "), Ok(Value::Number(0.0)));
+    }
+
+    #[test]
+    fn closure1() {
+        assert_eq!(eval("
+            let x = 0
+
+            function setX (y) {
+                x = y
+            }
+
+            debug(x)
+            setX(1)
+            debug(x)
+            x
+        "), Ok(Value::Number(1.0)));
+    }
+
+    #[test]
+    fn closure2() {
+        assert_eq!(eval("
+            let x = 0
+            function setX (y) {
+                x = y
+            }
+
+            function wrapper () {
+                let x = 100;
+                setX(1)
+                debug(x)
+            }
+
+            debug(x)
+            wrapper()
+            debug(x)
+            x
+        "), Ok(Value::Number(1.0)));
+    }
+
+    #[test]
     fn for_loop() {
         assert_eq!(eval("
         let i = 100
@@ -392,7 +498,7 @@ mod tests {
     }
 
     mod built_in_functions {
-        use crate::eval::{eval, Value};
+        use crate::vm::{eval, Value};
 
         #[test]
         fn number() {
