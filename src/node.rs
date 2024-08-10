@@ -21,5 +21,6 @@ pub enum Node {
     CallExpression(Box<Node>, Vec<Node>),
     Number(f64),
     Bool(bool),
+    String(String),
     Identifier(String),
 }

@@ -8,9 +8,6 @@
 - break
 - function declaration
 - return
-- プリミティブ型
-  - bool
-  - string
 - 構造体
 - 組み込み型
   - 配列

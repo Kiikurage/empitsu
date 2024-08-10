@@ -49,6 +49,7 @@ fn scan_token(input: &str) -> (&str, Option<Token>) {
             }
         }
         Some('0'..='9') => scan_number(input),
+        Some('"') => scan_string(input),
         Some('a'..='z' | 'A'..='Z' | '_') => scan_identifier(input),
         _ => (input, None)
     }
@@ -94,6 +95,28 @@ fn scan_number(mut input: &str) -> (&str, Option<Token>) {
     }
 
     (input, Some(Token::Number(digits.iter().collect::<String>().parse().unwrap())))
+}
+
+fn scan_string(mut input: &str) -> (&str, Option<Token>) {
+    let mut string: Vec<char> = vec![];
+
+    let mut chars = input.chars();
+
+    if chars.next() != Some('"') {
+        return (input, None);
+    }
+
+    loop {
+        match chars.next() {
+            Some('"') => {
+                return (chars.as_str(), Some(Token::String(string.iter().collect::<String>())));
+            }
+            Some(c) => {
+                string.push(c);
+            }
+            _ => return (input, None)
+        }
+    }
 }
 
 fn scan_identifier(mut input: &str) -> (&str, Option<Token>) {
@@ -201,6 +224,23 @@ mod tests {
         fn test_number_decimal_with_multiple_dots() {
             assert_eq!(scan_token("123.456.789"), (".789", Some(Token::Number(123.456f64))));
         }
+    }
+
+    mod string {
+        use crate::lexer::{scan_token, Token};
+
+        #[test]
+        fn string() {
+            assert_eq!(scan_token("\"123\""), ("", Some(Token::String("123".to_string()))));
+            assert_eq!(scan_token("\"123\"a"), ("a", Some(Token::String("123".to_string()))));
+        }
+
+        #[test]
+        fn empty_string() {
+            assert_eq!(scan_token("\"\""), ("", Some(Token::String("".to_string()))));
+            assert_eq!(scan_token("\"\"a"), ("a", Some(Token::String("".to_string()))));
+        }
+        
     }
 
     mod punctuator {

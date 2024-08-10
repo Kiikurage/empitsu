@@ -490,6 +490,11 @@ fn parse_primary_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, Str
             tokens.remove(0);
             Ok(Some(Node::Bool(value)))
         }
+        Some(Token::String(value)) => {
+            let value = value.clone();
+            tokens.remove(0);
+            Ok(Some(Node::String(value)))
+        }
         _ => Ok(None),
     }
 }
@@ -1205,6 +1210,20 @@ mod tests {
                 );
             }
 
+            #[test]
+            fn string() {
+                assert_eq!(
+                    parse("print(\"hello\")"),
+                    Ok(Node::Program(vec![
+                        Node::CallExpression(
+                            Box::new(Node::Identifier("print".to_string())),
+                            vec![
+                                Node::String("hello".to_string()),
+                            ],
+                        )
+                    ]))
+                );
+            }
             #[test]
             fn identifier() {
                 assert_eq!(

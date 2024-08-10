@@ -4,6 +4,7 @@ use crate::punctuator_kind::PunctuatorKind;
 pub enum Token {
     Number(f64),
     Bool(bool),
+    String(String),
     Identifier(String),
     Punctuator(PunctuatorKind),
 }
