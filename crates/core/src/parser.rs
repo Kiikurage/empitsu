@@ -37,6 +37,14 @@ fn parse_statement(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
         return Ok(Some(node));
     }
 
+    if let Some(node) = parse_return_statement(tokens)? {
+        return Ok(Some(node));
+    }
+
+    if let Some(node) = parse_break_statement(tokens)? {
+        return Ok(Some(node));
+    }
+
     if let Some(node) = parse_for_statement(tokens)? {
         return Ok(Some(node));
     }
@@ -101,6 +109,14 @@ fn parse_block_statement(tokens: &mut Vec<Token>) -> Result<Option<Node>, String
         Some(Node::BlockExpression(statements)) => Ok(Some(Node::BlockStatement(statements))),
         _ => Ok(None),
     }
+}
+
+fn parse_return_statement(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
+    parse_return_expression(tokens)
+}
+
+fn parse_break_statement(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
+    parse_break_expression(tokens)
 }
 
 fn parse_for_statement(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
@@ -374,6 +390,14 @@ fn parse_statement_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, S
         return Ok(Some(node));
     }
 
+    if let Some(node) = parse_return_expression(tokens)? {
+        return Ok(Some(node));
+    }
+
+    if let Some(node) = parse_break_expression(tokens)? {
+        return Ok(Some(node));
+    }
+
     if let Some(node) = parse_block_expression(tokens)? {
         return Ok(Some(node));
     }
@@ -444,6 +468,26 @@ fn parse_block_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, Strin
     Ok(Some(Node::BlockExpression(statements)))
 }
 
+fn parse_return_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
+    if !matches!(tokens.first(), Some(Token::Identifier(ref name)) if name == "return") {
+        return Ok(None);
+    }
+    tokens.remove(0);
+
+    let expression = parse_expression(tokens)?;
+
+    Ok(Some(Node::ReturnExpression(expression.map(Box::new))))
+}
+
+fn parse_break_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
+    if !matches!(tokens.first(), Some(Token::Identifier(ref name)) if name == "break") {
+        return Ok(None);
+    }
+    tokens.remove(0);
+
+    Ok(Some(Node::BreakExpression))
+}
+
 fn parse_call_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
     let callee = match parse_primary_expression(tokens)? {
         Some(node) => node,
@@ -474,8 +518,6 @@ fn parse_call_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, String
     Ok(Some(Node::CallExpression(Box::new(callee), arguments)))
 }
 
-// PrimaryExpression := "(" Expression ")"
-//                    | Number
 fn parse_primary_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
     match tokens.first() {
         Some(Token::Punctuator(PunctuatorKind::LeftParen)) => {
@@ -580,7 +622,7 @@ fn parse_function(tokens: &mut Vec<Token>, name_required: bool) -> Result<Option
 }
 
 fn is_reserved_words(word: &str) -> bool {
-    matches!(word, "if" | "let" | "for" | "function" | "true" | "false" | "else")
+    matches!(word, "if" | "let" | "for" | "function" | "true" | "false" | "else" | "return" | "break")
 }
 
 

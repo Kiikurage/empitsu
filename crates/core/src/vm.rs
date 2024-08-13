@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::{Debug, Error, Formatter};
-use std::ops::Deref;
+use std::ops::{ControlFlow, Deref};
 use std::rc::Rc;
 
 use crate::node::Node;
@@ -31,24 +31,30 @@ impl Value {
         }
     }
 
-    fn as_number(&self) -> Result<f64, String> {
+    fn as_number(&self) -> ControlFlow<BreakResult, f64> {
         match self {
-            Value::Number(value) => Ok(*value),
-            _ => Err(format!("TypeError: Expected type number, actual type {:?}", self.get_type())),
+            Value::Number(value) => ControlFlow::Continue(*value),
+            _ => ControlFlow::Break(BreakResult::Error(Value::String(
+                format!("TypeError: Expected type number, actual type {:?}", self.get_type())
+            ))),
         }
     }
 
-    fn as_bool(&self) -> Result<bool, String> {
+    fn as_bool(&self) -> ControlFlow<BreakResult, bool> {
         match self {
-            Value::Bool(value) => Ok(*value),
-            _ => Err(format!("TypeError: Expected type bool, actual type {:?}", self.get_type())),
+            Value::Bool(value) => ControlFlow::Continue(*value),
+            _ => ControlFlow::Break(BreakResult::Error(Value::String(
+                format!("TypeError: Expected type bool, actual type {:?}", self.get_type())
+            ))),
         }
     }
 
-    fn as_string(&self) -> Result<&String, String> {
+    fn as_string(&self) -> ControlFlow<BreakResult, &String> {
         match self {
-            Value::String(value) => Ok(value),
-            _ => Err(format!("TypeError: Expected type string, actual type {:?}", self.get_type())),
+            Value::String(value) => ControlFlow::Continue(value),
+            _ => ControlFlow::Break(BreakResult::Error(Value::String(
+                format!("TypeError: Expected type string, actual type {:?}", self.get_type())
+            ))),
         }
     }
 }
@@ -82,26 +88,26 @@ impl Environment {
         self.variables.insert(name.to_string(), value.clone());
     }
 
-    fn get_variable(&self, name: &str) -> Result<Value, String> {
+    fn get_variable(&self, name: &str) -> ControlFlow<BreakResult, Value> {
         match self.variables.get(name) {
-            Some(value) => Ok(value.clone()),
+            Some(value) => ControlFlow::Continue(value.clone()),
             None => {
                 match &self.parent {
                     Some(parent) => parent.borrow().get_variable(name),
-                    None => Err(format!("Undefined variable: {}", name)),
+                    None => ControlFlow::Break(BreakResult::Error(Value::String(format!("Undefined variable: {}", name)))),
                 }
             }
         }
     }
 
-    fn set_variable(&mut self, name: &str, value: &Value) -> Result<(), String> {
+    fn set_variable(&mut self, name: &str, value: &Value) -> ControlFlow<BreakResult, ()> {
         if self.variables.contains_key(name) {
             self.variables.insert(name.to_string(), value.clone());
-            Ok(())
+            ControlFlow::Continue(())
         } else {
             match &self.parent {
                 Some(parent) => parent.borrow_mut().set_variable(name, value),
-                None => Err(format!("Undefined variable: {}", name)),
+                None => ControlFlow::Break(BreakResult::Error(Value::String(format!("Undefined variable: {}", name)))),
             }
         }
     }
@@ -117,27 +123,55 @@ pub struct VM {
     environments: Vec<Rc<RefCell<Environment>>>,
 }
 
+enum BreakResult {
+    Return(Value),
+    Break(Value),
+    Error(Value),
+}
+
 impl VM {
     pub fn new() -> Self {
         VM { environments: vec![Rc::new(RefCell::new(Environment::new()))] }
     }
 
-    pub fn eval(&mut self, input: &str) -> Result<Value, String> {
-        self.eval_node(&parse(input)?)
+    pub fn eval(&mut self, input: &str) -> Value {
+        match parse(input) {
+            Ok(ast) => match self.eval_node(&ast) {
+                ControlFlow::Continue(value) => value,
+                ControlFlow::Break(BreakResult::Return(value)) => value,
+                ControlFlow::Break(BreakResult::Break(value)) => value,
+                ControlFlow::Break(BreakResult::Error(value)) => value,
+            }
+            Err(message) => Value::String(message),
+        }
     }
 
-    fn eval_node(&mut self, node: &Node) -> Result<Value, String> {
+    fn eval_node(&mut self, node: &Node) -> ControlFlow<BreakResult, Value> {
         match node {
             Node::Program(nodes) => {
                 let mut ret = Value::Number(0.0);
                 for node in nodes {
-                    ret = self.eval_node(node)?;
+                    ret = match self.eval_node(node) {
+                        ControlFlow::Continue(value) => value,
+                        ControlFlow::Break(BreakResult::Return(_)) => {
+                            ret = Value::String("return is used outside of function".to_string());
+                            break;
+                        }
+                        ControlFlow::Break(BreakResult::Break(_)) => {
+                            ret = Value::String("break is used outside of loop".to_string());
+                            break;
+                        }
+                        ControlFlow::Break(BreakResult::Error(value)) => {
+                            ret = value;
+                            break;
+                        }
+                    };
                 }
-                Ok(ret)
+                ControlFlow::Continue(ret)
             }
 
             // Statement
-            Node::EmptyStatement => Ok(Value::Number(0.0)),
+            Node::EmptyStatement => ControlFlow::Continue(Value::Number(0.0)),
             Node::IfStatement(condition, true_branch, false_branch) => {
                 let condition = self.eval_node(condition)?.as_bool()?;
                 if condition {
@@ -145,7 +179,7 @@ impl VM {
                 } else {
                     match false_branch {
                         Some(false_branch) => self.eval_node(false_branch),
-                        None => Ok(Value::Number(0.0)),
+                        None => ControlFlow::Continue(Value::Number(0.0)),
                     }
                 }
             }
@@ -158,7 +192,7 @@ impl VM {
                 }
 
                 self.exit_environment();
-                Ok(ret)
+                ControlFlow::Continue(ret)
             }
             Node::VariableDeclaration(name, value) => {
                 let value = match value {
@@ -166,7 +200,7 @@ impl VM {
                     None => Value::Number(0.0),
                 };
                 self.declare_variable(name, &value);
-                Ok(Value::Number(0.0))
+                ControlFlow::Continue(Value::Number(0.0))
             }
             Node::ForStatement(variable, iterator, body) => {
                 self.enter_new_environment();
@@ -175,18 +209,21 @@ impl VM {
                     Node::RangeIterator(start, end) => {
                         (self.eval_node(start)?, self.eval_node(end)?)
                     }
-                    _ => return Err("Unsupported iterator type".to_string())
+                    _ => return ControlFlow::Break(BreakResult::Error(Value::String("Unsupported iterator type".to_string())))
                 };
                 let mut i = start.as_number()?;
                 self.declare_variable(variable, &start);
                 while i < end.as_number()? {
                     self.set_variable(variable, &Value::Number(i))?;
-                    self.eval_node(body)?;
+                    match self.eval_node(body) {
+                        ControlFlow::Break(BreakResult::Break(_)) => { break }
+                        other => { other?; }
+                    }
                     i += 1f64;
                 }
 
                 self.exit_environment();
-                Ok(Value::Number(0.0))
+                ControlFlow::Continue(Value::Number(0.0))
             }
             Node::FunctionDeclaration(name, parameters, body) => {
                 let function = Value::Function {
@@ -197,8 +234,17 @@ impl VM {
                 };
                 self.declare_variable(name, &function);
 
-                Ok(function)
+                ControlFlow::Continue(function)
             }
+            Node::ReturnStatement(value) => {
+                ControlFlow::Break(BreakResult::Return(
+                    match value {
+                        Some(value) => self.eval_node(value)?,
+                        None => Value::Number(0.0),
+                    }
+                ))
+            }
+            Node::BreakStatement => ControlFlow::Break(BreakResult::Break(Value::Number(0.0))),
 
             // Expression
             Node::FunctionExpression(name, parameters, body) => {
@@ -208,7 +254,7 @@ impl VM {
                     body: body.clone(),
                     closure: self.environments.last().unwrap().clone(),
                 };
-                Ok(function)
+                ControlFlow::Continue(function)
             }
             Node::IfExpression(condition, true_branch, false_branch) => {
                 let condition = self.eval_node(condition)?.as_bool()?;
@@ -224,34 +270,35 @@ impl VM {
                 }
 
                 self.exit_environment();
-                Ok(ret)
+                ControlFlow::Continue(ret)
             }
             Node::AssignmentExpression(name, value) => {
                 let value = self.eval_node(value)?;
                 self.set_variable(name, &value)?;
-                Ok(value)
+                ControlFlow::Continue(value)
             }
             Node::BinaryExpression(left, operator, right) => {
                 let left = self.eval_node(left)?;
                 let right = self.eval_node(right)?;
 
                 match operator {
-                    PunctuatorKind::Plus => Ok(Value::Number(left.as_number()? + right.as_number()?)),
-                    PunctuatorKind::Minus => Ok(Value::Number(left.as_number()? - right.as_number()?)),
-                    PunctuatorKind::Multiply => Ok(Value::Number(left.as_number()? * right.as_number()?)),
-                    PunctuatorKind::Divide => Ok(Value::Number(left.as_number()? / right.as_number()?)),
-                    PunctuatorKind::LogicalOr => Ok(Value::Bool(left.as_bool()? || right.as_bool()?)),
-                    PunctuatorKind::LogicalAnd => Ok(Value::Bool(left.as_bool()? && right.as_bool()?)),
-                    _ => Err(format!("Unexpected operator: {:?}", operator)),
+                    PunctuatorKind::Plus => ControlFlow::Continue(Value::Number(left.as_number()? + right.as_number()?)),
+                    PunctuatorKind::Minus => ControlFlow::Continue(Value::Number(left.as_number()? - right.as_number()?)),
+                    PunctuatorKind::Multiply => ControlFlow::Continue(Value::Number(left.as_number()? * right.as_number()?)),
+                    PunctuatorKind::Divide => ControlFlow::Continue(Value::Number(left.as_number()? / right.as_number()?)),
+                    PunctuatorKind::LogicalOr => ControlFlow::Continue(Value::Bool(left.as_bool()? || right.as_bool()?)),
+                    PunctuatorKind::LogicalAnd => ControlFlow::Continue(Value::Bool(left.as_bool()? && right.as_bool()?)),
+                    _ => ControlFlow::Break(BreakResult::Error(Value::String(format!("Unexpected operator: {:?}", operator)))),
                 }
             }
             Node::UnaryExpression(operator, operand) => {
                 let operand = self.eval_node(operand)?;
 
                 match operator {
-                    PunctuatorKind::Plus => Ok(Value::Number(operand.as_number()?)),
-                    PunctuatorKind::Minus => Ok(Value::Number(-operand.as_number()?)),
-                    _ => Err(format!("Unexpected operator: {:?}", operator)),
+                    PunctuatorKind::Plus => ControlFlow::Continue(Value::Number(operand.as_number()?)),
+                    PunctuatorKind::Minus => ControlFlow::Continue(Value::Number(-operand.as_number()?)),
+                    PunctuatorKind::LogicalNot => ControlFlow::Continue(Value::Bool(!operand.as_bool()?)),
+                    _ => ControlFlow::Break(BreakResult::Error(Value::String(format!("Unexpected operator: {:?}", operator)))),
                 }
             }
             Node::CallExpression(callee, arguments) => {
@@ -261,40 +308,40 @@ impl VM {
                             "number" => {
                                 let val = self.eval_node(arguments.first().unwrap())?;
                                 match val {
-                                    Value::Number(value) => Ok(Value::Number(value)),
-                                    Value::Bool(value) => Ok(Value::Number(if value { 1.0 } else { 0.0 })),
+                                    Value::Number(value) => ControlFlow::Continue(Value::Number(value)),
+                                    Value::Bool(value) => ControlFlow::Continue(Value::Number(if value { 1.0 } else { 0.0 })),
                                     Value::String(value) => {
                                         match value.parse::<f64>() {
-                                            Ok(value) => Ok(Value::Number(if value.is_nan() { 0.0 } else { value })),
-                                            Err(_) => Ok(Value::Number(0.0)),
+                                            Ok(value) => ControlFlow::Continue(Value::Number(if value.is_nan() { 0.0 } else { value })),
+                                            Err(_) => ControlFlow::Continue(Value::Number(0.0)),
                                         }
                                     }
-                                    Value::Function { .. } => Ok(Value::Number(0.0)),
+                                    Value::Function { .. } => ControlFlow::Continue(Value::Number(0.0)),
                                 }
                             }
                             "bool" => {
                                 let val = self.eval_node(arguments.first().unwrap())?;
                                 match val {
-                                    Value::Number(value) => Ok(Value::Bool(value != 0.0)),
-                                    Value::Bool(value) => Ok(Value::Bool(value)),
-                                    Value::String(value) => Ok(Value::Bool(value != "false")),
-                                    Value::Function { .. } => Ok(Value::Bool(true)),
+                                    Value::Number(value) => ControlFlow::Continue(Value::Bool(value != 0.0)),
+                                    Value::Bool(value) => ControlFlow::Continue(Value::Bool(value)),
+                                    Value::String(value) => ControlFlow::Continue(Value::Bool(value != "false")),
+                                    Value::Function { .. } => ControlFlow::Continue(Value::Bool(true)),
                                 }
                             }
                             "string" => {
                                 let val = self.eval_node(arguments.first().unwrap())?;
                                 match val {
-                                    Value::Number(value) => Ok(Value::String(value.to_string())),
-                                    Value::Bool(value) => Ok(Value::String(value.to_string())),
-                                    Value::String(value) => Ok(Value::String(value.clone())),
-                                    Value::Function { name, parameters, .. } => Ok(Value::String(format!("function {}({})", name, parameters.join(", ")))),
+                                    Value::Number(value) => ControlFlow::Continue(Value::String(value.to_string())),
+                                    Value::Bool(value) => ControlFlow::Continue(Value::String(value.to_string())),
+                                    Value::String(value) => ControlFlow::Continue(Value::String(value.clone())),
+                                    Value::Function { name, parameters, .. } => ControlFlow::Continue(Value::String(format!("function {}({})", name, parameters.join(", ")))),
                                 }
                             }
                             "print" => {
                                 for argument in arguments {
                                     println!("{}", self.eval_node(argument)?.as_string()?);
                                 }
-                                Ok(Value::Number(0.0))
+                                ControlFlow::Continue(Value::Number(0.0))
                             }
                             "debug" => {
                                 for argument in arguments {
@@ -306,12 +353,15 @@ impl VM {
                                         Value::Function { name, parameters, .. } => println!("function {}({})", name, parameters.join(", ")),
                                     }
                                 }
-                                Ok(Value::Number(0.0))
+                                ControlFlow::Continue(Value::Number(0.0))
                             }
                             _ => {
                                 match self.get_variable(name)? {
                                     Value::Function { parameters, body, closure, .. } => {
-                                        let arguments = arguments.iter().map(|argument| self.eval_node(argument)).collect::<Result<Vec<Value>, String>>()?;
+                                        let mut evaluated_arguments = vec![];
+                                        for argument in arguments {
+                                            evaluated_arguments.push(self.eval_node(argument)?);
+                                        }
 
                                         let environment = Rc::new(RefCell::new(Environment {
                                             variables: HashMap::new(),
@@ -319,30 +369,43 @@ impl VM {
                                         }));
                                         self.environments.push(environment);
 
-                                        for (argument, parameter) in arguments.iter().zip(parameters.iter()) {
+                                        for (argument, parameter) in evaluated_arguments.iter().zip(parameters.iter()) {
                                             self.declare_variable(parameter, argument);
                                         }
-                                        let ret = self.eval_node(body.deref());
+                                        let ret = match self.eval_node(body.deref()) {
+                                            ControlFlow::Continue(value) => value,
+                                            ControlFlow::Break(BreakResult::Return(value)) => value,
+                                            others => return others,
+                                        };
 
                                         self.environments.pop();
-                                        ret
+                                        ControlFlow::Continue(ret)
                                     }
-                                    _ => Err(format!("{} is not a function", name)),
+                                    _ => ControlFlow::Break(BreakResult::Error(Value::String(format!("{} is not a function", name)))),
                                 }
                             }
                         }
                     }
-                    _ => Err(format!("Failed to call {:?}", callee))
+                    _ => ControlFlow::Break(BreakResult::Error(Value::String(format!("Failed to call {:?}", callee))))
                 }
             }
-            Node::Number(value) => Ok(Value::Number(*value)),
-            Node::Bool(value) => Ok(Value::Bool(*value)),
-            Node::String(value) => Ok(Value::String(value.clone())),
+            Node::Number(value) => ControlFlow::Continue(Value::Number(*value)),
+            Node::Bool(value) => ControlFlow::Continue(Value::Bool(*value)),
+            Node::String(value) => ControlFlow::Continue(Value::String(value.clone())),
             Node::Identifier(name) => self.get_variable(name),
+            Node::ReturnExpression(value) => {
+                ControlFlow::Break(BreakResult::Return(
+                    match value {
+                        Some(value) => self.eval_node(value)?,
+                        None => Value::Number(0.0),
+                    }
+                ))
+            }
+            Node::BreakExpression => ControlFlow::Break(BreakResult::Break(Value::Number(0.0))),
 
             // tmp
             Node::RangeIterator(_start, _end) => {
-                Err("Unsupported".to_string())
+                ControlFlow::Break(BreakResult::Break(Value::String("Unsupported".to_string())))
             }
         }
     }
@@ -365,14 +428,14 @@ impl VM {
         }
     }
 
-    fn get_variable(&self, name: &str) -> Result<Value, String> {
+    fn get_variable(&self, name: &str) -> ControlFlow<BreakResult, Value> {
         match self.environments.last() {
             Some(environment) => environment.borrow().get_variable(name),
             None => panic!("No environment"),
         }
     }
 
-    fn set_variable(&mut self, name: &str, value: &Value) -> Result<(), String> {
+    fn set_variable(&mut self, name: &str, value: &Value) -> ControlFlow<BreakResult, ()> {
         match self.environments.last() {
             Some(environment) => environment.borrow_mut().set_variable(name, value),
             None => panic!("No environment"),
@@ -386,66 +449,69 @@ mod tests {
 
     #[test]
     fn reserved_words_in_variable_declaration() {
-        assert_eq!(VM::new().eval("let if"), Err("SyntaxError: \"if\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("let let"), Err("SyntaxError: \"let\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("let for"), Err("SyntaxError: \"for\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("let function"), Err("SyntaxError: \"function\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("let true"), Err("Expected identifier".to_string()));
-        assert_eq!(VM::new().eval("let false"), Err("Expected identifier".to_string()));
-        assert_eq!(VM::new().eval("let else"), Err("SyntaxError: \"else\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("let if"), Value::String("SyntaxError: \"if\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("let let"), Value::String("SyntaxError: \"let\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("let for"), Value::String("SyntaxError: \"for\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("let function"), Value::String("SyntaxError: \"function\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("let true"), Value::String("Expected identifier".to_string()));
+        assert_eq!(VM::new().eval("let false"), Value::String("Expected identifier".to_string()));
+        assert_eq!(VM::new().eval("let else"), Value::String("SyntaxError: \"else\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("let return"), Value::String("SyntaxError: \"return\" is a reserved word".to_string()));
     }
 
     #[test]
     fn reserved_words_in_function_name() {
-        assert_eq!(VM::new().eval("function if() {}"), Err("SyntaxError: \"if\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("function let() {}"), Err("SyntaxError: \"let\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("function for() {}"), Err("SyntaxError: \"for\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("function function() {}"), Err("SyntaxError: \"function\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("function true() {}"), Err("Expected '('".to_string()));
-        assert_eq!(VM::new().eval("function false() {}"), Err("Expected '('".to_string()));
-        assert_eq!(VM::new().eval("function else() {}"), Err("SyntaxError: \"else\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("function if() {}"), Value::String("SyntaxError: \"if\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("function let() {}"), Value::String("SyntaxError: \"let\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("function for() {}"), Value::String("SyntaxError: \"for\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("function function() {}"), Value::String("SyntaxError: \"function\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("function true() {}"), Value::String("Expected '('".to_string()));
+        assert_eq!(VM::new().eval("function false() {}"), Value::String("Expected '('".to_string()));
+        assert_eq!(VM::new().eval("function else() {}"), Value::String("SyntaxError: \"else\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("function return() {}"), Value::String("SyntaxError: \"return\" is a reserved word".to_string()));
     }
 
     #[test]
     fn reserved_words_in_function_parameter() {
-        assert_eq!(VM::new().eval("function f(if) {}"), Err("SyntaxError: \"if\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("function f(let) {}"), Err("SyntaxError: \"let\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("function f(for) {}"), Err("SyntaxError: \"for\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("function f(function) {}"), Err("SyntaxError: \"function\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("function f(true) {}"), Err("Expected ')'".to_string()));
-        assert_eq!(VM::new().eval("function f(false) {}"), Err("Expected ')'".to_string()));
-        assert_eq!(VM::new().eval("function f(else) {}"), Err("SyntaxError: \"else\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("function f(if) {}"), Value::String("SyntaxError: \"if\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("function f(let) {}"), Value::String("SyntaxError: \"let\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("function f(for) {}"), Value::String("SyntaxError: \"for\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("function f(function) {}"), Value::String("SyntaxError: \"function\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("function f(true) {}"), Value::String("Expected ')'".to_string()));
+        assert_eq!(VM::new().eval("function f(false) {}"), Value::String("Expected ')'".to_string()));
+        assert_eq!(VM::new().eval("function f(else) {}"), Value::String("SyntaxError: \"else\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("function f(return) {}"), Value::String("SyntaxError: \"return\" is a reserved word".to_string()));
     }
 
     #[test]
     fn test_eval() {
-        assert_eq!(VM::new().eval("1+2").unwrap(), Value::Number(3.0));
-        assert_eq!(VM::new().eval("1+2*\n3").unwrap(), Value::Number(7.0));
-        assert_eq!(VM::new().eval("(1+2)*3").unwrap(), Value::Number(9.0));
-        assert_eq!(VM::new().eval("debug(1)").unwrap(), Value::Number(0.0));
-        assert_eq!(VM::new().eval("number(1)+number(true)").unwrap(), Value::Number(2.0));
-        assert_eq!(VM::new().eval("{1+2}").unwrap(), Value::Number(3.0));
-        assert_eq!(VM::new().eval("if (true) 2 else 3").unwrap(), Value::Number(2.0));
-        assert_eq!(VM::new().eval("if (true) 2 else 3").unwrap(), Value::Number(2.0));
-        assert_eq!(VM::new().eval("if (true) { debug(123); 2 } else { 3 }").unwrap(), Value::Number(2.0));
-        assert_eq!(VM::new().eval("if (true) 2 else 3*3").unwrap(), Value::Number(2.0));
-        assert_eq!(VM::new().eval("1 + if (false) 2 else 3 * 3").unwrap(), Value::Number(10.0));
-        assert_eq!(VM::new().eval("1 + if (false) 2 else if (false) 3 else 4").unwrap(), Value::Number(5.0));
-        assert_eq!(VM::new().eval("let x=false; if (x) 1 else 2").unwrap(), Value::Number(2.0));
-        assert_eq!(VM::new().eval("let x=true; if (x) 1 else 2").unwrap(), Value::Number(1.0));
-        assert_eq!(VM::new().eval("let x=true; let y=if (x) 2 else 3; let z=y*y; z").unwrap(), Value::Number(4.0));
-        assert_eq!(VM::new().eval("let x=1; x=2; x").unwrap(), Value::Number(2.0));
-        assert_eq!(VM::new().eval("let x=5; x=x*x; x").unwrap(), Value::Number(25.0));
-        assert_eq!(VM::new().eval("true && true").unwrap(), Value::Bool(true));
-        assert_eq!(VM::new().eval("true && false").unwrap(), Value::Bool(false));
-        assert_eq!(VM::new().eval("false && true").unwrap(), Value::Bool(false));
-        assert_eq!(VM::new().eval("false && false").unwrap(), Value::Bool(false));
-        assert_eq!(VM::new().eval("true || true").unwrap(), Value::Bool(true));
-        assert_eq!(VM::new().eval("true || false").unwrap(), Value::Bool(true));
-        assert_eq!(VM::new().eval("false || true").unwrap(), Value::Bool(true));
-        assert_eq!(VM::new().eval("false || false").unwrap(), Value::Bool(false));
-        assert_eq!(VM::new().eval("false + 1"), Err("TypeError: Expected type number, actual type \"bool\"".to_string()));
-        assert_eq!(VM::new().eval("\"hello\" + 1"), Err("TypeError: Expected type number, actual type \"string\"".to_string()));
+        assert_eq!(VM::new().eval("1+2"), Value::Number(3.0));
+        assert_eq!(VM::new().eval("1+2*\n3"), Value::Number(7.0));
+        assert_eq!(VM::new().eval("(1+2)*3"), Value::Number(9.0));
+        assert_eq!(VM::new().eval("debug(1)"), Value::Number(0.0));
+        assert_eq!(VM::new().eval("number(1)+number(true)"), Value::Number(2.0));
+        assert_eq!(VM::new().eval("{1+2}"), Value::Number(3.0));
+        assert_eq!(VM::new().eval("if (true) 2 else 3"), Value::Number(2.0));
+        assert_eq!(VM::new().eval("if (true) 2 else 3"), Value::Number(2.0));
+        assert_eq!(VM::new().eval("if (true) { debug(123); 2 } else { 3 }"), Value::Number(2.0));
+        assert_eq!(VM::new().eval("if (true) 2 else 3*3"), Value::Number(2.0));
+        assert_eq!(VM::new().eval("1 + if (false) 2 else 3 * 3"), Value::Number(10.0));
+        assert_eq!(VM::new().eval("1 + if (false) 2 else if (false) 3 else 4"), Value::Number(5.0));
+        assert_eq!(VM::new().eval("let x=false; if (x) 1 else 2"), Value::Number(2.0));
+        assert_eq!(VM::new().eval("let x=true; if (x) 1 else 2"), Value::Number(1.0));
+        assert_eq!(VM::new().eval("let x=true; let y=if (x) 2 else 3; let z=y*y; z"), Value::Number(4.0));
+        assert_eq!(VM::new().eval("let x=1; x=2; x"), Value::Number(2.0));
+        assert_eq!(VM::new().eval("let x=5; x=x*x; x"), Value::Number(25.0));
+        assert_eq!(VM::new().eval("true && true"), Value::Bool(true));
+        assert_eq!(VM::new().eval("true && false"), Value::Bool(false));
+        assert_eq!(VM::new().eval("false && true"), Value::Bool(false));
+        assert_eq!(VM::new().eval("false && false"), Value::Bool(false));
+        assert_eq!(VM::new().eval("true || true"), Value::Bool(true));
+        assert_eq!(VM::new().eval("true || false"), Value::Bool(true));
+        assert_eq!(VM::new().eval("false || true"), Value::Bool(true));
+        assert_eq!(VM::new().eval("false || false"), Value::Bool(false));
+        assert_eq!(VM::new().eval("false + 1"), Value::String("TypeError: Expected type number, actual type \"bool\"".to_string()));
+        assert_eq!(VM::new().eval("\"hello\" + 1"), Value::String("TypeError: Expected type number, actual type \"string\"".to_string()));
 
         assert_eq!(VM::new().eval("\
         let x = 0;
@@ -454,7 +520,7 @@ mod tests {
             x = x + i;\
         }\
         x\
-        ").unwrap(), Value::Number(45.0));
+        "), Value::Number(45.0));
     }
 
     #[test]
@@ -465,7 +531,7 @@ mod tests {
             } else {
                 print(\"false\")
             }
-        "), Err("TypeError: Expected type bool, actual type \"number\"".to_string()));
+        "), Value::String("TypeError: Expected type bool, actual type \"number\"".to_string()));
     }
 
     #[test]
@@ -478,7 +544,7 @@ mod tests {
             test(1)
             test(10)
             test(100)
-        "), Ok(Value::Number(0.0)));
+        "), Value::Number(0.0));
     }
 
     #[test]
@@ -494,7 +560,7 @@ mod tests {
             setX(1)
             debug(x)
             x
-        "), Ok(Value::Number(1.0)));
+        "), Value::Number(1.0));
     }
 
     #[test]
@@ -515,7 +581,7 @@ mod tests {
             wrapper()
             debug(x)
             x
-        "), Ok(Value::Number(1.0)));
+        "), Value::Number(1.0));
     }
 
     #[test]
@@ -526,7 +592,7 @@ mod tests {
             }
 
             double(3)
-        "), Ok(Value::Number(6.0)));
+        "), Value::Number(6.0));
     }
 
     #[test]
@@ -537,7 +603,7 @@ mod tests {
             }
 
             double(3)
-        "), Ok(Value::Number(6.0)));
+        "), Value::Number(6.0));
     }
 
     #[test]
@@ -547,7 +613,31 @@ mod tests {
             let double = function f(x) { x * 2 }
 
             f(3)
-        "), Ok(Value::Number(30.0)));
+        "), Value::Number(30.0));
+    }
+
+    #[test]
+    fn function_return_statement() {
+        assert_eq!(VM::new().eval("
+            function test() {
+                return 2
+                print(\"unreachable\")
+                3
+            }
+
+            test()
+        "), Value::Number(2.0));
+    }
+
+    #[test]
+    fn function_return_expression() {
+        assert_eq!(VM::new().eval("
+            function test() {
+                return 10 + print(\"reachable\") + (return 1) + print(\"unreachable\")
+            }
+
+            test()
+        "), Value::Number(1.0));
     }
 
     #[test]
@@ -559,7 +649,51 @@ mod tests {
         }
         debug(i)
         i
-        ").unwrap(), Value::Number(100.0));
+        "), Value::Number(100.0));
+    }
+
+    #[test]
+    fn for_loop_with_break_statement() {
+        assert_eq!(VM::new().eval("
+        let x = 0
+        for (i in -5 to +5) {
+            x = x + i
+            if (!bool(i)) {
+                break
+            }
+        }
+        x
+        "), Value::Number(-15.0));
+    }
+
+    #[test]
+    fn for_loop_with_break_expression() {
+        assert_eq!(VM::new().eval("
+        let x = 0
+        for (i in -5 to +5) {
+            x = x + i
+            if (!bool(i)) {
+                x = 0 + break + print(\"unreachable\")
+            }
+        }
+        x
+        "), Value::Number(-15.0));
+    }
+
+    #[test]
+    fn nested_for_loop_with_break_statement() {
+        assert_eq!(VM::new().eval("
+        let x = 0
+        for (i in 0 to 10) {
+            for (j in -5 to +5) {
+                x = x + j
+                if (!bool(j)) {
+                    break
+                }
+            }
+        }
+        x
+        "), Value::Number(-150.0));
     }
 
     #[test]
@@ -573,7 +707,7 @@ mod tests {
         }
         debug(x)
         x
-        ").unwrap(), Value::Number(0.0));
+        "), Value::Number(0.0));
     }
 
     #[test]
@@ -586,7 +720,7 @@ mod tests {
         }
         debug(x)
         x
-        ").unwrap(), Value::Number(100.0));
+        "), Value::Number(100.0));
     }
 
     mod built_in_functions {
@@ -594,42 +728,42 @@ mod tests {
 
         #[test]
         fn number() {
-            assert_eq!(VM::new().eval("number(1)").unwrap(), Value::Number(1.0));
-            assert_eq!(VM::new().eval("number(0)").unwrap(), Value::Number(0.0));
-            assert_eq!(VM::new().eval("number(true)").unwrap(), Value::Number(1.0));
-            assert_eq!(VM::new().eval("number(false)").unwrap(), Value::Number(0.0));
-            assert_eq!(VM::new().eval("number(\"123\")").unwrap(), Value::Number(123.0));
-            assert_eq!(VM::new().eval("number(\"NaN\")").unwrap(), Value::Number(0.0));
+            assert_eq!(VM::new().eval("number(1)"), Value::Number(1.0));
+            assert_eq!(VM::new().eval("number(0)"), Value::Number(0.0));
+            assert_eq!(VM::new().eval("number(true)"), Value::Number(1.0));
+            assert_eq!(VM::new().eval("number(false)"), Value::Number(0.0));
+            assert_eq!(VM::new().eval("number(\"123\")"), Value::Number(123.0));
+            assert_eq!(VM::new().eval("number(\"NaN\")"), Value::Number(0.0));
         }
 
         #[test]
         fn bool() {
-            assert_eq!(VM::new().eval("bool(1)").unwrap(), Value::Bool(true));
-            assert_eq!(VM::new().eval("bool(0)").unwrap(), Value::Bool(false));
-            assert_eq!(VM::new().eval("bool(100)").unwrap(), Value::Bool(true));
-            assert_eq!(VM::new().eval("bool(true)").unwrap(), Value::Bool(true));
-            assert_eq!(VM::new().eval("bool(false)").unwrap(), Value::Bool(false));
-            assert_eq!(VM::new().eval("bool(\"true\")").unwrap(), Value::Bool(true));
-            assert_eq!(VM::new().eval("bool(\"false\")").unwrap(), Value::Bool(false));
-            assert_eq!(VM::new().eval("bool(\"Hoge\")").unwrap(), Value::Bool(true));
-            assert_eq!(VM::new().eval("bool(\"FALSE\")").unwrap(), Value::Bool(true));
+            assert_eq!(VM::new().eval("bool(1)"), Value::Bool(true));
+            assert_eq!(VM::new().eval("bool(0)"), Value::Bool(false));
+            assert_eq!(VM::new().eval("bool(100)"), Value::Bool(true));
+            assert_eq!(VM::new().eval("bool(true)"), Value::Bool(true));
+            assert_eq!(VM::new().eval("bool(false)"), Value::Bool(false));
+            assert_eq!(VM::new().eval("bool(\"true\")"), Value::Bool(true));
+            assert_eq!(VM::new().eval("bool(\"false\")"), Value::Bool(false));
+            assert_eq!(VM::new().eval("bool(\"Hoge\")"), Value::Bool(true));
+            assert_eq!(VM::new().eval("bool(\"FALSE\")"), Value::Bool(true));
         }
 
         #[test]
         fn string() {
-            assert_eq!(VM::new().eval("string(1)").unwrap(), Value::String("1".to_string()));
-            assert_eq!(VM::new().eval("string(0.5)").unwrap(), Value::String("0.5".to_string()));
-            assert_eq!(VM::new().eval("string(true)").unwrap(), Value::String("true".to_string()));
-            assert_eq!(VM::new().eval("string(false)").unwrap(), Value::String("false".to_string()));
-            assert_eq!(VM::new().eval("string(\"ABC\")").unwrap(), Value::String("ABC".to_string()));
-            assert_eq!(VM::new().eval("string(\"\")").unwrap(), Value::String("".to_string()));
+            assert_eq!(VM::new().eval("string(1)"), Value::String("1".to_string()));
+            assert_eq!(VM::new().eval("string(0.5)"), Value::String("0.5".to_string()));
+            assert_eq!(VM::new().eval("string(true)"), Value::String("true".to_string()));
+            assert_eq!(VM::new().eval("string(false)"), Value::String("false".to_string()));
+            assert_eq!(VM::new().eval("string(\"ABC\")"), Value::String("ABC".to_string()));
+            assert_eq!(VM::new().eval("string(\"\")"), Value::String("".to_string()));
         }
 
         #[test]
         fn print() {
-            assert_eq!(VM::new().eval("print(1)"), Err("TypeError: Expected type string, actual type \"number\"".to_string()));
-            assert_eq!(VM::new().eval("print(true)"), Err("TypeError: Expected type string, actual type \"bool\"".to_string()));
-            assert_eq!(VM::new().eval("print(\"ABC\")").unwrap(), Value::Number(0f64));
+            assert_eq!(VM::new().eval("print(1)"), Value::String("TypeError: Expected type string, actual type \"number\"".to_string()));
+            assert_eq!(VM::new().eval("print(true)"), Value::String("TypeError: Expected type string, actual type \"bool\"".to_string()));
+            assert_eq!(VM::new().eval("print(\"ABC\")"), Value::Number(0f64));
         }
     }
 }

@@ -17,9 +17,6 @@ fn main() {
         let result = vm.eval(&buffer);
         buffer.clear();
 
-        match result {
-            Ok(result) => println!(">> {:?}", result),
-            Err(error) => eprintln!(">> {:?}", error),
-        }
+        println!(">> {:?}", result);
     }
 }
