@@ -1,81 +1,119 @@
 use crate::punctuator_kind::PunctuatorKind;
 use crate::token::Token;
 
-pub fn scan(mut input: &str) -> Vec<Token> {
+pub fn scan(input: &str) -> Result<Vec<Token>, String> {
+    let mut chars = input.chars().collect::<Vec<char>>();
     let mut tokens = Vec::new();
-    while !input.is_empty() {
-        let (new_input, token) = scan_token(input);
-        if let Some(token) = token {
-            tokens.push(token);
-            input = new_input;
-        } else if input == new_input {
-            break;
-        } else {
-            input = new_input;
-        }
+    while let Some(token) = scan_token(&mut chars)? {
+        tokens.push(token)
     }
-    tokens
+    Ok(tokens)
 }
 
-fn scan_token(input: &str) -> (&str, Option<Token>) {
-    let mut chars = input.chars();
-
-    match chars.next() {
-        Some(' ' | '\n' | '\r' | '\t') => (chars.as_str(), None),
-        Some('+') => (chars.as_str(), Some(Token::Punctuator(PunctuatorKind::Plus))),
-        Some('-') => (chars.as_str(), Some(Token::Punctuator(PunctuatorKind::Minus))),
-        Some('*') => (chars.as_str(), Some(Token::Punctuator(PunctuatorKind::Multiply))),
-        Some('/') => (chars.as_str(), Some(Token::Punctuator(PunctuatorKind::Divide))),
-        Some('(') => (chars.as_str(), Some(Token::Punctuator(PunctuatorKind::LeftParen))),
-        Some(')') => (chars.as_str(), Some(Token::Punctuator(PunctuatorKind::RightParen))),
-        Some('{') => (chars.as_str(), Some(Token::Punctuator(PunctuatorKind::LeftBrace))),
-        Some('}') => (chars.as_str(), Some(Token::Punctuator(PunctuatorKind::RightBrace))),
-        Some(';') => (chars.as_str(), Some(Token::Punctuator(PunctuatorKind::SemiColon))),
-        Some(',') => (chars.as_str(), Some(Token::Punctuator(PunctuatorKind::Comma))),
-        Some('=') => (chars.as_str(), Some(Token::Punctuator(PunctuatorKind::Equal))),
-        Some('!') => (chars.as_str(), Some(Token::Punctuator(PunctuatorKind::LogicalNot))),
+fn scan_token(chars: &mut Vec<char>) -> Result<Option<Token>, String> {
+    match chars.first() {
+        Some(' ' | '\n' | '\r' | '\t') => {
+            chars.remove(0);
+            Ok(None)
+        }
+        Some('+') => {
+            chars.remove(0);
+            Ok(Some(Token::Punctuator(PunctuatorKind::Plus)))
+        }
+        Some('-') => {
+            chars.remove(0);
+            Ok(Some(Token::Punctuator(PunctuatorKind::Minus)))
+        }
+        Some('*') => {
+            chars.remove(0);
+            Ok(Some(Token::Punctuator(PunctuatorKind::Multiply)))
+        }
+        Some('/') => {
+            chars.remove(0);
+            Ok(Some(Token::Punctuator(PunctuatorKind::Divide)))
+        }
+        Some('(') => {
+            chars.remove(0);
+            Ok(Some(Token::Punctuator(PunctuatorKind::LeftParen)))
+        }
+        Some(')') => {
+            chars.remove(0);
+            Ok(Some(Token::Punctuator(PunctuatorKind::RightParen)))
+        }
+        Some('{') => {
+            chars.remove(0);
+            Ok(Some(Token::Punctuator(PunctuatorKind::LeftBrace)))
+        }
+        Some('}') => {
+            chars.remove(0);
+            Ok(Some(Token::Punctuator(PunctuatorKind::RightBrace)))
+        }
+        Some(';') => {
+            chars.remove(0);
+            Ok(Some(Token::Punctuator(PunctuatorKind::SemiColon)))
+        }
+        Some(',') => {
+            chars.remove(0);
+            Ok(Some(Token::Punctuator(PunctuatorKind::Comma)))
+        }
+        Some('=') => {
+            chars.remove(0);
+            Ok(Some(Token::Punctuator(PunctuatorKind::Equal)))
+        }
+        Some('!') => {
+            chars.remove(0);
+            Ok(Some(Token::Punctuator(PunctuatorKind::LogicalNot)))
+        }
         Some('&') => {
-            if chars.next() == Some('&') {
-                (chars.as_str(), Some(Token::Punctuator(PunctuatorKind::LogicalAnd)))
+            if matches!(chars.get(1), Some('&')) {
+                chars.remove(0);
+                chars.remove(0);
+                Ok(Some(Token::Punctuator(PunctuatorKind::LogicalAnd)))
             } else {
-                (input, None)
+                Err("Unexpected character".to_string())
             }
         }
         Some('|') => {
-            if chars.next() == Some('|') {
-                (chars.as_str(), Some(Token::Punctuator(PunctuatorKind::LogicalOr)))
+            if matches!(chars.get(1), Some('|')) {
+                chars.remove(0);
+                chars.remove(0);
+                Ok(Some(Token::Punctuator(PunctuatorKind::LogicalOr)))
             } else {
-                (input, None)
+                Err("Unexpected character".to_string())
             }
         }
-        Some('0'..='9') => scan_number(input),
-        Some('"') => scan_string(input),
-        Some('a'..='z' | 'A'..='Z' | '_') => scan_identifier(input),
-        _ => (input, None)
+        Some('0'..='9') => scan_number(chars),
+        Some('"') => scan_string(chars),
+        Some('a'..='z' | 'A'..='Z' | '_') => scan_identifier(chars),
+        None => Ok(None),
+        _ => Err("Unexpected character".to_string())
     }
 }
 
-fn scan_number(mut input: &str) -> (&str, Option<Token>) {
+fn scan_number(chars: &mut Vec<char>) -> Result<Option<Token>, String> {
     let mut digits: Vec<char> = vec![];
     let mut has_dot = false;
 
     loop {
-        let mut chars = input.chars();
-        match chars.next() {
-            Some(d @ '0'..='9') => {
+        match chars.first() {
+            Some(&d @ '0'..='9') => {
                 digits.push(d);
-                input = chars.as_str();
+                chars.remove(0);
             }
             Some('.') => {
+                if digits.is_empty() {
+                    return Ok(None);
+                }
                 if has_dot {
                     break;
                 }
-                match chars.next() {
-                    Some(d @ '0'..='9') => {
+                match chars.get(1) {
+                    Some(&d @ '0'..='9') => {
                         digits.push('.');
                         has_dot = true;
                         digits.push(d);
-                        input = chars.as_str();
+                        chars.remove(0);
+                        chars.remove(0);
                     }
                     _ => break,
                 }
@@ -85,68 +123,57 @@ fn scan_number(mut input: &str) -> (&str, Option<Token>) {
     }
 
     if digits.is_empty() {
-        return (input, None);
+        Ok(None)
+    } else {
+        Ok(Some(Token::Number(digits.iter().collect::<String>().parse().unwrap())))
     }
-    if digits.last() == Some(&'.') {
-        return (input, None);
-    }
-    if digits.first() == Some(&'.') {
-        return (input, None);
-    }
-
-    (input, Some(Token::Number(digits.iter().collect::<String>().parse().unwrap())))
 }
 
-fn scan_string(mut input: &str) -> (&str, Option<Token>) {
+fn scan_string(chars: &mut Vec<char>) -> Result<Option<Token>, String> {
     let mut string: Vec<char> = vec![];
 
-    let mut chars = input.chars();
-
-    if chars.next() != Some('"') {
-        return (input, None);
+    if !matches!(chars.first(), Some('"')) {
+        return Ok(None);
     }
+    chars.remove(0);
 
     loop {
-        match chars.next() {
+        match chars.first() {
             Some('"') => {
-                return (chars.as_str(), Some(Token::String(string.iter().collect::<String>())));
+                chars.remove(0);
+                return Ok(Some(Token::String(string.iter().collect::<String>())));
             }
-            Some(c) => {
+            Some(&c) => {
                 string.push(c);
+                chars.remove(0);
             }
-            _ => return (input, None)
+            None => return Err("Unexpected end of input".to_string())
         }
     }
 }
 
-fn scan_identifier(mut input: &str) -> (&str, Option<Token>) {
+fn scan_identifier(chars: &mut Vec<char>) -> Result<Option<Token>, String> {
     let mut identifier_name: Vec<char> = vec![];
 
-    match input.chars().next() {
-        Some(c @ ('a'..='z' | 'A'..='Z' | '_')) => {
+    match chars.first() {
+        Some(&c @ ('a'..='z' | 'A'..='Z' | '_')) => {
             identifier_name.push(c);
-
-            let mut chars = input.chars();
-            chars.next();
-            input = chars.as_str();
+            chars.remove(0);
         }
-        _ => return (input, None)
+        _ => return Ok(None)
     }
 
-    while let Some(c @ ('a'..='z' | 'A'..='Z' | '0'..='9' | '_')) = input.chars().next() {
+    while let Some(&c @ ('a'..='z' | 'A'..='Z' | '0'..='9' | '_')) = chars.first() {
         identifier_name.push(c);
-
-        let mut chars = input.chars();
-        chars.next();
-        input = chars.as_str();
+        chars.remove(0);
     }
 
     let name = identifier_name.iter().collect::<String>();
 
     match name.as_str() {
-        "true" => (input, Some(Token::Bool(true))),
-        "false" => (input, Some(Token::Bool(false))),
-        _ => (input, Some(Token::Identifier(name)))
+        "true" => Ok(Some(Token::Bool(true))),
+        "false" => Ok(Some(Token::Bool(false))),
+        _ => Ok(Some(Token::Identifier(name)))
     }
 }
 
@@ -154,17 +181,25 @@ fn scan_identifier(mut input: &str) -> (&str, Option<Token>) {
 #[cfg(test)]
 mod tests {
     use crate::lexer::scan_token;
+    use crate::token::Token;
+
+    fn assert(input: &str, expected_token: Result<Option<Token>, String>, expected_remaining: &str) {
+        let mut chars = input.chars().collect();
+        let token = scan_token(&mut chars);
+        assert_eq!(token, expected_token);
+        assert_eq!(chars.iter().collect::<String>(), expected_remaining);
+    }
 
     #[test]
     fn test_whitespace() {
-        assert_eq!(scan_token(" "), ("", None));
-        assert_eq!(scan_token("\t"), ("", None));
-        assert_eq!(scan_token("\r"), ("", None));
-        assert_eq!(scan_token("\n"), ("", None));
-        assert_eq!(scan_token(" a"), ("a", None));
-        assert_eq!(scan_token("\ta"), ("a", None));
-        assert_eq!(scan_token("\ra"), ("a", None));
-        assert_eq!(scan_token("\na"), ("a", None));
+        assert(" ", Ok(None), "");
+        assert("\t", Ok(None), "");
+        assert("\r", Ok(None), "");
+        assert("\n", Ok(None), "");
+        assert(" a", Ok(None), "a");
+        assert("\ta", Ok(None), "a");
+        assert("\ra", Ok(None), "a");
+        assert("\na", Ok(None), "a");
     }
 
     mod tokens {
@@ -174,141 +209,145 @@ mod tests {
         fn test_scan_tokens() {
             assert_eq!(
                 scan("function(123)"),
-                vec![
+                Ok(vec![
                     Token::Identifier("function".to_string()),
                     Token::Punctuator(PunctuatorKind::LeftParen),
                     Token::Number(123f64),
                     Token::Punctuator(PunctuatorKind::RightParen),
-                ]
+                ])
             );
         }
     }
 
     mod number {
-        use crate::lexer::{scan_token, Token};
+        use crate::lexer::tests::assert;
+        use crate::lexer::Token;
 
         #[test]
         fn test_number_decimal_int() {
-            assert_eq!(scan_token("123"), ("", Some(Token::Number(123f64))));
-            assert_eq!(scan_token("123a"), ("a", Some(Token::Number(123f64))));
+            assert("123", Ok(Some(Token::Number(123f64))), "");
+            assert("123a", Ok(Some(Token::Number(123f64))), "a");
         }
 
         #[test]
         fn test_number_decimal_int_starting_with_zero() {
-            assert_eq!(scan_token("0"), ("", Some(Token::Number(0f64))));
-            assert_eq!(scan_token("0a"), ("a", Some(Token::Number(0f64))));
-            assert_eq!(scan_token("0123"), ("", Some(Token::Number(123f64))));
+            assert("0", Ok(Some(Token::Number(0f64))), "");
+            assert("0a", Ok(Some(Token::Number(0f64))), "a");
+            assert("0123", Ok(Some(Token::Number(123f64))), "");
         }
 
         #[test]
         fn test_number_decimal_float() {
-            assert_eq!(scan_token("123.456"), ("", Some(Token::Number(123.456f64))));
-            assert_eq!(scan_token("123.456a"), ("a", Some(Token::Number(123.456f64))));
+            assert("123.456", Ok(Some(Token::Number(123.456f64))), "");
+            assert("123.456a", Ok(Some(Token::Number(123.456f64))), "a");
         }
 
         #[test]
         fn test_number_decimal_float_starting_with_zero() {
-            assert_eq!(scan_token("0.456"), ("", Some(Token::Number(0.456f64))));
-            assert_eq!(scan_token("0.456a"), ("a", Some(Token::Number(0.456f64))));
+            assert("0.456", Ok(Some(Token::Number(0.456f64))), "");
+            assert("0.456a", Ok(Some(Token::Number(0.456f64))), "a");
         }
 
         #[test]
         fn test_number_decimal_ending_with_dot() {
-            assert_eq!(scan_token("123."), (".", Some(Token::Number(123f64))));
-            assert_eq!(scan_token("0."), (".", Some(Token::Number(0f64))));
-            assert_eq!(scan_token("123.a"), (".a", Some(Token::Number(123f64))));
-            assert_eq!(scan_token("0.a"), (".a", Some(Token::Number(0f64))));
+            assert("123.", Ok(Some(Token::Number(123f64))), ".");
+            assert("0.", Ok(Some(Token::Number(0f64))), ".");
+            assert("123.a", Ok(Some(Token::Number(123f64))), ".a");
+            assert("0.a", Ok(Some(Token::Number(0f64))), ".a");
         }
 
         #[test]
         fn test_number_decimal_with_multiple_dots() {
-            assert_eq!(scan_token("123.456.789"), (".789", Some(Token::Number(123.456f64))));
+            assert("123.456.789", Ok(Some(Token::Number(123.456f64))), ".789");
         }
     }
 
     mod string {
-        use crate::lexer::{scan_token, Token};
+        use crate::lexer::tests::assert;
+        use crate::lexer::Token;
 
         #[test]
         fn string() {
-            assert_eq!(scan_token("\"123\""), ("", Some(Token::String("123".to_string()))));
-            assert_eq!(scan_token("\"123\"a"), ("a", Some(Token::String("123".to_string()))));
+            assert("\"123\"", Ok(Some(Token::String("123".to_string()))), "");
+            assert("\"123\"a", Ok(Some(Token::String("123".to_string()))), "a");
         }
 
         #[test]
         fn empty_string() {
-            assert_eq!(scan_token("\"\""), ("", Some(Token::String("".to_string()))));
-            assert_eq!(scan_token("\"\"a"), ("a", Some(Token::String("".to_string()))));
+            assert("\"\"", Ok(Some(Token::String("".to_string()))), "");
+            assert("\"\"a", Ok(Some(Token::String("".to_string()))), "a");
         }
-        
     }
 
     mod punctuator {
-        use crate::lexer::{PunctuatorKind, scan_token, Token};
+        use crate::lexer::{PunctuatorKind, Token};
+        use crate::lexer::tests::assert;
 
         #[test]
-        fn test_paren_open() {
-            assert_eq!(scan_token("("), ("", Some(Token::Punctuator(PunctuatorKind::LeftParen))));
-            assert_eq!(scan_token("(a"), ("a", Some(Token::Punctuator(PunctuatorKind::LeftParen))));
+        fn left_paren() {
+            assert("(", Ok(Some(Token::Punctuator(PunctuatorKind::LeftParen))), "");
+            assert("(a", Ok(Some(Token::Punctuator(PunctuatorKind::LeftParen))), "a");
         }
 
         #[test]
-        fn test_paren_close() {
-            assert_eq!(scan_token(")"), ("", Some(Token::Punctuator(PunctuatorKind::RightParen))));
-            assert_eq!(scan_token(")a"), ("a", Some(Token::Punctuator(PunctuatorKind::RightParen))));
+        fn right_paren() {
+            assert(")", Ok(Some(Token::Punctuator(PunctuatorKind::RightParen))), "");
+            assert(")a", Ok(Some(Token::Punctuator(PunctuatorKind::RightParen))), "a");
         }
 
         #[test]
-        fn test_brace_open() {
-            assert_eq!(scan_token("{"), ("", Some(Token::Punctuator(PunctuatorKind::LeftBrace))));
-            assert_eq!(scan_token("{a"), ("a", Some(Token::Punctuator(PunctuatorKind::LeftBrace))));
+        fn left_brace() {
+            assert("{", Ok(Some(Token::Punctuator(PunctuatorKind::LeftBrace))), "");
+            assert("{a", Ok(Some(Token::Punctuator(PunctuatorKind::LeftBrace))), "a");
         }
 
         #[test]
-        fn test_brace_close() {
-            assert_eq!(scan_token("}"), ("", Some(Token::Punctuator(PunctuatorKind::RightBrace))));
-            assert_eq!(scan_token("}a"), ("a", Some(Token::Punctuator(PunctuatorKind::RightBrace))));
+        fn right_brace() {
+            assert("}", Ok(Some(Token::Punctuator(PunctuatorKind::RightBrace))), "");
+            assert("}a", Ok(Some(Token::Punctuator(PunctuatorKind::RightBrace))), "a");
         }
 
         #[test]
-        fn test_semicolon() {
-            assert_eq!(scan_token(";"), ("", Some(Token::Punctuator(PunctuatorKind::SemiColon))));
-            assert_eq!(scan_token(";a"), ("a", Some(Token::Punctuator(PunctuatorKind::SemiColon))));
+        fn semicolon() {
+            assert(";", Ok(Some(Token::Punctuator(PunctuatorKind::SemiColon))), "");
+            assert(";a", Ok(Some(Token::Punctuator(PunctuatorKind::SemiColon))), "a");
         }
 
         #[test]
-        fn test_logical_not() {
-            assert_eq!(scan_token("!"), ("", Some(Token::Punctuator(PunctuatorKind::LogicalNot))));
-            assert_eq!(scan_token("!a"), ("a", Some(Token::Punctuator(PunctuatorKind::LogicalNot))));
+        fn logical_not() {
+            assert("!", Ok(Some(Token::Punctuator(PunctuatorKind::LogicalNot))), "");
+            assert("!a", Ok(Some(Token::Punctuator(PunctuatorKind::LogicalNot))), "a");
         }
 
         #[test]
-        fn test_logical_and() {
-            assert_eq!(scan_token("&&"), ("", Some(Token::Punctuator(PunctuatorKind::LogicalAnd))));
-            assert_eq!(scan_token("&&a"), ("a", Some(Token::Punctuator(PunctuatorKind::LogicalAnd))));
+        fn logical_and() {
+            assert("&&", Ok(Some(Token::Punctuator(PunctuatorKind::LogicalAnd))), "");
+            assert("&&a", Ok(Some(Token::Punctuator(PunctuatorKind::LogicalAnd))), "a");
+            assert("&&&", Ok(Some(Token::Punctuator(PunctuatorKind::LogicalAnd))), "&");
         }
 
         #[test]
-        fn test_logical_or() {
-            assert_eq!(scan_token("||"), ("", Some(Token::Punctuator(PunctuatorKind::LogicalOr))));
-            assert_eq!(scan_token("||a"), ("a", Some(Token::Punctuator(PunctuatorKind::LogicalOr))));
+        fn logical_or() {
+            assert("||", Ok(Some(Token::Punctuator(PunctuatorKind::LogicalOr))), "");
+            assert("||a", Ok(Some(Token::Punctuator(PunctuatorKind::LogicalOr))), "a");
+            assert("|||", Ok(Some(Token::Punctuator(PunctuatorKind::LogicalOr))), "|");
         }
     }
 
     mod identifier {
-        use crate::lexer::scan_token;
+        use crate::lexer::tests::assert;
         use crate::token::Token;
 
         #[test]
         fn bool_true() {
-            assert_eq!(scan_token("true"), ("", Some(Token::Bool(true))));
-            assert_eq!(scan_token("truea"), ("", Some(Token::Identifier("truea".to_string()))));
+            assert("true", Ok(Some(Token::Bool(true))), "");
+            assert("trueq", Ok(Some(Token::Identifier("trueq".to_string()))), "");
         }
 
         #[test]
         fn bool_false() {
-            assert_eq!(scan_token("false"), ("", Some(Token::Bool(false))));
-            assert_eq!(scan_token("falsea"), ("", Some(Token::Identifier("falsea".to_string()))));
+            assert("false", Ok(Some(Token::Bool(false))), "");
+            assert("falseq", Ok(Some(Token::Identifier("falseq".to_string()))), "");
         }
     }
 }

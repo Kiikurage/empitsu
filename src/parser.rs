@@ -4,7 +4,7 @@ use crate::punctuator_kind::PunctuatorKind;
 use crate::token::Token;
 
 pub fn parse(input: &str) -> Result<Node, String> {
-    parse_program(&mut scan(input))
+    parse_program(&mut scan(input)?)
 }
 
 pub fn parse_program(tokens: &mut Vec<Token>) -> Result<Node, String> {
@@ -60,12 +60,12 @@ fn parse_if_statement(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
     if !matches!(tokens.first(), Some(Token::Identifier(ref name)) if name == "if") {
         return Ok(None);
     }
-    tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+    tokens.remove(0);
 
     if !matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::LeftParen))) {
         return Err("Expected '('".to_string());
     }
-    tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+    tokens.remove(0);
 
     let condition = match parse_expression(tokens)? {
         Some(node) => node,
@@ -75,7 +75,7 @@ fn parse_if_statement(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
     if !matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::RightParen))) {
         return Err("Expected ')'".to_string());
     }
-    tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+    tokens.remove(0);
 
     let true_branch = match parse_statement(tokens)? {
         Some(node) => node,
@@ -83,7 +83,7 @@ fn parse_if_statement(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
     };
 
     let false_branch = if matches!(tokens.first(), Some(Token::Identifier(ref name)) if name == "else") {
-        tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+        tokens.remove(0);
 
         match parse_statement(tokens)? {
             Some(node) => Some(node),
@@ -107,23 +107,23 @@ fn parse_for_statement(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> 
     if !matches!(tokens.first(), Some(Token::Identifier(ref name)) if name == "for") {
         return Ok(None);
     }
-    tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+    tokens.remove(0);
 
     if !matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::LeftParen))) {
         return Err("Expected '('".to_string());
     }
-    tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+    tokens.remove(0);
 
     let identifier = match tokens.first() {
         Some(Token::Identifier(identifier)) => identifier.clone(),
         _ => return Err("Expected identifier".to_string()),
     };
-    tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+    tokens.remove(0);
 
     if !matches!(tokens.first(), Some(Token::Identifier(ref name)) if name == "in") {
         return Err("Expected 'in'".to_string());
     }
-    tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+    tokens.remove(0);
 
     let iterator = match parse_range_expression(tokens)? {
         Some(iterator) => iterator,
@@ -133,7 +133,7 @@ fn parse_for_statement(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> 
     if !matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::RightParen))) {
         return Err("Expected ')'".to_string());
     }
-    tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+    tokens.remove(0);
 
     let body = match parse_statement(tokens)? {
         Some(body) => body,
@@ -147,16 +147,16 @@ fn parse_variable_declaration(tokens: &mut Vec<Token>) -> Result<Option<Node>, S
     if !matches!(tokens.first(), Some(Token::Identifier(ref name)) if name == "let") {
         return Ok(None);
     }
-    tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+    tokens.remove(0);
 
     let identifier = match tokens.first() {
         Some(Token::Identifier(identifier)) => identifier.clone(),
         _ => return Err("Expected identifier".to_string()),
     };
-    tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+    tokens.remove(0);
 
     let value = if matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::Equal))) {
-        tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+        tokens.remove(0);
 
         match parse_expression(tokens)? {
             Some(value) => Some(value),
@@ -173,18 +173,18 @@ fn parse_function_declaration(tokens: &mut Vec<Token>) -> Result<Option<Node>, S
     if !matches!(tokens.first(), Some(Token::Identifier(ref name)) if name == "function") {
         return Ok(None);
     }
-    tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+    tokens.remove(0);
 
     let name = match tokens.first() {
         Some(Token::Identifier(name)) => name.clone(),
         _ => return Err("Expected identifier".to_string()),
     };
-    tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+    tokens.remove(0);
 
     if !matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::LeftParen))) {
         return Err("Expected '('".to_string());
     }
-    tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+    tokens.remove(0);
 
     let mut parameters = Vec::new();
     while let Some(Token::Identifier(identifier)) = tokens.first() {
@@ -194,13 +194,13 @@ fn parse_function_declaration(tokens: &mut Vec<Token>) -> Result<Option<Node>, S
         if !matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::Comma))) {
             break;
         }
-        tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+        tokens.remove(0);
     }
 
     if !matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::RightParen))) {
         return Err("Expected ')'".to_string());
     }
-    tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+    tokens.remove(0);
 
     let block = match parse_block_statement(tokens)? {
         Some(block) => block,
@@ -237,7 +237,7 @@ fn parse_range_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, Strin
     if !matches!(tokens.first(), Some(Token::Identifier(ref name)) if name == "to") {
         return Ok(Some(start));
     }
-    tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+    tokens.remove(0);
 
     let end = match parse_expression_statement(tokens)? {
         Some(start) => start,
@@ -276,7 +276,7 @@ fn parse_logical_or_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, 
         if !matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::LogicalOr))) {
             break;
         }
-        tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+        tokens.remove(0);
 
         let rhs = match parse_logical_and_expression(tokens)? {
             Some(node) => node,
@@ -299,7 +299,7 @@ fn parse_logical_and_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>,
         if !matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::LogicalAnd))) {
             break;
         }
-        tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+        tokens.remove(0);
 
         let rhs = match parse_additive_expression(tokens)? {
             Some(node) => node,
@@ -321,11 +321,11 @@ fn parse_additive_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, St
     loop {
         let operator = match tokens.first() {
             Some(Token::Punctuator(PunctuatorKind::Plus)) => {
-                tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+                tokens.remove(0);
                 PunctuatorKind::Plus
             }
             Some(Token::Punctuator(PunctuatorKind::Minus)) => {
-                tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+                tokens.remove(0);
                 PunctuatorKind::Minus
             }
             _ => break
@@ -351,11 +351,11 @@ fn parse_multiplicative_expression(tokens: &mut Vec<Token>) -> Result<Option<Nod
     loop {
         let operator = match tokens.first() {
             Some(Token::Punctuator(PunctuatorKind::Multiply)) => {
-                tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+                tokens.remove(0);
                 PunctuatorKind::Multiply
             }
             Some(Token::Punctuator(PunctuatorKind::Divide)) => {
-                tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+                tokens.remove(0);
                 PunctuatorKind::Divide
             }
             _ => break
@@ -375,15 +375,15 @@ fn parse_multiplicative_expression(tokens: &mut Vec<Token>) -> Result<Option<Nod
 fn parse_unary_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
     let operator = match tokens.first() {
         Some(Token::Punctuator(PunctuatorKind::Plus)) => {
-            tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+            tokens.remove(0);
             PunctuatorKind::Plus
         }
         Some(Token::Punctuator(PunctuatorKind::Minus)) => {
-            tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+            tokens.remove(0);
             PunctuatorKind::Minus
         }
         Some(Token::Punctuator(PunctuatorKind::LogicalNot)) => {
-            tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+            tokens.remove(0);
             PunctuatorKind::LogicalNot
         }
         _ => return parse_statement_expression(tokens),
@@ -413,12 +413,12 @@ fn parse_if_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> 
     if !matches!(tokens.first(), Some(Token::Identifier(ref name)) if name == "if") {
         return Ok(None);
     }
-    tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+    tokens.remove(0);
 
     if !matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::LeftParen))) {
         return Err("Expected '('".to_string());
     }
-    tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+    tokens.remove(0);
 
     let condition = match parse_expression(tokens)? {
         Some(node) => node,
@@ -428,7 +428,7 @@ fn parse_if_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> 
     if !matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::RightParen))) {
         return Err("Expected ')'".to_string());
     }
-    tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+    tokens.remove(0);
 
     let true_branch = match parse_expression(tokens)? {
         Some(node) => node,
@@ -438,7 +438,7 @@ fn parse_if_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> 
     if !matches!(tokens.first(), Some(Token::Identifier(ref name)) if name == "else") {
         return Err("Expected 'else'".to_string());
     }
-    tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+    tokens.remove(0);
 
     let false_branch = match parse_expression(tokens)? {
         Some(node) => node,
@@ -452,7 +452,7 @@ fn parse_block_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, Strin
     if !matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::LeftBrace))) {
         return Ok(None);
     }
-    tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+    tokens.remove(0);
 
     let mut statements = Vec::new();
 
@@ -463,7 +463,7 @@ fn parse_block_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, Strin
     if !matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::RightBrace))) {
         return Err("Expected '}'".to_string());
     }
-    tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+    tokens.remove(0);
 
     Ok(Some(Node::BlockExpression(statements)))
 }
@@ -477,7 +477,7 @@ fn parse_call_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, String
     if !matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::LeftParen))) {
         return Ok(Some(callee));
     }
-    tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+    tokens.remove(0);
 
     let mut arguments = Vec::new();
 
@@ -487,13 +487,13 @@ fn parse_call_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, String
         if !matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::Comma))) {
             break;
         }
-        tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+        tokens.remove(0);
     };
 
     if !matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::RightParen))) {
         return Err("Expected ')'".to_string());
     }
-    tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+    tokens.remove(0);
 
     Ok(Some(Node::CallExpression(Box::new(callee), arguments)))
 }
@@ -503,7 +503,7 @@ fn parse_call_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, String
 fn parse_primary_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
     match tokens.first() {
         Some(Token::Punctuator(PunctuatorKind::LeftParen)) => {
-            tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+            tokens.remove(0);
 
             let expression = match parse_expression(tokens)? {
                 Some(node) => node,
@@ -513,7 +513,7 @@ fn parse_primary_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, Str
             if !matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::RightParen))) {
                 return Err("Expected ')'".to_string());
             }
-            tokens.remove(0); // TODO: 以降マッチ失敗したときのロールバック
+            tokens.remove(0);
 
             Ok(Some(expression))
         }

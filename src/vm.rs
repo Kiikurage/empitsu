@@ -8,7 +8,7 @@ use crate::parser::parse;
 use crate::punctuator_kind::PunctuatorKind;
 
 #[derive(Debug, Clone, PartialEq)]
-enum Value {
+pub enum Value {
     Number(f64),
     Bool(bool),
     String(String),
@@ -334,14 +334,14 @@ impl VM {
         }
     }
 
-    fn get_variable(&self, name: &String) -> Result<Value, String> {
+    fn get_variable(&self, name: &str) -> Result<Value, String> {
         match self.environments.last() {
             Some(environment) => environment.borrow().get_variable(name),
             None => panic!("No environment"),
         }
     }
 
-    fn set_variable(&mut self, name: &String, value: &Value) -> Result<(), String> {
+    fn set_variable(&mut self, name: &str, value: &Value) -> Result<(), String> {
         match self.environments.last() {
             Some(environment) => environment.borrow_mut().set_variable(name, value),
             None => panic!("No environment"),
