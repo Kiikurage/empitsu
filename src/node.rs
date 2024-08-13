@@ -13,6 +13,7 @@ pub enum Node {
     FunctionDeclaration(String, Vec<String>, Box<Node>), // name, parameters, body
 
     // Expressions
+    FunctionExpression(Option<String>, Vec<String>, Box<Node>), // name, parameters, body
     IfExpression(Box<Node>, Box<Node>, Box<Node>), // condition, true-branch, false-branch
     BlockExpression(Vec<Node>),
     RangeIterator(Box<Node>, Box<Node>), // temporary

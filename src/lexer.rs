@@ -4,8 +4,10 @@ use crate::token::Token;
 pub fn scan(input: &str) -> Result<Vec<Token>, String> {
     let mut chars = input.chars().collect::<Vec<char>>();
     let mut tokens = Vec::new();
-    while let Some(token) = scan_token(&mut chars)? {
-        tokens.push(token)
+    while !chars.is_empty() { 
+        if let Some(token) = scan_token(&mut chars)? {
+            tokens.push(token)
+        }
     }
     Ok(tokens)
 }

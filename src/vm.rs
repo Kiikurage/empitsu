@@ -166,8 +166,28 @@ impl VM {
                 self.exit_environment();
                 Ok(Value::Number(0.0))
             }
+            Node::FunctionDeclaration(name, parameters, body) => {
+                let function = Value::Function {
+                    name: name.clone(),
+                    parameters: parameters.clone(),
+                    body: body.clone(),
+                    closure: self.environments.last().unwrap().clone(),
+                };
+                self.declare_variable(name, &function);
+
+                Ok(function)
+            }
 
             // Expression
+            Node::FunctionExpression(name, parameters, body) => {
+                let function = Value::Function {
+                    name: name.clone().unwrap_or("(anonymous)".to_string()),
+                    parameters: parameters.clone(),
+                    body: body.clone(),
+                    closure: self.environments.last().unwrap().clone(),
+                };
+                Ok(function)
+            }
             Node::IfExpression(condition, true_branch, false_branch) => {
                 let condition = self.eval(condition)?.as_bool()?;
 
@@ -302,17 +322,6 @@ impl VM {
             Node::RangeIterator(_start, _end) => {
                 Err("Unsupported".to_string())
             }
-            Node::FunctionDeclaration(name, parameters, body) => {
-                let function = Value::Function {
-                    name: name.clone(),
-                    parameters: parameters.clone(),
-                    body: body.clone(),
-                    closure: self.environments.last().unwrap().clone(),
-                };
-                self.declare_variable(name, &function);
-
-                Ok(function)
-            }
         }
     }
 
@@ -356,6 +365,39 @@ pub fn eval(input: &str) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use crate::vm::{eval, Value};
+
+    #[test]
+    fn reserved_words_in_variable_declaration() {
+        assert_eq!(eval("let if"), Err("SyntaxError: \"if\" is a reserved word".to_string()));
+        assert_eq!(eval("let let"), Err("SyntaxError: \"let\" is a reserved word".to_string()));
+        assert_eq!(eval("let for"), Err("SyntaxError: \"for\" is a reserved word".to_string()));
+        assert_eq!(eval("let function"), Err("SyntaxError: \"function\" is a reserved word".to_string()));
+        assert_eq!(eval("let true"), Err("Expected identifier".to_string()));
+        assert_eq!(eval("let false"), Err("Expected identifier".to_string()));
+        assert_eq!(eval("let else"), Err("SyntaxError: \"else\" is a reserved word".to_string()));
+    }
+
+    #[test]
+    fn reserved_words_in_function_name() {
+        assert_eq!(eval("function if() {}"), Err("SyntaxError: \"if\" is a reserved word".to_string()));
+        assert_eq!(eval("function let() {}"), Err("SyntaxError: \"let\" is a reserved word".to_string()));
+        assert_eq!(eval("function for() {}"), Err("SyntaxError: \"for\" is a reserved word".to_string()));
+        assert_eq!(eval("function function() {}"), Err("SyntaxError: \"function\" is a reserved word".to_string()));
+        assert_eq!(eval("function true() {}"), Err("Expected '('".to_string()));
+        assert_eq!(eval("function false() {}"), Err("Expected '('".to_string()));
+        assert_eq!(eval("function else() {}"), Err("SyntaxError: \"else\" is a reserved word".to_string()));
+    }
+
+    #[test]
+    fn reserved_words_in_function_parameter() {
+        assert_eq!(eval("function f(if) {}"), Err("SyntaxError: \"if\" is a reserved word".to_string()));
+        assert_eq!(eval("function f(let) {}"), Err("SyntaxError: \"let\" is a reserved word".to_string()));
+        assert_eq!(eval("function f(for) {}"), Err("SyntaxError: \"for\" is a reserved word".to_string()));
+        assert_eq!(eval("function f(function) {}"), Err("SyntaxError: \"function\" is a reserved word".to_string()));
+        assert_eq!(eval("function f(true) {}"), Err("Expected ')'".to_string()));
+        assert_eq!(eval("function f(false) {}"), Err("Expected ')'".to_string()));
+        assert_eq!(eval("function f(else) {}"), Err("SyntaxError: \"else\" is a reserved word".to_string()));
+    }
 
     #[test]
     fn test_eval() {
@@ -456,6 +498,38 @@ mod tests {
             debug(x)
             x
         "), Ok(Value::Number(1.0)));
+    }
+
+    #[test]
+    fn function_object() {
+        assert_eq!(eval("
+            let double = function double_fn_expression(x) {
+                x * 2
+            }
+
+            double(3)
+        "), Ok(Value::Number(6.0)));
+    }
+
+    #[test]
+    fn anonymous_function_object() {
+        assert_eq!(eval("
+            let double = function (x) {
+                x * 2
+            }
+
+            double(3)
+        "), Ok(Value::Number(6.0)));
+    }
+
+    #[test]
+    fn function_object_cannot_be_referred_by_name() {
+        assert_eq!(eval("
+            function f(x) { x * 10 }
+            let double = function f(x) { x * 2 }
+
+            f(3)
+        "), Ok(Value::Number(30.0)));
     }
 
     #[test]

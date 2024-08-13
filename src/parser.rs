@@ -150,7 +150,12 @@ fn parse_variable_declaration(tokens: &mut Vec<Token>) -> Result<Option<Node>, S
     tokens.remove(0);
 
     let identifier = match tokens.first() {
-        Some(Token::Identifier(identifier)) => identifier.clone(),
+        Some(Token::Identifier(identifier)) => {
+            if is_reserved_words(identifier) {
+                return Err(format!("SyntaxError: \"{}\" is a reserved word", identifier));
+            }
+            identifier.clone()
+        }
         _ => return Err("Expected identifier".to_string()),
     };
     tokens.remove(0);
@@ -170,44 +175,7 @@ fn parse_variable_declaration(tokens: &mut Vec<Token>) -> Result<Option<Node>, S
 }
 
 fn parse_function_declaration(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
-    if !matches!(tokens.first(), Some(Token::Identifier(ref name)) if name == "function") {
-        return Ok(None);
-    }
-    tokens.remove(0);
-
-    let name = match tokens.first() {
-        Some(Token::Identifier(name)) => name.clone(),
-        _ => return Err("Expected identifier".to_string()),
-    };
-    tokens.remove(0);
-
-    if !matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::LeftParen))) {
-        return Err("Expected '('".to_string());
-    }
-    tokens.remove(0);
-
-    let mut parameters = Vec::new();
-    while let Some(Token::Identifier(identifier)) = tokens.first() {
-        parameters.push(identifier.clone());
-        tokens.remove(0);
-
-        if !matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::Comma))) {
-            break;
-        }
-        tokens.remove(0);
-    }
-
-    if !matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::RightParen))) {
-        return Err("Expected ')'".to_string());
-    }
-    tokens.remove(0);
-
-    let block = match parse_block_statement(tokens)? {
-        Some(block) => block,
-        None => return Err("Expected block".to_string()),
-    };
-
-    Ok(Some(Node::FunctionDeclaration(name, parameters, Box::new(block))))
+    return parse_function(tokens, true);
 }
 
 fn parse_expression_statement(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
@@ -255,8 +223,8 @@ fn parse_assignment_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, 
     if !matches!(tokens.get(1), Some(Token::Punctuator(PunctuatorKind::Equal))) {
         return Ok(None);
     }
-    tokens.remove(0); // identifier TODO: 以降マッチ失敗したときのロールバック
-    tokens.remove(0); // "=" TODO: 以降マッチ失敗したときのロールバック
+    tokens.remove(0);
+    tokens.remove(0);
 
     let value = match parse_expression(tokens)? {
         Some(node) => node,
@@ -398,6 +366,10 @@ fn parse_unary_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, Strin
 }
 
 fn parse_statement_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
+    if let Some(node) = parse_function_expression(tokens)? {
+        return Ok(Some(node));
+    }
+
     if let Some(node) = parse_if_expression(tokens)? {
         return Ok(Some(node));
     }
@@ -407,6 +379,10 @@ fn parse_statement_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, S
     }
 
     parse_call_expression(tokens)
+}
+
+fn parse_function_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
+    return parse_function(tokens, false);
 }
 
 fn parse_if_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
@@ -543,6 +519,70 @@ fn parse_primary_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, Str
         _ => Ok(None),
     }
 }
+
+fn parse_function(tokens: &mut Vec<Token>, name_required: bool) -> Result<Option<Node>, String> {
+    if !matches!(tokens.first(), Some(Token::Identifier(ref name)) if name == "function") {
+        return Ok(None);
+    }
+    tokens.remove(0);
+
+    let name = match tokens.first() {
+        Some(Token::Identifier(name)) => {
+            if is_reserved_words(name) {
+                return Err(format!("SyntaxError: \"{}\" is a reserved word", name));
+            }
+
+            let name = name.clone();
+            tokens.remove(0);
+            Some(name)
+        }
+        _ => None,
+    };
+
+    if !matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::LeftParen))) {
+        return Err("Expected '('".to_string());
+    }
+    tokens.remove(0);
+
+    let mut parameters = Vec::new();
+    while let Some(Token::Identifier(identifier)) = tokens.first() {
+        if is_reserved_words(identifier) {
+            return Err(format!("SyntaxError: \"{}\" is a reserved word", identifier));
+        }
+
+        parameters.push(identifier.clone());
+        tokens.remove(0);
+
+        if !matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::Comma))) {
+            break;
+        }
+        tokens.remove(0);
+    }
+
+    if !matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::RightParen))) {
+        return Err("Expected ')'".to_string());
+    }
+    tokens.remove(0);
+
+    let block = match parse_block_statement(tokens)? {
+        Some(block) => block,
+        None => return Err("Expected block".to_string()),
+    };
+
+    if name_required {
+        match name {
+            Some(name) => Ok(Some(Node::FunctionDeclaration(name, parameters, Box::new(block)))),
+            None => Err("Expected identifier".to_string()),
+        }
+    } else {
+        Ok(Some(Node::FunctionExpression(name, parameters, Box::new(block))))
+    }
+}
+
+fn is_reserved_words(word: &str) -> bool {
+    matches!(word, "if" | "let" | "for" | "function" | "true" | "false" | "else")
+}
+
 
 #[cfg(test)]
 mod tests {
