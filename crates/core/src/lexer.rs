@@ -31,8 +31,44 @@ fn scan_token(chars: &mut Vec<char>) -> Result<Option<Token>, String> {
             Ok(Some(Token::Punctuator(PunctuatorKind::Multiply)))
         }
         Some('/') => {
-            chars.remove(0);
-            Ok(Some(Token::Punctuator(PunctuatorKind::Divide)))
+            match chars.get(1) {
+                Some('/') => {
+                    chars.remove(0);
+                    chars.remove(0);
+
+                    let mut body = String::new();
+                    while let Some(&c) = chars.first() {
+                        if c == '\n' {
+                            break;
+                        }
+                        body.push(c);
+                        chars.remove(0);
+                    }
+                    // Ok(Some(Token::Comment(body)))
+                    Ok(None)
+                }
+                Some('*') => {
+                    chars.remove(0);
+                    chars.remove(0);
+
+                    let mut body = String::new();
+                    while let Some(&c) = chars.first() {
+                        if c == '*' && matches!(chars.get(1), Some('/')) {
+                            chars.remove(0);
+                            chars.remove(0);
+                            break
+                        }
+                        body.push(c);
+                        chars.remove(0);
+                    }
+                    // Ok(Some(Token::Comment(body)))
+                    Ok(None)
+                }
+                _ => {
+                    chars.remove(0);
+                    Ok(Some(Token::Punctuator(PunctuatorKind::Divide)))
+                }
+            }
         }
         Some('(') => {
             chars.remove(0);

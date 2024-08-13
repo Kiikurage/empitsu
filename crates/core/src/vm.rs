@@ -548,6 +548,27 @@ mod tests {
     }
 
     #[test]
+    fn single_line_comment() {
+        assert_eq!(VM::new().eval("
+            let x = 1  // single line comment
+            x
+        "), Value::Number(1.0));
+    }
+
+    #[test]
+    fn multi_line_comment() {
+        assert_eq!(VM::new().eval("
+            let x = 1
+            /* THIS IS MULTI LINE COMMENTS
+
+            x = 100
+
+            */
+            x
+        "), Value::Number(1.0));
+    }
+
+    #[test]
     fn closure1() {
         assert_eq!(VM::new().eval("
             let x = 0
@@ -574,12 +595,12 @@ mod tests {
             function wrapper () {
                 let x = 100;
                 setX(1)
-                debug(x)
+                debug(x)  // 100
             }
 
-            debug(x)
-            wrapper()
-            debug(x)
+            debug(x)  // 0
+            wrapper()  // x=1
+            debug(x)  // 1
             x
         "), Value::Number(1.0));
     }
