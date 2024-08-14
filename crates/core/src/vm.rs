@@ -19,7 +19,6 @@ pub enum Value {
         body: Box<Node>,
         closure: Rc<RefCell<Environment>>,
     },
-    Object(HashMap<String, Value>),
     Ref(usize),
 }
 
@@ -30,7 +29,6 @@ impl Value {
             Value::Bool(_) => "bool",
             Value::String(_) => "string",
             Value::Function { .. } => "function",
-            Value::Object(_) => "object",
             Value::Ref(_) => "ref",
         }
     }
@@ -70,7 +68,6 @@ impl Debug for Value {
             Value::Bool(value) => write!(f, "{}", value),
             Value::String(value) => write!(f, "{}", value),
             Value::Function { name, parameters, .. } => write!(f, "function {}({})", name, parameters.join(", ")),
-            Value::Object(_) => write!(f, "object"),
             Value::Ref(value) => write!(f, "ref {}", value),
         }
     }
@@ -81,25 +78,6 @@ struct Environment {
     variables: HashMap<String, Value>,
     parent: Option<Rc<RefCell<Environment>>>,
 }
-
-// let x = 1
-// let y = true
-// let obj1 = { id: 1 }
-// let obj2 = { id: 2, obj1: obj1 }
-// obj1 = false
-// obj2.obj1.id = 3;
-//
-// variables = {
-//      x: 1,
-//      y: true,
-//      obj1: <ref id1>,
-//      obj2: <ref id2>
-// }
-//
-// objects = {
-//     id1: { id: 1 },
-//     id2: { id: 2, obj1: <ref id1> }
-// }
 
 impl Environment {
     fn new() -> Self {
@@ -146,7 +124,7 @@ impl Default for Environment {
 
 pub struct VM {
     environments: Vec<Rc<RefCell<Environment>>>,
-    objects: HashMap<usize, RefCell<Value>>,
+    objects: HashMap<usize, RefCell<HashMap<String, Value>>>,
 }
 
 enum BreakResult {
@@ -293,7 +271,7 @@ impl VM {
                             _ => return ControlFlow::Break(BreakResult::Error(Value::String("Expected identifier".to_string()))),
                         };
 
-                        let mut object = match self.eval_node(object)? {
+                        let mut members = match self.eval_node(object)? {
                             Value::Ref(address) => {
                                 match self.objects.get(&address) {
                                     Some(object) => object.borrow_mut(),
@@ -301,11 +279,6 @@ impl VM {
                                 }
                             }
                             _ => return ControlFlow::Break(BreakResult::Error(Value::String("Expected reference".to_string()))),
-                        };
-
-                        let members = match object.deref_mut() {
-                            Value::Object(members) => members,
-                            _ => return ControlFlow::Break(BreakResult::Error(Value::String("Expected object".to_string()))),
                         };
 
                         members.insert(property.clone(), value.clone());
@@ -354,7 +327,6 @@ impl VM {
                                         }
                                     }
                                     Value::Function { .. } => ControlFlow::Continue(Value::Number(0.0)),
-                                    Value::Object(_) => ControlFlow::Break(BreakResult::Error(Value::String("Failed to cast object to number".to_string()))),
                                     Value::Ref(_) => ControlFlow::Break(BreakResult::Error(Value::String("Failed to cast ref to number".to_string()))),
                                 }
                             }
@@ -365,7 +337,6 @@ impl VM {
                                     Value::Bool(value) => ControlFlow::Continue(Value::Bool(value)),
                                     Value::String(value) => ControlFlow::Continue(Value::Bool(value != "false")),
                                     Value::Function { .. } => ControlFlow::Continue(Value::Bool(true)),
-                                    Value::Object(_) => ControlFlow::Break(BreakResult::Error(Value::String("Failed to cast object to bool".to_string()))),
                                     Value::Ref(_) => ControlFlow::Break(BreakResult::Error(Value::String("Failed to cast ref to bool".to_string()))),
                                 }
                             }
@@ -376,7 +347,6 @@ impl VM {
                                     Value::Bool(value) => ControlFlow::Continue(Value::String(value.to_string())),
                                     Value::String(value) => ControlFlow::Continue(Value::String(value.clone())),
                                     Value::Function { name, parameters, .. } => ControlFlow::Continue(Value::String(format!("function {}({})", name, parameters.join(", ")))),
-                                    Value::Object(_) => ControlFlow::Break(BreakResult::Error(Value::String("Failed to cast object to string".to_string()))),
                                     Value::Ref(address) => ControlFlow::Continue(Value::String(address.to_string())),
                                 }
                             }
@@ -394,7 +364,6 @@ impl VM {
                                         Value::Bool(value) => println!("{}", value),
                                         Value::String(value) => println!("{}", value),
                                         Value::Function { name, parameters, .. } => println!("function {}({})", name, parameters.join(", ")),
-                                        Value::Object(_) => println!("object"),
                                         Value::Ref(value) => println!("ref {}", value),
                                     }
                                 }
@@ -453,7 +422,7 @@ impl VM {
                     _ => return ControlFlow::Break(BreakResult::Error(Value::String("Expected identifier".to_string()))),
                 };
 
-                let object = match self.eval_node(object)? {
+                let members = match self.eval_node(object)? {
                     Value::Ref(address) => {
                         match self.objects.get(&address) {
                             Some(object) => object.borrow_mut(),
@@ -461,10 +430,6 @@ impl VM {
                         }
                     }
                     _ => return ControlFlow::Break(BreakResult::Error(Value::String("Expected reference".to_string()))),
-                };
-                let members = match object.deref() {
-                    Value::Object(members) => members,
-                    _ => return ControlFlow::Break(BreakResult::Error(Value::String("Expected object".to_string()))),
                 };
 
                 match members.get(property) {
@@ -486,9 +451,8 @@ impl VM {
                         _ => unreachable!(),
                     }
                 }
-                let object = Value::Object(members);
                 let address = self.objects.len();
-                self.objects.insert(address, RefCell::new(object.clone()));
+                self.objects.insert(address, RefCell::new(members));
 
                 ControlFlow::Continue(Value::Ref(address))
             }
@@ -838,8 +802,8 @@ mod tests {
     }
 
     mod reference {
-        use std::collections::HashMap;
         use crate::vm::{Value, VM};
+        use std::collections::HashMap;
 
         #[test]
         fn set_and_get_object() {
@@ -852,7 +816,7 @@ mod tests {
             let mut expected_members = HashMap::new();
             expected_members.insert("id".to_string(), Value::Number(1.0));
             expected_members.insert("name".to_string(), Value::String("Alice".to_string()));
-            assert_eq!(vm.objects.get(&0).unwrap().borrow().clone(), Value::Object(expected_members));
+            assert_eq!(vm.objects.get(&0).unwrap().borrow().clone(), expected_members);
         }
 
         #[test]
@@ -870,7 +834,7 @@ mod tests {
             let mut expected_members_user_ref = HashMap::new();
             expected_members_user_ref.insert("user".to_string(), Value::Ref(0));
 
-            assert_eq!(vm.objects.get(&1).unwrap().borrow().clone(), Value::Object(expected_members_user_ref));
+            assert_eq!(vm.objects.get(&1).unwrap().borrow().clone(), expected_members_user_ref);
         }
 
         #[test]
@@ -893,7 +857,7 @@ mod tests {
             let mut expected_members = HashMap::new();
             expected_members.insert("id".to_string(), Value::Number(2.0));
             expected_members.insert("name".to_string(), Value::String("Alice".to_string()));
-            assert_eq!(vm.objects.get(&0).unwrap().borrow().clone(), Value::Object(expected_members));
+            assert_eq!(vm.objects.get(&0).unwrap().borrow().clone(), expected_members);
         }
 
         #[test]
@@ -912,7 +876,7 @@ mod tests {
             let mut expected_members_user_ref = HashMap::new();
             expected_members_user_ref.insert("user".to_string(), Value::Ref(0));
 
-            assert_eq!(vm.objects.get(&1).unwrap().borrow().clone(), Value::Object(expected_members_user_ref));
+            assert_eq!(vm.objects.get(&1).unwrap().borrow().clone(), expected_members_user_ref);
         }
 
         #[test]
@@ -932,7 +896,7 @@ mod tests {
             let mut expected_members_user_ref = HashMap::new();
             expected_members_user_ref.insert("user".to_string(), Value::Ref(0));
 
-            assert_eq!(vm.objects.get(&1).unwrap().borrow().clone(), Value::Object(expected_members_user_ref));
+            assert_eq!(vm.objects.get(&1).unwrap().borrow().clone(), expected_members_user_ref);
         }
 
         #[test]
@@ -952,7 +916,7 @@ mod tests {
             let mut expected_members_user_ref = HashMap::new();
             expected_members_user_ref.insert("user".to_string(), Value::Ref(0));
 
-            assert_eq!(vm.objects.get(&1).unwrap().borrow().clone(), Value::Object(expected_members_user_ref));
+            assert_eq!(vm.objects.get(&1).unwrap().borrow().clone(), expected_members_user_ref);
         }
 
         #[test]
