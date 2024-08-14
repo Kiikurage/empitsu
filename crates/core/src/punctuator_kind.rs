@@ -14,4 +14,6 @@ pub enum PunctuatorKind {
     LogicalNot,
     LogicalAnd,
     LogicalOr,
+    Dot,
+    Colon,
 }

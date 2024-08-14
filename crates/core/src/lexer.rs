@@ -90,6 +90,10 @@ fn scan_token(chars: &mut Vec<char>) -> Result<Option<Token>, String> {
             chars.remove(0);
             Ok(Some(Token::Punctuator(PunctuatorKind::SemiColon)))
         }
+        Some(':') => {
+            chars.remove(0);
+            Ok(Some(Token::Punctuator(PunctuatorKind::Colon)))
+        }
         Some(',') => {
             chars.remove(0);
             Ok(Some(Token::Punctuator(PunctuatorKind::Comma)))
@@ -119,6 +123,10 @@ fn scan_token(chars: &mut Vec<char>) -> Result<Option<Token>, String> {
             } else {
                 Err("Unexpected character".to_string())
             }
+        }
+        Some('.') => {
+            chars.remove(0);
+            Ok(Some(Token::Punctuator(PunctuatorKind::Dot)))
         }
         Some('0'..='9') => scan_number(chars),
         Some('"') => scan_string(chars),

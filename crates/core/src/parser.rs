@@ -2,100 +2,114 @@ use crate::lexer::scan;
 use crate::node::Node;
 use crate::punctuator_kind::PunctuatorKind;
 use crate::token::Token;
+use crate::token_iter::TokenIter;
 
 pub fn parse(input: &str) -> Result<Node, String> {
-    parse_program(&mut scan(input)?)
+    parse_program(&mut TokenIter::new(&scan(input)?))
 }
 
-pub fn parse_program(tokens: &mut Vec<Token>) -> Result<Node, String> {
+pub fn parse_program(tokens: &mut TokenIter) -> Result<Node, String> {
     let mut nodes = Vec::new();
 
     while !tokens.is_empty() {
-        if let Some(node) = parse_statement(tokens)? {
-            nodes.push(node);
-        } else {
-            return Err("Unexpected token".to_string());
+        match parse_statement(tokens)? {
+            Some(node) => nodes.push(node),
+            None => return Err("Expected statement".to_string()),
         }
     }
 
     Ok(Node::Program(nodes))
 }
 
+// Err -> 回復不可能なパース失敗 = 現在パースしようとしている構文にマッチすべきであることが確定している
+// Ok(None) -> 回復可能なパース失敗 = 現在パースしようとしている構文以外にマッチする可能性がある
+// Ok(Some(node)) -> パース成功
+
 // Statement
 
-fn parse_statement(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
-    if matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::SemiColon))) {
-        tokens.remove(0);
+fn parse_statement(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
+    let current = tokens.current;
+
+    if matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::SemiColon))) {
+        tokens.next();
         return Ok(Some(Node::EmptyStatement));
     }
 
     if let Some(node) = parse_if_statement(tokens)? {
         return Ok(Some(node));
     }
+    tokens.set_current(current);
 
     if let Some(node) = parse_block_statement(tokens)? {
         return Ok(Some(node));
     }
+    tokens.set_current(current);
 
     if let Some(node) = parse_return_statement(tokens)? {
         return Ok(Some(node));
     }
+    tokens.set_current(current);
 
     if let Some(node) = parse_break_statement(tokens)? {
         return Ok(Some(node));
     }
+    tokens.set_current(current);
 
     if let Some(node) = parse_for_statement(tokens)? {
         return Ok(Some(node));
     }
+    tokens.set_current(current);
 
     if let Some(node) = parse_variable_declaration(tokens)? {
         return Ok(Some(node));
     }
+    tokens.set_current(current);
 
     if let Some(node) = parse_function_declaration(tokens)? {
         return Ok(Some(node));
     }
+    tokens.set_current(current);
 
     if let Some(node) = parse_expression_statement(tokens)? {
         return Ok(Some(node));
     }
+    tokens.set_current(current);
 
     Ok(None)
 }
 
-fn parse_if_statement(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
-    if !matches!(tokens.first(), Some(Token::Identifier(ref name)) if name == "if") {
+fn parse_if_statement(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
+    if !matches!(tokens.peek(), Some(Token::Identifier(ref name)) if name == "if") {
         return Ok(None);
     }
-    tokens.remove(0);
+    tokens.next();
 
-    if !matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::LeftParen))) {
+    if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::LeftParen))) {
         return Err("Expected '('".to_string());
     }
-    tokens.remove(0);
+    tokens.next();
 
     let condition = match parse_expression(tokens)? {
         Some(node) => node,
         None => return Err("Expected expression".to_string()),
     };
 
-    if !matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::RightParen))) {
+    if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::RightParen))) {
         return Err("Expected ')'".to_string());
     }
-    tokens.remove(0);
+    tokens.next();
 
     let true_branch = match parse_statement(tokens)? {
         Some(node) => node,
         None => return Err("Expected statement".to_string()),
     };
 
-    let false_branch = if matches!(tokens.first(), Some(Token::Identifier(ref name)) if name == "else") {
-        tokens.remove(0);
+    let false_branch = if matches!(tokens.peek(), Some(Token::Identifier(ref name)) if name == "else") {
+        tokens.next();
 
         match parse_statement(tokens)? {
             Some(node) => Some(node),
-            None => return Err("Expected expression or block".to_string()),
+            None => return Err("Expected statement".to_string()),
         }
     } else {
         None
@@ -104,68 +118,65 @@ fn parse_if_statement(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
     Ok(Some(Node::IfStatement(Box::new(condition), Box::new(true_branch), false_branch.map(Box::new))))
 }
 
-fn parse_block_statement(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
-    match parse_block_expression(tokens)? {
-        Some(Node::BlockExpression(statements)) => Ok(Some(Node::BlockStatement(statements))),
-        _ => Ok(None),
-    }
+fn parse_block_statement(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
+    parse_block_expression(tokens)
 }
 
-fn parse_return_statement(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
+fn parse_return_statement(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
     parse_return_expression(tokens)
 }
 
-fn parse_break_statement(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
+fn parse_break_statement(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
     parse_break_expression(tokens)
 }
 
-fn parse_for_statement(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
-    if !matches!(tokens.first(), Some(Token::Identifier(ref name)) if name == "for") {
+fn parse_for_statement(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
+    if !matches!(tokens.peek(), Some(Token::Identifier(ref name)) if name == "for") {
         return Ok(None);
     }
-    tokens.remove(0);
+    tokens.next();
 
-    if !matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::LeftParen))) {
+    if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::LeftParen))) {
         return Err("Expected '('".to_string());
     }
-    tokens.remove(0);
+    tokens.next();
 
-    let identifier = match tokens.first() {
+    let identifier = match tokens.peek() {
         Some(Token::Identifier(identifier)) => identifier.clone(),
         _ => return Err("Expected identifier".to_string()),
     };
-    tokens.remove(0);
+    tokens.next();
 
-    if !matches!(tokens.first(), Some(Token::Identifier(ref name)) if name == "in") {
+    if !matches!(tokens.peek(), Some(Token::Identifier(ref name)) if name == "in") {
         return Err("Expected 'in'".to_string());
     }
-    tokens.remove(0);
+    tokens.next();
 
-    let iterator = match parse_range_expression(tokens)? {
-        Some(iterator) => iterator,
+    let iterator = match parse_expression(tokens)? {
+        Some(node) => node,
         None => return Err("Expected expression".to_string()),
     };
 
-    if !matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::RightParen))) {
+    if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::RightParen))) {
         return Err("Expected ')'".to_string());
     }
-    tokens.remove(0);
+    tokens.next();
 
     let body = match parse_statement(tokens)? {
-        Some(body) => body,
+        Some(node) => node,
         None => return Err("Expected statement".to_string()),
     };
 
     Ok(Some(Node::ForStatement(identifier, Box::new(iterator), Box::new(body))))
 }
 
-fn parse_variable_declaration(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
-    if !matches!(tokens.first(), Some(Token::Identifier(ref name)) if name == "let") {
+fn parse_variable_declaration(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
+    if !matches!(tokens.peek(), Some(Token::Identifier(ref name)) if name == "let") {
         return Ok(None);
     }
-    tokens.remove(0);
+    tokens.next();
 
-    let identifier = match tokens.first() {
+    let identifier = match tokens.peek() {
         Some(Token::Identifier(identifier)) => {
             if is_reserved_words(identifier) {
                 return Err(format!("SyntaxError: \"{}\" is a reserved word", identifier));
@@ -174,13 +185,13 @@ fn parse_variable_declaration(tokens: &mut Vec<Token>) -> Result<Option<Node>, S
         }
         _ => return Err("Expected identifier".to_string()),
     };
-    tokens.remove(0);
+    tokens.next();
 
-    let value = if matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::Equal))) {
-        tokens.remove(0);
+    let value = if matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::Equal))) {
+        tokens.next();
 
         match parse_expression(tokens)? {
-            Some(value) => Some(value),
+            Some(node) => Some(node),
             None => return Err("Expected expression".to_string()),
         }
     } else {
@@ -190,77 +201,98 @@ fn parse_variable_declaration(tokens: &mut Vec<Token>) -> Result<Option<Node>, S
     Ok(Some(Node::VariableDeclaration(identifier, value.map(Box::new))))
 }
 
-fn parse_function_declaration(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
-    return parse_function(tokens, true);
+fn parse_function_declaration(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
+    parse_function(tokens, true)
 }
 
-fn parse_expression_statement(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
+fn parse_expression_statement(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
     parse_expression(tokens)
 }
 
 // Expression
 
-fn parse_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
+fn parse_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
+    let current = tokens.current;
+    let mut best_current = current;
+    let mut best_result = None;
+
     if let Some(node) = parse_assignment_expression(tokens)? {
-        return Ok(Some(node));
+        if tokens.current >= best_current {
+            best_current = tokens.current;
+            best_result = Some(node);
+        }
     }
+    tokens.set_current(current);
+
+    if let Some(node) = parse_range_expression(tokens)? {
+        if tokens.current >= best_current {
+            best_current = tokens.current;
+            best_result = Some(node);
+        }
+    }
+    tokens.set_current(current);
 
     if let Some(node) = parse_logical_or_expression(tokens)? {
-        return Ok(Some(node));
+        if tokens.current >= best_current {
+            best_current = tokens.current;
+            best_result = Some(node);
+        }
     }
+    tokens.set_current(current);
 
-    Ok(None)
+    tokens.set_current(best_current);
+    Ok(best_result)
 }
 
-fn parse_range_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
-    let start = match parse_expression_statement(tokens)? {
-        Some(start) => start,
-        _ => return Ok(None),
+fn parse_assignment_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
+    let lhs = match parse_left_hand_side_expression(tokens)? {
+        Some(node) => node,
+        None => return Ok(None)
     };
 
-    if !matches!(tokens.first(), Some(Token::Identifier(ref name)) if name == "to") {
-        return Ok(Some(start));
+    if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::Equal))) {
+        return Ok(None)
     }
-    tokens.remove(0);
+    tokens.next();
 
-    let end = match parse_expression_statement(tokens)? {
-        Some(start) => start,
-        _ => return Err("Expected expression".to_string()),
+    let rhs = match parse_expression(tokens)? {
+        Some(node) => node,
+        None => return Err("Expected expression".to_string()),
+    };
+
+    Ok(Some(Node::AssignmentExpression(Box::new(lhs), Box::new(rhs))))
+}
+
+fn parse_range_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
+    let start = match parse_logical_or_expression(tokens)? {
+        Some(node) => node,
+        None => return Ok(None),
+    };
+
+    if !matches!(tokens.peek(), Some(Token::Identifier(ref name)) if name == "to") {
+        return Ok(None);
+    }
+    tokens.next();
+
+    let end = match parse_logical_or_expression(tokens)? {
+        Some(node) => node,
+        None => return Err("Expected expression".to_string()),
     };
 
     Ok(Some(Node::RangeIterator(Box::new(start), Box::new(end))))
 }
 
-fn parse_assignment_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
-    let identifier = match tokens.first() {
-        Some(Token::Identifier(identifier)) => identifier.clone(),
-        _ => return Ok(None),
-    };
-    if !matches!(tokens.get(1), Some(Token::Punctuator(PunctuatorKind::Equal))) {
-        return Ok(None);
-    }
-    tokens.remove(0);
-    tokens.remove(0);
-
-    let value = match parse_expression(tokens)? {
-        Some(node) => node,
-        None => return Err("Expected expression".to_string()),
-    };
-
-    Ok(Some(Node::AssignmentExpression(identifier.clone(), Box::new(value))))
-}
-
-fn parse_logical_or_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
+fn parse_logical_or_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
     let mut lhs = match parse_logical_and_expression(tokens)? {
         Some(node) => node,
         None => return Ok(None),
     };
 
     loop {
-        if !matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::LogicalOr))) {
+        if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::LogicalOr))) {
             break;
         }
-        tokens.remove(0);
+        tokens.next();
 
         let rhs = match parse_logical_and_expression(tokens)? {
             Some(node) => node,
@@ -273,17 +305,17 @@ fn parse_logical_or_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, 
     Ok(Some(lhs))
 }
 
-fn parse_logical_and_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
+fn parse_logical_and_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
     let mut lhs = match parse_additive_expression(tokens)? {
         Some(node) => node,
         None => return Ok(None),
     };
 
     loop {
-        if !matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::LogicalAnd))) {
+        if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::LogicalAnd))) {
             break;
         }
-        tokens.remove(0);
+        tokens.next();
 
         let rhs = match parse_additive_expression(tokens)? {
             Some(node) => node,
@@ -296,20 +328,20 @@ fn parse_logical_and_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>,
     Ok(Some(lhs))
 }
 
-fn parse_additive_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
+fn parse_additive_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
     let mut lhs = match parse_multiplicative_expression(tokens)? {
         Some(node) => node,
         None => return Ok(None),
     };
 
     loop {
-        let operator = match tokens.first() {
+        let operator = match tokens.peek() {
             Some(Token::Punctuator(PunctuatorKind::Plus)) => {
-                tokens.remove(0);
+                tokens.next();
                 PunctuatorKind::Plus
             }
             Some(Token::Punctuator(PunctuatorKind::Minus)) => {
-                tokens.remove(0);
+                tokens.next();
                 PunctuatorKind::Minus
             }
             _ => break
@@ -317,7 +349,7 @@ fn parse_additive_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, St
 
         let rhs = match parse_multiplicative_expression(tokens)? {
             Some(node) => node,
-            None => return Ok(None),
+            None => return Err("Expected expression".to_string()),
         };
 
         lhs = Node::BinaryExpression(Box::new(lhs), operator, Box::new(rhs));
@@ -326,20 +358,20 @@ fn parse_additive_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, St
     Ok(Some(lhs))
 }
 
-fn parse_multiplicative_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
+fn parse_multiplicative_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
     let mut lhs = match parse_unary_expression(tokens)? {
         Some(node) => node,
         None => return Ok(None),
     };
 
     loop {
-        let operator = match tokens.first() {
+        let operator = match tokens.peek() {
             Some(Token::Punctuator(PunctuatorKind::Multiply)) => {
-                tokens.remove(0);
+                tokens.next();
                 PunctuatorKind::Multiply
             }
             Some(Token::Punctuator(PunctuatorKind::Divide)) => {
-                tokens.remove(0);
+                tokens.next();
                 PunctuatorKind::Divide
             }
             _ => break
@@ -347,7 +379,7 @@ fn parse_multiplicative_expression(tokens: &mut Vec<Token>) -> Result<Option<Nod
 
         let rhs = match parse_unary_expression(tokens)? {
             Some(node) => node,
-            None => return Ok(None),
+            None => return Err("Expected expression".to_string()),
         };
 
         lhs = Node::BinaryExpression(Box::new(lhs), operator, Box::new(rhs));
@@ -356,18 +388,18 @@ fn parse_multiplicative_expression(tokens: &mut Vec<Token>) -> Result<Option<Nod
     Ok(Some(lhs))
 }
 
-fn parse_unary_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
-    let operator = match tokens.first() {
+fn parse_unary_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
+    let operator = match tokens.peek() {
         Some(Token::Punctuator(PunctuatorKind::Plus)) => {
-            tokens.remove(0);
+            tokens.next();
             PunctuatorKind::Plus
         }
         Some(Token::Punctuator(PunctuatorKind::Minus)) => {
-            tokens.remove(0);
+            tokens.next();
             PunctuatorKind::Minus
         }
         Some(Token::Punctuator(PunctuatorKind::LogicalNot)) => {
-            tokens.remove(0);
+            tokens.next();
             PunctuatorKind::LogicalNot
         }
         _ => return parse_statement_expression(tokens),
@@ -381,237 +413,333 @@ fn parse_unary_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, Strin
     Ok(Some(Node::UnaryExpression(operator, Box::new(operand))))
 }
 
-fn parse_statement_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
+fn parse_statement_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
+    let current = tokens.current;
+
     if let Some(node) = parse_function_expression(tokens)? {
         return Ok(Some(node));
     }
+    tokens.set_current(current);
 
     if let Some(node) = parse_if_expression(tokens)? {
         return Ok(Some(node));
     }
+    tokens.set_current(current);
 
     if let Some(node) = parse_return_expression(tokens)? {
         return Ok(Some(node));
     }
+    tokens.set_current(current);
 
     if let Some(node) = parse_break_expression(tokens)? {
         return Ok(Some(node));
     }
+    tokens.set_current(current);
 
     if let Some(node) = parse_block_expression(tokens)? {
         return Ok(Some(node));
     }
+    tokens.set_current(current);
 
     parse_call_expression(tokens)
 }
 
-fn parse_function_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
+fn parse_function_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
     return parse_function(tokens, false);
 }
 
-fn parse_if_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
-    if !matches!(tokens.first(), Some(Token::Identifier(ref name)) if name == "if") {
+fn parse_if_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
+    if !matches!(tokens.peek(), Some(Token::Identifier(ref name)) if name == "if") {
         return Ok(None);
     }
-    tokens.remove(0);
+    tokens.next();
 
-    if !matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::LeftParen))) {
+    if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::LeftParen))) {
         return Err("Expected '('".to_string());
     }
-    tokens.remove(0);
+    tokens.next();
 
     let condition = match parse_expression(tokens)? {
         Some(node) => node,
         None => return Err("Expected expression".to_string()),
     };
 
-    if !matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::RightParen))) {
+    if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::RightParen))) {
         return Err("Expected ')'".to_string());
     }
-    tokens.remove(0);
+    tokens.next();
 
     let true_branch = match parse_expression(tokens)? {
         Some(node) => node,
-        None => return Err("Expected expression or block".to_string()),
+        None => return Err("Expected expression".to_string()),
     };
 
-    if !matches!(tokens.first(), Some(Token::Identifier(ref name)) if name == "else") {
+    if !matches!(tokens.peek(), Some(Token::Identifier(ref name)) if name == "else") {
         return Err("Expected 'else'".to_string());
     }
-    tokens.remove(0);
+    tokens.next();
 
     let false_branch = match parse_expression(tokens)? {
         Some(node) => node,
-        None => return Err("Expected expression or block".to_string()),
+        None => return Err("Expected expression".to_string()),
     };
 
     Ok(Some(Node::IfExpression(Box::new(condition), Box::new(true_branch), Box::new(false_branch))))
 }
 
-fn parse_block_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
-    if !matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::LeftBrace))) {
+fn parse_block_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
+    if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::LeftBrace))) {
         return Ok(None);
     }
-    tokens.remove(0);
+    tokens.next();
 
     let mut statements = Vec::new();
 
-    while let Some(statement) = parse_statement(tokens)? {
-        statements.push(statement);
+    while !tokens.is_empty() {
+        match parse_statement(tokens)? {
+            Some(statement) => statements.push(statement),
+            None => break
+        }
+    }
+    if statements.is_empty() {
+        return Ok(None);
     }
 
-    if !matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::RightBrace))) {
-        return Err("Expected '}'".to_string());
+    if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::RightBrace))) {
+        return Ok(None);
     }
-    tokens.remove(0);
+    tokens.next();
 
     Ok(Some(Node::BlockExpression(statements)))
 }
 
-fn parse_return_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
-    if !matches!(tokens.first(), Some(Token::Identifier(ref name)) if name == "return") {
+fn parse_return_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
+    if !matches!(tokens.peek(), Some(Token::Identifier(ref name)) if name == "return") {
         return Ok(None);
     }
-    tokens.remove(0);
+    tokens.next();
 
     let expression = parse_expression(tokens)?;
 
     Ok(Some(Node::ReturnExpression(expression.map(Box::new))))
 }
 
-fn parse_break_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
-    if !matches!(tokens.first(), Some(Token::Identifier(ref name)) if name == "break") {
+fn parse_break_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
+    if !matches!(tokens.peek(), Some(Token::Identifier(ref name)) if name == "break") {
         return Ok(None);
     }
-    tokens.remove(0);
+    tokens.next();
 
     Ok(Some(Node::BreakExpression))
 }
 
-fn parse_call_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
-    let callee = match parse_primary_expression(tokens)? {
+fn parse_call_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
+    let callee = match parse_member_expression(tokens)? {
         Some(node) => node,
         None => return Ok(None),
     };
 
-    if !matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::LeftParen))) {
+    if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::LeftParen))) {
         return Ok(Some(callee));
     }
-    tokens.remove(0);
+    tokens.next();
 
     let mut arguments = Vec::new();
 
-    while let Some(expression) = parse_expression(tokens)? {
-        arguments.push(expression);
+    while !tokens.is_empty() {
+        match parse_expression(tokens)? {
+            Some(expression) => {
+                arguments.push(expression);
 
-        if !matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::Comma))) {
-            break;
+                if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::Comma))) {
+                    break;
+                }
+                tokens.next();
+            },
+            None => break
         }
-        tokens.remove(0);
-    };
+    }
 
-    if !matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::RightParen))) {
+    if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::RightParen))) {
         return Err("Expected ')'".to_string());
     }
-    tokens.remove(0);
+    tokens.next();
 
     Ok(Some(Node::CallExpression(Box::new(callee), arguments)))
 }
 
-fn parse_primary_expression(tokens: &mut Vec<Token>) -> Result<Option<Node>, String> {
-    match tokens.first() {
+fn parse_left_hand_side_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
+    parse_member_expression(tokens)
+}
+
+fn parse_member_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
+    let mut lhs = match parse_primary_expression(tokens)? {
+        Some(node) => node,
+        None => return Ok(None),
+    };
+
+    loop {
+        if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::Dot))) {
+            break;
+        }
+        tokens.next();
+
+        let rhs = match parse_primary_expression(tokens)? {
+            Some(node) => node,
+            None => return Err("Expected primary expression".to_string()),
+        };
+
+        lhs = Node::MemberExpression(Box::new(lhs), Box::new(rhs));
+    }
+
+    Ok(Some(lhs))
+}
+
+fn parse_primary_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
+    let current = tokens.current;
+
+    if let Ok(Some(node)) = parse_object_literal(tokens) {
+        return Ok(Some(node));
+    }
+    tokens.set_current(current);
+
+    match tokens.peek() {
         Some(Token::Punctuator(PunctuatorKind::LeftParen)) => {
-            tokens.remove(0);
+            tokens.next();
 
-            let expression = match parse_expression(tokens)? {
-                Some(node) => node,
-                None => return Err("Expected expression".to_string()),
-            };
+            let expression = parse_expression(tokens)?;
 
-            if !matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::RightParen))) {
+            if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::RightParen))) {
                 return Err("Expected ')'".to_string());
             }
-            tokens.remove(0);
+            tokens.next();
 
-            Ok(Some(expression))
+            Ok(expression)
         }
         Some(Token::Identifier(identifier)) => {
             let identifier = identifier.clone();
 
-            tokens.remove(0);
+            tokens.next();
             Ok(Some(Node::Identifier(identifier)))
         }
         Some(Token::Number(value)) => {
             let value = *value;
 
-            tokens.remove(0);
+            tokens.next();
             Ok(Some(Node::Number(value)))
         }
         Some(Token::Bool(value)) => {
             let value = *value;
 
-            tokens.remove(0);
+            tokens.next();
             Ok(Some(Node::Bool(value)))
         }
         Some(Token::String(value)) => {
             let value = value.clone();
-            tokens.remove(0);
+            tokens.next();
             Ok(Some(Node::String(value)))
         }
         _ => Ok(None),
     }
 }
 
-fn parse_function(tokens: &mut Vec<Token>, name_required: bool) -> Result<Option<Node>, String> {
-    if !matches!(tokens.first(), Some(Token::Identifier(ref name)) if name == "function") {
+fn parse_object_literal(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
+    if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::LeftBrace))) {
         return Ok(None);
     }
-    tokens.remove(0);
+    tokens.next();
 
-    let name = match tokens.first() {
+    let mut definitions = Vec::new();
+
+    while !tokens.is_empty() {
+        match parse_object_property_definition(tokens)? {
+            Some(definition) => definitions.push(definition),
+            None => break
+        }
+
+        if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::Comma))) {
+            break;
+        }
+        tokens.next();
+    }
+
+    if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::RightBrace))) {
+        return Err("Expected '}'".to_string());
+    }
+    tokens.next();
+
+    Ok(Some(Node::Object(definitions)))
+}
+
+fn parse_object_property_definition(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
+    let name = match parse_primary_expression(tokens)? {
+        Some(node) => node,
+        None => return Ok(None),
+    };
+
+    if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::Colon))) {
+        return Ok(None);
+    }
+    tokens.next();
+
+    let value = match parse_expression(tokens)? {
+        Some(node) => node,
+        None => return Err("Expected expression".to_string()),
+    };
+
+    Ok(Some(Node::ObjectPropertyDefinition(Box::new(name), Box::new(value))))
+}
+
+fn parse_function(tokens: &mut TokenIter, is_declaration: bool) -> Result<Option<Node>, String> {
+    if !matches!(tokens.peek(), Some(Token::Identifier(ref name)) if name == "function") {
+        return Ok(None);
+    }
+    tokens.next();
+
+    let name = match tokens.peek() {
         Some(Token::Identifier(name)) => {
             if is_reserved_words(name) {
                 return Err(format!("SyntaxError: \"{}\" is a reserved word", name));
             }
 
             let name = name.clone();
-            tokens.remove(0);
+            tokens.next();
             Some(name)
         }
         _ => None,
     };
 
-    if !matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::LeftParen))) {
+    if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::LeftParen))) {
         return Err("Expected '('".to_string());
     }
-    tokens.remove(0);
+    tokens.next();
 
     let mut parameters = Vec::new();
-    while let Some(Token::Identifier(identifier)) = tokens.first() {
+    while let Some(Token::Identifier(identifier)) = tokens.peek() {
         if is_reserved_words(identifier) {
             return Err(format!("SyntaxError: \"{}\" is a reserved word", identifier));
         }
 
         parameters.push(identifier.clone());
-        tokens.remove(0);
+        tokens.next();
 
-        if !matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::Comma))) {
+        if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::Comma))) {
             break;
         }
-        tokens.remove(0);
+        tokens.next();
     }
 
-    if !matches!(tokens.first(), Some(Token::Punctuator(PunctuatorKind::RightParen))) {
+    if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::RightParen))) {
         return Err("Expected ')'".to_string());
     }
-    tokens.remove(0);
+    tokens.next();
 
     let block = match parse_block_statement(tokens)? {
-        Some(block) => block,
-        None => return Err("Expected block".to_string()),
+        Some(node) => node,
+        None => return Err("Expected block statement".to_string()),
     };
 
-    if name_required {
+    if is_declaration {
         match name {
             Some(name) => Ok(Some(Node::FunctionDeclaration(name, parameters, Box::new(block)))),
             None => Err("Expected identifier".to_string()),
@@ -690,7 +818,7 @@ mod tests {
                 assert_eq!(
                     parse("{1 2}"),
                     Ok(Node::Program(vec![
-                        Node::BlockStatement(vec![
+                        Node::BlockExpression(vec![
                             Node::Number(1f64),
                             Node::Number(2f64),
                         ]),
@@ -699,29 +827,17 @@ mod tests {
             }
 
             #[test]
-            fn empty_block() {
-                assert_eq!(
-                    parse("{}"),
-                    Ok(Node::Program(vec![
-                        Node::BlockStatement(vec![]),
-                    ]))
-                );
-            }
-
-            #[test]
             fn nested_block() {
                 assert_eq!(
-                    parse("{{{}1+2{}}}"),
+                    parse("{{1+2}}"),
                     Ok(Node::Program(vec![
-                        Node::BlockStatement(vec![
-                            Node::BlockStatement(vec![
-                                Node::BlockStatement(vec![]),
+                        Node::BlockExpression(vec![
+                            Node::BlockExpression(vec![
                                 Node::BinaryExpression(
                                     Box::new(Node::Number(1f64)),
                                     PunctuatorKind::Plus,
                                     Box::new(Node::Number(2f64)),
                                 ),
-                                Node::BlockStatement(vec![]),
                             ]),
                         ]),
                     ]))
@@ -820,7 +936,7 @@ mod tests {
                         Node::ForStatement(
                             "i".to_string(),
                             Box::new(Node::Identifier("range".to_string())),
-                            Box::new(Node::BlockStatement(vec![
+                            Box::new(Node::BlockExpression(vec![
                                 Node::Number(1f64),
                             ])),
                         ),
@@ -894,7 +1010,10 @@ mod tests {
                 assert_eq!(
                     parse("x = 1"),
                     Ok(Node::Program(vec![
-                        Node::AssignmentExpression("x".to_string(), Box::new(Node::Number(1f64))),
+                        Node::AssignmentExpression(
+                            Box::new(Node::Identifier("x".to_string())),
+                            Box::new(Node::Number(1f64))
+                        ),
                     ]))
                 );
             }
@@ -1285,6 +1404,60 @@ mod tests {
             }
         }
 
+        mod member_expression {
+            use crate::node::Node;
+            use crate::parser::parse;
+            use crate::punctuator_kind::PunctuatorKind;
+
+            #[test]
+            fn member_expression() {
+                assert_eq!(
+                    parse("x.y.z"),
+                    Ok(Node::Program(vec![
+                        Node::MemberExpression(
+                            Box::new(Node::MemberExpression(
+                                Box::new(Node::Identifier("x".to_string())),
+                                Box::new(Node::Identifier("y".to_string())),
+                            )),
+                            Box::new(Node::Identifier("z".to_string())),
+                        ),
+                    ]))
+                );
+            }
+
+            #[test]
+            fn member_expression_with_call_expression() {
+                assert_eq!(
+                    parse("x.y()"),
+                    Ok(Node::Program(vec![
+                        Node::CallExpression(
+                            Box::new(Node::MemberExpression(
+                                Box::new(Node::Identifier("x".to_string())),
+                                Box::new(Node::Identifier("y".to_string())),
+                            )),
+                            vec![],
+                        ),
+                    ]))
+                );
+            }
+
+            #[test]
+            fn member_expression_with_unary_expression() {
+                assert_eq!(
+                    parse("-x.y"),
+                    Ok(Node::Program(vec![
+                        Node::UnaryExpression(
+                            PunctuatorKind::Minus,
+                            Box::new(Node::MemberExpression(
+                                Box::new(Node::Identifier("x".to_string())),
+                                Box::new(Node::Identifier("y".to_string())),
+                            )),
+                        ),
+                    ]))
+                );
+            }
+        }
+
         mod primary_expression {
             use crate::node::Node;
             use crate::parser::parse;
@@ -1454,6 +1627,85 @@ mod tests {
                                 )),
                             )),
                             Box::new(Node::Number(1f64)),
+                        ),
+                    ]))
+                );
+            }
+        }
+
+        mod object_literal {
+            use crate::node::Node;
+            use crate::parser::parse;
+            use crate::punctuator_kind::PunctuatorKind;
+
+            #[test]
+            fn empty_object() {
+                assert_eq!(
+                    parse("{}"),
+                    Ok(Node::Program(vec![
+                        Node::Object(vec![]),
+                    ]))
+                );
+            }
+
+            #[test]
+            fn object_having_properties() {
+                assert_eq!(
+                    parse("{x:1, y:\"hello\"}"),
+                    Ok(Node::Program(vec![
+                        Node::Object(vec![
+                            Node::ObjectPropertyDefinition(
+                                Box::new(Node::Identifier("x".to_string())),
+                                Box::new(Node::Number(1f64)),
+                            ),
+                            Node::ObjectPropertyDefinition(
+                                Box::new(Node::Identifier("y".to_string())),
+                                Box::new(Node::String("hello".to_string())),
+                            ),
+                        ]),
+                    ]))
+                );
+            }
+
+            #[test]
+            fn nested_object() {
+                assert_eq!(
+                    parse("{x:{y:1}, z:\"hello\"}"),
+                    Ok(Node::Program(vec![
+                        Node::Object(vec![
+                            Node::ObjectPropertyDefinition(
+                                Box::new(Node::Identifier("x".to_string())),
+                                Box::new(
+                                    Node::Object(vec![
+                                        Node::ObjectPropertyDefinition(
+                                            Box::new(Node::Identifier("y".to_string())),
+                                            Box::new(Node::Number(1f64)),
+                                        )
+                                    ])
+                                ),
+                            ),
+                            Node::ObjectPropertyDefinition(
+                                Box::new(Node::Identifier("z".to_string())),
+                                Box::new(Node::String("hello".to_string())),
+                            ),
+                        ]),
+                    ]))
+                );
+            }
+
+            #[test]
+            fn assign_object_into_variable() {
+                assert_eq!(
+                    parse("x = {y:1}"),
+                    Ok(Node::Program(vec![
+                        Node::AssignmentExpression(
+                            Box::new(Node::Identifier("x".to_string())),
+                            Box::new(Node::Object(vec![
+                                Node::ObjectPropertyDefinition(
+                                    Box::new(Node::Identifier("y".to_string())),
+                                    Box::new(Node::Number(1f64)),
+                                ),
+                            ])),
                         ),
                     ]))
                 );

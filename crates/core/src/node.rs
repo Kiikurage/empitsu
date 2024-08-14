@@ -7,10 +7,7 @@ pub enum Node {
     // Statements
     EmptyStatement,
     IfStatement(Box<Node>, Box<Node>, Option<Box<Node>>), // condition, true-branch, false-branch
-    BlockStatement(Vec<Node>),
     ForStatement(String, Box<Node>, Box<Node>), // variable, iterator, body
-    ReturnStatement(Option<Box<Node>>), // return value
-    BreakStatement,
     VariableDeclaration(String, Option<Box<Node>>), // name, initial_value
     FunctionDeclaration(String, Vec<String>, Box<Node>), // name, parameters, body
 
@@ -21,13 +18,16 @@ pub enum Node {
     IfExpression(Box<Node>, Box<Node>, Box<Node>), // condition, true-branch, false-branch
     BlockExpression(Vec<Node>),
     RangeIterator(Box<Node>, Box<Node>), // temporary
-    AssignmentExpression(String, Box<Node>),
+    AssignmentExpression(Box<Node>, Box<Node>),
     BinaryExpression(Box<Node>, PunctuatorKind, Box<Node>),
     UnaryExpression(PunctuatorKind, Box<Node>),
     CallExpression(Box<Node>, Vec<Node>),
+    MemberExpression(Box<Node>, Box<Node>),
     Number(f64),
     Bool(bool),
     String(String),
+    Object(Vec<Node>), // list of property definitions
+    ObjectPropertyDefinition(Box<Node>, Box<Node>), // name, value
     Identifier(String),
 }
 
