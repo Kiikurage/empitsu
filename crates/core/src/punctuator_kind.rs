@@ -22,4 +22,5 @@ pub enum PunctuatorKind {
     LessThanOrEqual,
     GreaterThan,
     GreaterThanOrEqual,
+    NewLine,
 }

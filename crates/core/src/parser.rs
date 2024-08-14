@@ -30,7 +30,8 @@ pub fn parse_program(tokens: &mut TokenIter) -> Result<Node, String> {
 fn parse_statement(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
     let current = tokens.current;
 
-    if let Some(node) = parse_if_statement(tokens)? {
+    // Can be recovered by if-expression
+    if let Ok(Some(node)) = parse_if_statement(tokens) {
         return Ok(Some(node));
     }
     tokens.set_current(current);
@@ -123,11 +124,25 @@ fn parse_block_statement(tokens: &mut TokenIter) -> Result<Option<Node>, String>
 }
 
 fn parse_return_statement(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
-    parse_return_expression(tokens)
+    let return_expression = match parse_return_expression(tokens)? {
+        Some(node) => node,
+        None => return Ok(None),
+    };
+
+    parse_statement_end(tokens)?;
+
+    Ok(Some(return_expression))
 }
 
 fn parse_break_statement(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
-    parse_break_expression(tokens)
+    let break_expression = match parse_break_expression(tokens)? {
+        Some(node) => node,
+        None => return Ok(None),
+    };
+
+    parse_statement_end(tokens)?;
+
+    Ok(Some(break_expression))
 }
 
 fn parse_for_statement(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
@@ -209,6 +224,8 @@ fn parse_variable_declaration(tokens: &mut TokenIter) -> Result<Option<Node>, St
         None
     };
 
+    parse_statement_end(tokens)?;
+
     Ok(Some(Node::VariableDeclaration(identifier, type_, value.map(Box::new))))
 }
 
@@ -279,7 +296,25 @@ fn parse_struct_declaration(tokens: &mut TokenIter) -> Result<Option<Node>, Stri
 }
 
 fn parse_expression_statement(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
-    parse_expression(tokens)
+    let expression = match parse_expression(tokens)? {
+        Some(node) => node,
+        None => return Ok(None),
+    };
+
+    parse_statement_end(tokens)?;
+
+    Ok(Some(expression))
+}
+
+fn parse_statement_end(tokens: &mut TokenIter) -> Result<(), String> {
+    match tokens.peek_including_newline() {
+        None | Some(Token::Punctuator(PunctuatorKind::SemiColon | PunctuatorKind::NewLine)) => {
+            tokens.next_including_newline();
+            Ok(())
+        }
+        Some(Token::Punctuator(PunctuatorKind::RightBrace)) => Ok(()),
+        _ => Err("Expected ';'".to_string()),
+    }
 }
 
 // Expression
@@ -907,7 +942,7 @@ mod tests {
             #[test]
             fn if_statement() {
                 assert_eq!(
-                    parse("if (1) 2 else 3"),
+                    parse("if (1) 2; else 3"),
                     Ok(Node::Program(vec![
                         Node::IfStatement(
                             Box::new(Node::Number(1f64)),
@@ -935,7 +970,7 @@ mod tests {
             #[test]
             fn chained_if() {
                 assert_eq!(
-                    parse("if (1) 2 else if (3) 4 else 5"),
+                    parse("if (1) 2; else if (3) 4; else 5"),
                     Ok(Node::Program(vec![
                         Node::IfStatement(
                             Box::new(Node::Number(1f64)),
@@ -959,7 +994,7 @@ mod tests {
             #[test]
             fn block() {
                 assert_eq!(
-                    parse("{1 2}"),
+                    parse("{1; 2}"),
                     Ok(Node::Program(vec![
                         Node::BlockExpression(vec![
                             Node::Number(1f64),
@@ -1530,6 +1565,20 @@ mod tests {
                             )),
                             PunctuatorKind::Minus,
                             Box::new(Node::Number(3f64)),
+                        )
+                    ]))
+                );
+            }
+
+            #[test]
+            fn newline_at_middle() {
+                assert_eq!(
+                    parse("1\n+2"),
+                    Ok(Node::Program(vec![
+                        Node::BinaryExpression(
+                            Box::new(Node::Number(1f64)),
+                            PunctuatorKind::Plus,
+                            Box::new(Node::Number(2f64)),
                         )
                     ]))
                 );
@@ -2151,6 +2200,36 @@ mod tests {
                     ]))
                 );
             }
+        }
+    }
+
+    mod semicolon {
+        use crate::parser::parse;
+
+        #[test]
+        fn semicolon_at_end_of_input_is_optional() {
+            assert!(parse("1;").is_ok());
+            assert!(parse("1").is_ok());
+        }
+
+        #[test]
+        fn semicolon_at_end_of_line_is_optional() {
+            assert!(parse("1;
+            ").is_ok());
+            assert!(parse("1
+            ").is_ok());
+        }
+
+        #[test]
+        fn semicolon_at_end_of_block_is_optional() {
+            assert!(parse("{1;}").is_ok());
+            assert!(parse("{1}").is_ok());
+        }
+
+        #[test]
+        fn semicolon_at_middle_of_block_is_required() {
+            assert!(parse("{1 2}").is_err());
+            assert!(parse("{1;2}").is_ok());
         }
     }
 }

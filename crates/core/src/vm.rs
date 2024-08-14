@@ -691,15 +691,15 @@ mod tests {
         assert_eq!(VM::new().eval("{1+2}"), Value::Number(3.0));
         assert_eq!(VM::new().eval("if (true) 2 else 3"), Value::Number(2.0));
         assert_eq!(VM::new().eval("if (true) 2 else 3"), Value::Number(2.0));
-        assert_eq!(VM::new().eval("if (true) { debug(123) 2 } else { 3 }"), Value::Number(2.0));
+        assert_eq!(VM::new().eval("if (true) { debug(123); 2 } else { 3 }"), Value::Number(2.0));
         assert_eq!(VM::new().eval("if (true) 2 else 3*3"), Value::Number(2.0));
         assert_eq!(VM::new().eval("1 + if (false) 2 else 3 * 3"), Value::Number(10.0));
         assert_eq!(VM::new().eval("1 + if (false) 2 else if (false) 3 else 4"), Value::Number(5.0));
-        assert_eq!(VM::new().eval("let x=false if (x) 1 else 2"), Value::Number(2.0));
-        assert_eq!(VM::new().eval("let x=true if (x) 1 else 2"), Value::Number(1.0));
-        assert_eq!(VM::new().eval("let x=true let y=if (x) 2 else 3 let z=y*y z"), Value::Number(4.0));
-        assert_eq!(VM::new().eval("let x=1 x=2 x"), Value::Number(2.0));
-        assert_eq!(VM::new().eval("let x=5 x=x*x x"), Value::Number(25.0));
+        assert_eq!(VM::new().eval("let x=false; if (x) 1 else 2"), Value::Number(2.0));
+        assert_eq!(VM::new().eval("let x=true; if (x) 1 else 2"), Value::Number(1.0));
+        assert_eq!(VM::new().eval("let x=true; let y=if (x) 2 else 3; let z=y*y; z"), Value::Number(4.0));
+        assert_eq!(VM::new().eval("let x=1; x=2; x"), Value::Number(2.0));
+        assert_eq!(VM::new().eval("let x=5; x=x*x; x"), Value::Number(25.0));
         assert_eq!(VM::new().eval("true && true"), Value::Bool(true));
         assert_eq!(VM::new().eval("true && false"), Value::Bool(false));
         assert_eq!(VM::new().eval("false && true"), Value::Bool(false));
@@ -1350,7 +1350,7 @@ mod tests {
              ");
             assert_eq!(vm.objects.len(), 2);
 
-            vm.eval("a = Obj {i:2} b = a");
+            vm.eval("a = Obj {i:2}; b = a");
             assert_eq!(vm.objects.len(), 3);
 
             vm.gc();    // address 0 and 1 are released

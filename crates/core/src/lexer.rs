@@ -14,9 +14,13 @@ pub fn scan(input: &str) -> Result<Vec<Token>, String> {
 
 fn scan_token(chars: &mut Vec<char>) -> Result<Option<Token>, String> {
     match chars.first() {
-        Some(' ' | '\n' | '\r' | '\t') => {
+        Some(' ' | '\r' | '\t') => {
             chars.remove(0);
             Ok(None)
+        }
+        Some('\n') => {
+            chars.remove(0);
+            Ok(Some(Token::Punctuator(PunctuatorKind::NewLine)))
         }
         Some('+') => {
             chars.remove(0);
@@ -277,11 +281,9 @@ mod tests {
         assert(" ", Ok(None), "");
         assert("\t", Ok(None), "");
         assert("\r", Ok(None), "");
-        assert("\n", Ok(None), "");
         assert(" a", Ok(None), "a");
         assert("\ta", Ok(None), "a");
         assert("\ra", Ok(None), "a");
-        assert("\na", Ok(None), "a");
     }
 
     mod tokens {
@@ -413,6 +415,12 @@ mod tests {
             assert("||", Ok(Some(Token::Punctuator(PunctuatorKind::LogicalOr))), "");
             assert("||a", Ok(Some(Token::Punctuator(PunctuatorKind::LogicalOr))), "a");
             assert("|||", Ok(Some(Token::Punctuator(PunctuatorKind::LogicalOr))), "|");
+        }
+
+        #[test]
+        fn newline() {
+            assert("\n", Ok(Some(Token::Punctuator(PunctuatorKind::NewLine))), "");
+            assert("\na", Ok(Some(Token::Punctuator(PunctuatorKind::NewLine))), "a");
         }
     }
 
