@@ -1,9 +1,8 @@
 use crate::lexer::scan;
-use crate::node::{FunctionParameterDefinition, Node, ObjectPropertyDefinition};
+use crate::node::{FunctionParameterDeclaration, Node, StructPropertyDeclaration, StructPropertyInitializer, TypeExpression};
 use crate::punctuator_kind::PunctuatorKind;
 use crate::token::Token;
 use crate::token_iter::TokenIter;
-use crate::type_::Type;
 
 pub fn parse(input: &str) -> Result<Node, String> {
     parse_program(&mut TokenIter::new(&scan(input)?))
@@ -30,11 +29,6 @@ pub fn parse_program(tokens: &mut TokenIter) -> Result<Node, String> {
 
 fn parse_statement(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
     let current = tokens.current;
-
-    if matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::SemiColon))) {
-        tokens.next();
-        return Ok(Some(Node::EmptyStatement));
-    }
 
     if let Some(node) = parse_if_statement(tokens)? {
         return Ok(Some(node));
@@ -67,6 +61,11 @@ fn parse_statement(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
     tokens.set_current(current);
 
     if let Some(node) = parse_function_declaration(tokens)? {
+        return Ok(Some(node));
+    }
+    tokens.set_current(current);
+
+    if let Some(node) = parse_struct_declaration(tokens)? {
         return Ok(Some(node));
     }
     tokens.set_current(current);
@@ -188,10 +187,10 @@ fn parse_variable_declaration(tokens: &mut TokenIter) -> Result<Option<Node>, St
     };
     tokens.next();
 
-    let typ = if matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::Colon))) {
+    let type_ = if matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::Colon))) {
         tokens.next();
 
-        match parse_type_annotation(tokens)? {
+        match parse_type_expression(tokens)? {
             Some(node) => Some(node),
             None => return Err("Expected type annotation".to_string()),
         }
@@ -210,11 +209,73 @@ fn parse_variable_declaration(tokens: &mut TokenIter) -> Result<Option<Node>, St
         None
     };
 
-    Ok(Some(Node::VariableDeclaration(identifier, typ, value.map(Box::new))))
+    Ok(Some(Node::VariableDeclaration(identifier, type_, value.map(Box::new))))
 }
 
 fn parse_function_declaration(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
     parse_function(tokens, true)
+}
+
+fn parse_struct_declaration(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
+    if !matches!(tokens.peek(), Some(Token::Identifier(ref name)) if name == "struct") {
+        return Ok(None);
+    }
+    tokens.next();
+
+    let name = match tokens.peek() {
+        Some(Token::Identifier(name)) => {
+            if is_reserved_words(name) {
+                return Err(format!("SyntaxError: \"{}\" is a reserved word", name));
+            }
+
+            let name = name.clone();
+            tokens.next();
+            name
+        }
+        _ => return Err("Expected identifier".to_string()),
+    };
+
+    if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::LeftBrace))) {
+        return Err("Expected '{'".to_string());
+    }
+    tokens.next();
+
+    let mut properties = Vec::new();
+    while let Some(Token::Identifier(name)) = tokens.peek() {
+        if is_reserved_words(name) {
+            return Err(format!("SyntaxError: \"{}\" is a reserved word", name));
+        }
+
+        let name = name.clone();
+        tokens.next();
+
+        if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::Colon))) {
+            return Err("Expected ':'".to_string());
+        }
+        tokens.next();
+
+        let type_ = match parse_type_expression(tokens)? {
+            Some(node) => node,
+            None => return Err("Expected type annotation".to_string()),
+        };
+
+        properties.push(StructPropertyDeclaration {
+            name,
+            type_,
+        });
+
+        if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::Comma))) {
+            break;
+        }
+        tokens.next();
+    }
+
+    if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::RightBrace))) {
+        return Err("Expected '}'".to_string());
+    }
+    tokens.next();
+
+    Ok(Some(Node::StructDeclaration(name, properties)))
 }
 
 fn parse_expression_statement(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
@@ -641,7 +702,7 @@ fn parse_member_expression(tokens: &mut TokenIter) -> Result<Option<Node>, Strin
 fn parse_primary_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
     let current = tokens.current;
 
-    if let Ok(Some(node)) = parse_object_literal(tokens) {
+    if let Ok(Some(node)) = parse_struct_literal(tokens) {
         return Ok(Some(node));
     }
     tokens.set_current(current);
@@ -686,7 +747,12 @@ fn parse_primary_expression(tokens: &mut TokenIter) -> Result<Option<Node>, Stri
     }
 }
 
-fn parse_object_literal(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
+fn parse_struct_literal(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
+    let type_ = match parse_type_expression(tokens)? {
+        Some(node) => node,
+        None => return Ok(None),
+    };
+
     if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::LeftBrace))) {
         return Ok(None);
     }
@@ -695,7 +761,7 @@ fn parse_object_literal(tokens: &mut TokenIter) -> Result<Option<Node>, String> 
     let mut definitions = Vec::new();
 
     while !tokens.is_empty() {
-        match parse_object_property_definition(tokens)? {
+        match parse_object_property_initializer(tokens)? {
             Some(definition) => definitions.push(definition),
             None => break
         }
@@ -711,10 +777,10 @@ fn parse_object_literal(tokens: &mut TokenIter) -> Result<Option<Node>, String> 
     }
     tokens.next();
 
-    Ok(Some(Node::Object(definitions)))
+    Ok(Some(Node::Struct(type_, definitions)))
 }
 
-fn parse_object_property_definition(tokens: &mut TokenIter) -> Result<Option<ObjectPropertyDefinition>, String> {
+fn parse_object_property_initializer(tokens: &mut TokenIter) -> Result<Option<StructPropertyInitializer>, String> {
     let name = match tokens.peek() {
         Some(Token::Identifier(name)) => name.clone(),
         _ => return Ok(None),
@@ -731,7 +797,7 @@ fn parse_object_property_definition(tokens: &mut TokenIter) -> Result<Option<Obj
         None => return Err("Expected expression".to_string()),
     };
 
-    Ok(Some(ObjectPropertyDefinition { name, value: Box::new(value) }))
+    Ok(Some(StructPropertyInitializer { name, value: Box::new(value) }))
 }
 
 fn parse_function(tokens: &mut TokenIter, is_declaration: bool) -> Result<Option<Node>, String> {
@@ -772,12 +838,12 @@ fn parse_function(tokens: &mut TokenIter, is_declaration: bool) -> Result<Option
         }
         tokens.next();
 
-        let type_ = match parse_type_annotation(tokens)? {
+        let type_ = match parse_type_expression(tokens)? {
             Some(node) => node,
             None => return Err("Expected type annotation".to_string()),
         };
 
-        parameters.push(FunctionParameterDefinition {
+        parameters.push(FunctionParameterDeclaration {
             name: identifier,
             type_,
         });
@@ -809,31 +875,23 @@ fn parse_function(tokens: &mut TokenIter, is_declaration: bool) -> Result<Option
 }
 
 fn is_reserved_words(word: &str) -> bool {
-    matches!(word, "if" | "let" | "for" | "function" | "true" | "false" | "else" | "return" | "break")
+    matches!(word, "if" | "let" | "for" | "function" | "true" | "false" | "else" | "return" | "break" | "struct")
 }
 
-fn parse_type_annotation(tokens: &mut TokenIter) -> Result<Option<Type>, String> {
-    parse_primitive_type_annotation(tokens)
+fn parse_type_expression(tokens: &mut TokenIter) -> Result<Option<TypeExpression>, String> {
+    parse_type_identifier(tokens)
 }
 
-fn parse_primitive_type_annotation(tokens: &mut TokenIter) -> Result<Option<Type>, String> {
+fn parse_type_identifier(tokens: &mut TokenIter) -> Result<Option<TypeExpression>, String> {
     match tokens.peek() {
         Some(Token::Identifier(identifier)) => {
-            match identifier.as_str() {
-                "number" => {
-                    tokens.next();
-                    Ok(Some(Type::Number))
-                }
-                "bool" => {
-                    tokens.next();
-                    Ok(Some(Type::Bool))
-                }
-                "string" => {
-                    tokens.next();
-                    Ok(Some(Type::String))
-                }
-                _ => Ok(None),
+            if is_reserved_words(identifier) {
+                return Err(format!("SyntaxError: \"{}\" is a reserved word", identifier));
             }
+            let identifier = identifier.clone();
+            tokens.next();
+
+            Ok(Some(TypeExpression::Identifier(identifier)))
         }
         _ => Ok(None),
     }
@@ -931,9 +989,8 @@ mod tests {
         }
 
         mod variable_declaration {
-            use crate::node::Node;
+            use crate::node::{Node, TypeExpression};
             use crate::parser::parse;
-            use crate::type_::Type;
 
             #[test]
             fn variable_declaration() {
@@ -960,7 +1017,11 @@ mod tests {
                 assert_eq!(
                     parse("let x: number = 1"),
                     Ok(Node::Program(vec![
-                        Node::VariableDeclaration("x".to_string(), Some(Type::Number), Some(Box::new(Node::Number(1.0f64)))),
+                        Node::VariableDeclaration(
+                            "x".to_string(),
+                            Some(TypeExpression::Identifier("number".to_string())),
+                            Some(Box::new(Node::Number(1.0f64)))
+                        ),
                     ]))
                 );
             }
@@ -1037,6 +1098,54 @@ mod tests {
                             ])),
                         ),
                     ]))
+                );
+            }
+        }
+
+        mod struct_declaration {
+            use crate::node::{Node, StructPropertyDeclaration, TypeExpression};
+            use crate::parser::parse;
+
+            #[test]
+            fn struct_declaration() {
+                assert_eq!(
+                    parse("struct User { name: string, id: number }"),
+                    Ok(Node::Program(vec![
+                        Node::StructDeclaration(
+                            "User".to_string(),
+                            vec![
+                                StructPropertyDeclaration {
+                                    name: "name".to_string(),
+                                    type_: TypeExpression::Identifier("string".to_string()),
+                                },
+                                StructPropertyDeclaration {
+                                    name: "id".to_string(),
+                                    type_: TypeExpression::Identifier("number".to_string()),
+                                },
+                            ],
+                        ),
+                    ]))
+                );
+            }
+
+            #[test]
+            fn struct_declaration_without_properties() {
+                assert_eq!(
+                    parse("struct User {}"),
+                    Ok(Node::Program(vec![
+                        Node::StructDeclaration(
+                            "User".to_string(),
+                            vec![],
+                        ),
+                    ]))
+                );
+            }
+
+            #[test]
+            fn struct_declaration_without_name() {
+                assert_eq!(
+                    parse("struct {}"),
+                    Err("Expected identifier".to_string())
                 );
             }
         }
@@ -1906,15 +2015,16 @@ mod tests {
         }
 
         mod object_literal {
-            use crate::node::{Node, ObjectPropertyDefinition};
+            use crate::node::{Node, StructPropertyDeclaration, StructPropertyInitializer, TypeExpression};
             use crate::parser::parse;
 
             #[test]
             fn empty_object() {
                 assert_eq!(
-                    parse("{}"),
+                    parse("struct Obj{} Obj {}"),
                     Ok(Node::Program(vec![
-                        Node::Object(vec![]),
+                        Node::StructDeclaration("Obj".to_string(), vec![]),
+                        Node::Struct(TypeExpression::Identifier("Obj".to_string()), vec![]),
                     ]))
                 );
             }
@@ -1922,18 +2032,34 @@ mod tests {
             #[test]
             fn object_having_properties() {
                 assert_eq!(
-                    parse("{x:1, y:\"hello\"}"),
+                    parse("struct Obj { x: number, y: string } Obj {x:1, y:\"hello\"}"),
                     Ok(Node::Program(vec![
-                        Node::Object(vec![
-                            ObjectPropertyDefinition {
-                                name: "x".to_string(),
-                                value: Box::new(Node::Number(1f64)),
-                            },
-                            ObjectPropertyDefinition {
-                                name: "y".to_string(),
-                                value: Box::new(Node::String("hello".to_string())),
-                            },
-                        ]),
+                        Node::StructDeclaration(
+                            "Obj".to_string(),
+                            vec![
+                                StructPropertyDeclaration {
+                                    name: "x".to_string(),
+                                    type_: TypeExpression::Identifier("number".to_string()),
+                                },
+                                StructPropertyDeclaration {
+                                    name: "y".to_string(),
+                                    type_: TypeExpression::Identifier("string".to_string()),
+                                },
+                            ],
+                        ),
+                        Node::Struct(
+                            TypeExpression::Identifier("Obj".to_string()),
+                            vec![
+                                StructPropertyInitializer {
+                                    name: "x".to_string(),
+                                    value: Box::new(Node::Number(1f64)),
+                                },
+                                StructPropertyInitializer {
+                                    name: "y".to_string(),
+                                    value: Box::new(Node::String("hello".to_string())),
+                                },
+                            ],
+                        ),
                     ]))
                 );
             }
@@ -1941,25 +2067,57 @@ mod tests {
             #[test]
             fn nested_object() {
                 assert_eq!(
-                    parse("{x:{y:1}, z:\"hello\"}"),
+                    parse("
+                        struct Obj1 { x: Obj2, z: string }
+                        struct Obj2 { y: number }
+                        Obj1 {x: Obj2 {y:1}, z:\"hello\"}\
+                    "),
                     Ok(Node::Program(vec![
-                        Node::Object(vec![
-                            ObjectPropertyDefinition {
-                                name: "x".to_string(),
-                                value: Box::new(
-                                    Node::Object(vec![
-                                        ObjectPropertyDefinition {
-                                            name: "y".to_string(),
-                                            value: Box::new(Node::Number(1f64)),
-                                        }
-                                    ])
-                                ),
-                            },
-                            ObjectPropertyDefinition {
-                                name: "z".to_string(),
-                                value: Box::new(Node::String("hello".to_string())),
-                            },
-                        ]),
+                        Node::StructDeclaration(
+                            "Obj1".to_string(),
+                            vec![
+                                StructPropertyDeclaration {
+                                    name: "x".to_string(),
+                                    type_: TypeExpression::Identifier("Obj2".to_string()),
+                                },
+                                StructPropertyDeclaration {
+                                    name: "z".to_string(),
+                                    type_: TypeExpression::Identifier("string".to_string()),
+                                },
+                            ],
+                        ),
+                        Node::StructDeclaration(
+                            "Obj2".to_string(),
+                            vec![
+                                StructPropertyDeclaration {
+                                    name: "y".to_string(),
+                                    type_: TypeExpression::Identifier("number".to_string()),
+                                },
+                            ],
+                        ),
+                        Node::Struct(
+                            TypeExpression::Identifier("Obj1".to_string()),
+                            vec![
+                                StructPropertyInitializer {
+                                    name: "x".to_string(),
+                                    value: Box::new(
+                                        Node::Struct(
+                                            TypeExpression::Identifier("Obj2".to_string()),
+                                            vec![
+                                                StructPropertyInitializer {
+                                                    name: "y".to_string(),
+                                                    value: Box::new(Node::Number(1f64)),
+                                                }
+                                            ]
+                                        )
+                                    ),
+                                },
+                                StructPropertyInitializer {
+                                    name: "z".to_string(),
+                                    value: Box::new(Node::String("hello".to_string())),
+                                },
+                            ]
+                        ),
                     ]))
                 );
             }
@@ -1967,16 +2125,28 @@ mod tests {
             #[test]
             fn assign_object_into_variable() {
                 assert_eq!(
-                    parse("x = {y:1}"),
+                    parse("struct Obj {y: number} x = Obj {y:1}"),
                     Ok(Node::Program(vec![
+                        Node::StructDeclaration(
+                            "Obj".to_string(),
+                            vec![
+                                StructPropertyDeclaration {
+                                    name: "y".to_string(),
+                                    type_: TypeExpression::Identifier("number".to_string()),
+                                },
+                            ],
+                        ),
                         Node::AssignmentExpression(
                             Box::new(Node::Identifier("x".to_string())),
-                            Box::new(Node::Object(vec![
-                                ObjectPropertyDefinition {
-                                    name: "y".to_string(),
-                                    value: Box::new(Node::Number(1f64)),
-                                },
-                            ])),
+                            Box::new(Node::Struct(
+                                TypeExpression::Identifier("Obj".to_string()),
+                                vec![
+                                    StructPropertyInitializer {
+                                        name: "y".to_string(),
+                                        value: Box::new(Node::Number(1f64)),
+                                    },
+                                ]
+                            )),
                         ),
                     ]))
                 );

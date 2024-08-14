@@ -3,8 +3,8 @@ use std::fmt::{Debug, Error, Formatter};
 use std::ops::ControlFlow;
 use std::rc::Rc;
 
-use crate::node::{FunctionParameterDefinition, Node};
-use crate::type_::Type;
+use crate::node::Node;
+use crate::type_::{FunctionParameterDefinition, Type};
 use crate::vm::{BreakResult, Environment, VM};
 
 pub type NativeFunction = fn(&Vec<Value>, &mut VM) -> ControlFlow<BreakResult, Value>;
@@ -34,12 +34,8 @@ impl Value {
             Value::Number(_) => Type::Number,
             Value::Bool(_) => Type::Bool,
             Value::String(_) => Type::String,
-            Value::Function { parameters, .. } => Type::Function(
-                parameters.iter().map(|parameter| parameter.type_.clone()).collect()
-            ),
-            Value::NativeFunction { parameters, .. } => Type::Function(
-                parameters.iter().map(|parameter| parameter.type_.clone()).collect()
-            ),
+            Value::Function { parameters, .. } => Type::Function(parameters.clone()),
+            Value::NativeFunction { parameters, .. } => Type::Function(parameters.clone()),
             Value::Ref(_) => Type::Ref,
         }
     }

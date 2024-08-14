@@ -1,5 +1,4 @@
 use crate::punctuator_kind::PunctuatorKind;
-use crate::type_::Type;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Node {
@@ -9,13 +8,14 @@ pub enum Node {
     EmptyStatement,
     IfStatement(Box<Node>, Box<Node>, Option<Box<Node>>), // condition, true-branch, false-branch
     ForStatement(String, Box<Node>, Box<Node>), // variable, iterator, body
-    VariableDeclaration(String, Option<Type>, Option<Box<Node>>), // name, type, initial_value
-    FunctionDeclaration(String, Vec<FunctionParameterDefinition>, Box<Node>), // name, parameters, body
+    VariableDeclaration(String, Option<TypeExpression>, Option<Box<Node>>), // name, type, initial_value
+    FunctionDeclaration(String, Vec<FunctionParameterDeclaration>, Box<Node>), // name, parameters, body
+    StructDeclaration(String, Vec<StructPropertyDeclaration>), // name, properties
 
     // Expressions
     ReturnExpression(Option<Box<Node>>), // return value
     BreakExpression,
-    FunctionExpression(Option<String>, Vec<FunctionParameterDefinition>, Box<Node>), // name, parameters, body
+    FunctionExpression(Option<String>, Vec<FunctionParameterDeclaration>, Box<Node>), // name, parameters, body
     IfExpression(Box<Node>, Box<Node>, Box<Node>), // condition, true-branch, false-branch
     BlockExpression(Vec<Node>),
     RangeIterator(Box<Node>, Box<Node>), // temporary
@@ -27,18 +27,29 @@ pub enum Node {
     Number(f64),
     Bool(bool),
     String(String),
-    Object(Vec<ObjectPropertyDefinition>),
+    Struct(TypeExpression, Vec<StructPropertyInitializer>),
     Identifier(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct FunctionParameterDefinition {
-    pub name: String,
-    pub type_: Type,
+pub enum TypeExpression {
+    Identifier(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ObjectPropertyDefinition {
+pub struct FunctionParameterDeclaration {
+    pub name: String,
+    pub type_: TypeExpression,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StructPropertyDeclaration {
+    pub name: String,
+    pub type_: TypeExpression,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StructPropertyInitializer {
     pub name: String,
     pub value: Box<Node>,
 }

@@ -6,6 +6,22 @@ pub enum Type {
     Number,
     Bool,
     String,
-    Function(Vec<Type>), // parameters
+    Function(Vec<FunctionParameterDefinition>), // parameters
     Ref,
+    Struct {
+        name: String,
+        properties: Vec<StructPropertyDefinition>
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FunctionParameterDefinition {
+    pub name: String,
+    pub type_: Type,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StructPropertyDefinition {
+    pub name: String,
+    pub type_: Type,
 }

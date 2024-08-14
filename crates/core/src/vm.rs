@@ -4,10 +4,10 @@ use std::fmt::Debug;
 use std::ops::{ControlFlow, Deref};
 use std::rc::Rc;
 
-use crate::node::{FunctionParameterDefinition, Node, ObjectPropertyDefinition};
+use crate::node::{FunctionParameterDeclaration, Node, StructPropertyDeclaration, StructPropertyInitializer, TypeExpression};
 use crate::parser::parse;
 use crate::punctuator_kind::PunctuatorKind;
-use crate::type_::Type;
+use crate::type_::{FunctionParameterDefinition, StructPropertyDefinition, Type};
 use crate::value::{NativeFunction, Value};
 
 #[derive(Clone, PartialEq, Debug)]
@@ -19,6 +19,7 @@ struct Variable {
 #[derive(Default, Debug, PartialEq)]
 pub struct Environment {
     variables: HashMap<String, Variable>,
+    types: HashMap<String, Type>,
     parent: Option<Rc<RefCell<Environment>>>,
 }
 
@@ -26,6 +27,7 @@ impl Environment {
     fn new() -> Self {
         Environment {
             variables: HashMap::new(),
+            types: HashMap::new(),
             parent: None,
         }
     }
@@ -58,6 +60,25 @@ impl Environment {
                     None => ControlFlow::Break(BreakResult::Error(Value::String(format!("Undefined variable: {}", name)))),
                 }
             }
+        }
+    }
+
+    fn declare_type(&mut self, name: &str, type_: &Type) {
+        self.types.insert(name.to_string(), type_.clone());
+    }
+
+    fn eval_type_expression(&self, type_: &TypeExpression) -> ControlFlow<BreakResult, Type> {
+        match type_ {
+            TypeExpression::Identifier(name) => {
+                if let Some(type_) = self.types.get(name) {
+                    return ControlFlow::Continue(type_.clone());
+                }
+            }
+        }
+
+        match &self.parent {
+            Some(parent) => parent.borrow().eval_type_expression(type_),
+            None => ControlFlow::Break(BreakResult::Error(Value::String(format!("Undefined type: {:?}", type_)))),
         }
     }
 }
@@ -149,6 +170,10 @@ impl Default for VM {
             }
             ControlFlow::Continue(Value::Number(0.0))
         });
+
+        vm.declare_type("number", &Type::Number);
+        vm.declare_type("string", &Type::String);
+        vm.declare_type("bool", &Type::Bool);
 
         vm
     }
@@ -244,15 +269,15 @@ impl VM {
                     None => Value::Number(0.0),
                 };
                 let type_ = match type_ {
-                    Some(type_) => type_,
-                    None => &value.get_type(),
+                    Some(type_) => self.eval_type_expression(type_)?,
+                    None => value.get_type(),
                 };
-                if type_ != &value.get_type() {
+                if type_ != value.get_type() {
                     return ControlFlow::Break(BreakResult::Error(Value::String(
                         format!("TypeError: Expected type {:?}, actual type {:?}", type_, value.get_type())
                     )));
                 }
-                self.declare_variable(name, type_, &value);
+                self.declare_variable(name, &type_, &value);
                 ControlFlow::Continue(Value::Number(0.0))
             }
             Node::ForStatement(variable, iterator, body) => {
@@ -280,9 +305,17 @@ impl VM {
                 ControlFlow::Continue(Value::Number(0.0))
             }
             Node::FunctionDeclaration(name, parameters, body) => {
+                let mut parameter_definitions = vec![];
+                for FunctionParameterDeclaration { name, type_ } in parameters {
+                    parameter_definitions.push(FunctionParameterDefinition {
+                        name: name.clone(),
+                        type_: self.eval_type_expression(type_)?,
+                    });
+                }
+
                 let function = Value::Function {
                     name: name.clone(),
-                    parameters: parameters.clone(),
+                    parameters: parameter_definitions,
                     body: body.clone(),
                     closure: self.environments.last().unwrap().clone(),
                 };
@@ -290,12 +323,35 @@ impl VM {
 
                 ControlFlow::Continue(function)
             }
+            Node::StructDeclaration(name, properties) => {
+                let mut property_definitions = vec![];
+                for StructPropertyDeclaration { name, type_ } in properties {
+                    property_definitions.push(StructPropertyDefinition {
+                        name: name.clone(),
+                        type_: self.eval_type_expression(type_)?,
+                    });
+                }
+
+                self.declare_type(name, &Type::Struct {
+                    name: name.clone(),
+                    properties: property_definitions,
+                });
+                ControlFlow::Continue(Value::Number(0.0))
+            }
 
             // Expression
             Node::FunctionExpression(name, parameters, body) => {
+                let mut parameter_definitions = vec![];
+                for FunctionParameterDeclaration { name, type_ } in parameters {
+                    parameter_definitions.push(FunctionParameterDefinition {
+                        name: name.clone(),
+                        type_: self.eval_type_expression(type_)?,
+                    });
+                }
+
                 let function = Value::Function {
                     name: name.clone().unwrap_or("(anonymous)".to_string()),
-                    parameters: parameters.clone(),
+                    parameters: parameter_definitions,
                     body: body.clone(),
                     closure: self.environments.last().unwrap().clone(),
                 };
@@ -403,11 +459,9 @@ impl VM {
                             evaluated_arguments.push(self.eval_node(argument)?);
                         }
 
-                        let environment = Rc::new(RefCell::new(Environment {
-                            variables: HashMap::new(),
-                            parent: Some(closure),
-                        }));
-                        self.environments.push(environment);
+                        let mut environment = Environment::new();
+                        environment.parent = Some(closure);
+                        self.environments.push(Rc::new(RefCell::new(environment)));
 
                         for (argument, FunctionParameterDefinition { name, type_ }) in evaluated_arguments.iter().zip(parameters.iter()) {
                             if &argument.get_type() != type_ {
@@ -432,11 +486,9 @@ impl VM {
                             evaluated_arguments.push(self.eval_node(argument)?);
                         }
 
-                        let environment = Rc::new(RefCell::new(Environment {
-                            variables: HashMap::new(),
-                            parent: Some(self.environments.first().unwrap().clone()),
-                        }));
-                        self.environments.push(environment);
+                        let mut environment = Environment::new();
+                        environment.parent = self.environments.first().map(Rc::clone);
+                        self.environments.push(Rc::new(RefCell::new(environment)));
 
                         let ret = body(&evaluated_arguments, self);
 
@@ -482,9 +534,9 @@ impl VM {
                     None => ControlFlow::Break(BreakResult::Error(Value::String(format!("Undefined property: {}", property))))
                 }
             }
-            Node::Object(definitions) => {
+            Node::Struct(_type_, definitions) => {
                 let mut members = HashMap::new();
-                for ObjectPropertyDefinition { name, value } in definitions {
+                for StructPropertyInitializer { name, value } in definitions {
                     members.insert(name.clone(), self.eval_node(value)?);
                 }
                 let address = self.allocate_object();
@@ -501,10 +553,9 @@ impl VM {
     }
 
     fn enter_new_environment(&mut self) {
-        self.environments.push(Rc::new(RefCell::new(Environment {
-            variables: HashMap::new(),
-            parent: self.environments.last().map(Rc::clone),
-        })));
+        let mut environment = Environment::new();
+        environment.parent = self.environments.last().map(Rc::clone);
+        self.environments.push(Rc::new(RefCell::new(environment)));
     }
 
     fn exit_environment(&mut self) {
@@ -540,16 +591,19 @@ impl VM {
     ) {
         let mut global = self.environments.first().unwrap().borrow_mut();
 
+        let mut parameter_definitions = vec![];
+        for (i, type_) in parameter_types.iter().enumerate() {
+            parameter_definitions.push(FunctionParameterDefinition { name: format!("v{}", i), type_: type_.clone() });
+        }
+
         let native_function = Value::NativeFunction {
             name: name.to_string(),
-            parameters: parameter_types.iter().enumerate()
-                .map(|(i, type_)| FunctionParameterDefinition { name: format!("v{}", { i }), type_: type_.clone() })
-                .collect(),
+            parameters: parameter_definitions,
             body,
         };
         global.variables.insert(name.to_string(), Variable { type_: native_function.get_type(), value: native_function });
     }
-    
+
     fn allocate_object(&self) -> usize {
         for i in 0.. {
             if !self.objects.contains_key(&i) {
@@ -557,6 +611,20 @@ impl VM {
             }
         }
         panic!("Failed to allocate object");
+    }
+
+    fn declare_type(&mut self, name: &str, type_: &Type) {
+        match self.environments.last() {
+            Some(environment) => environment.borrow_mut().declare_type(name, type_),
+            None => panic!("No environment"),
+        }
+    }
+
+    fn eval_type_expression(&self, type_: &TypeExpression) -> ControlFlow<BreakResult, Type> {
+        match self.environments.last() {
+            Some(environment) => environment.borrow().eval_type_expression(type_),
+            None => panic!("No environment"),
+        }
     }
 }
 
@@ -623,15 +691,15 @@ mod tests {
         assert_eq!(VM::new().eval("{1+2}"), Value::Number(3.0));
         assert_eq!(VM::new().eval("if (true) 2 else 3"), Value::Number(2.0));
         assert_eq!(VM::new().eval("if (true) 2 else 3"), Value::Number(2.0));
-        assert_eq!(VM::new().eval("if (true) { debug(123); 2 } else { 3 }"), Value::Number(2.0));
+        assert_eq!(VM::new().eval("if (true) { debug(123) 2 } else { 3 }"), Value::Number(2.0));
         assert_eq!(VM::new().eval("if (true) 2 else 3*3"), Value::Number(2.0));
         assert_eq!(VM::new().eval("1 + if (false) 2 else 3 * 3"), Value::Number(10.0));
         assert_eq!(VM::new().eval("1 + if (false) 2 else if (false) 3 else 4"), Value::Number(5.0));
-        assert_eq!(VM::new().eval("let x=false; if (x) 1 else 2"), Value::Number(2.0));
-        assert_eq!(VM::new().eval("let x=true; if (x) 1 else 2"), Value::Number(1.0));
-        assert_eq!(VM::new().eval("let x=true; let y=if (x) 2 else 3; let z=y*y; z"), Value::Number(4.0));
-        assert_eq!(VM::new().eval("let x=1; x=2; x"), Value::Number(2.0));
-        assert_eq!(VM::new().eval("let x=5; x=x*x; x"), Value::Number(25.0));
+        assert_eq!(VM::new().eval("let x=false if (x) 1 else 2"), Value::Number(2.0));
+        assert_eq!(VM::new().eval("let x=true if (x) 1 else 2"), Value::Number(1.0));
+        assert_eq!(VM::new().eval("let x=true let y=if (x) 2 else 3 let z=y*y z"), Value::Number(4.0));
+        assert_eq!(VM::new().eval("let x=1 x=2 x"), Value::Number(2.0));
+        assert_eq!(VM::new().eval("let x=5 x=x*x x"), Value::Number(25.0));
         assert_eq!(VM::new().eval("true && true"), Value::Bool(true));
         assert_eq!(VM::new().eval("true && false"), Value::Bool(false));
         assert_eq!(VM::new().eval("false && true"), Value::Bool(false));
@@ -643,13 +711,13 @@ mod tests {
         assert_eq!(VM::new().eval("false + 1"), Value::String("TypeError: Expected type Number, actual type Bool".to_string()));
         assert_eq!(VM::new().eval("\"hello\" + 1"), Value::String("TypeError: Expected type Number, actual type String".to_string()));
 
-        assert_eq!(VM::new().eval("\
-        let x = 0;
-        for (i in 0 to 10) {\
-            debug(i);\
-            x = x + i;\
-        }\
-        x\
+        assert_eq!(VM::new().eval("
+        let x = 0
+        for (i in 0 to 10) {
+            debug(i)
+            x = x + i
+        }
+        x
         "), Value::Number(45.0));
     }
 
@@ -723,7 +791,7 @@ mod tests {
             }
 
             function wrapper () {
-                let x = 100;
+                let x = 100
                 setX(1)
                 debug(x)  // 100
             }
@@ -857,7 +925,7 @@ mod tests {
     #[test]
     fn shadowing() {
         assert_eq!(VM::new().eval("
-        let x = 0;
+        let x = 0
         {
             let x
             x = 100
@@ -977,7 +1045,9 @@ mod tests {
         fn set_and_get_object() {
             let mut vm = VM::new();
             assert_eq!(vm.eval("
-                let user = { id: 1, name: \"Alice\" }
+                struct User { id: number, name: string }
+
+                let user = User { id: 1, name: \"Alice\" }
                 user
             "), Value::Ref(0));
 
@@ -991,7 +1061,10 @@ mod tests {
         fn create_nested_object() {
             let mut vm = VM::new();
             assert_eq!(vm.eval("
-                let userRef = { user: { id: 1, name: \"Alice\" } }
+                struct User { id: number, name: string }
+                struct UserRef { user: User }
+
+                let userRef = UserRef { user: User { id: 1, name: \"Alice\" } }
                 userRef
             "), Value::Ref(1));
 
@@ -1008,7 +1081,11 @@ mod tests {
         #[test]
         fn read_member_of_object() {
             let mut vm = VM::new();
-            vm.eval("let user = { id: 1, name: \"Alice\" }");
+            vm.eval("
+                struct User { id: number, name: string }
+
+                let user = User { id: 1, name: \"Alice\" }
+            ");
             assert_eq!(vm.eval("user.id"), Value::Number(1f64));
             assert_eq!(vm.eval("user.name"), Value::String("Alice".to_string()));
         }
@@ -1017,8 +1094,10 @@ mod tests {
         fn write_member_of_object() {
             let mut vm = VM::new();
             assert_eq!(vm.eval("
-                let user = { id: 1, name: \"Alice\" }
-                user.id = 2;
+                struct User { id: number, name: string }
+
+                let user = User { id: 1, name: \"Alice\" }
+                user.id = 2
                 user
             "), Value::Ref(0));
 
@@ -1032,8 +1111,11 @@ mod tests {
         fn assign_ref_into_another_object() {
             let mut vm = VM::new();
             assert_eq!(vm.eval("
-                let user1 = { id: 1, name: \"Alice\" }
-                let userRef = { user: user1 }
+                struct User { id: number, name: string }
+                struct UserRef { user: User }
+
+                let user1 = User { id: 1, name: \"Alice\" }
+                let userRef = UserRef { user: user1 }
                 userRef
             "), Value::Ref(1));
 
@@ -1051,9 +1133,12 @@ mod tests {
         fn write_member_of_object_through_nested_ref() {
             let mut vm = VM::new();
             assert_eq!(vm.eval("
-                let user1 = { id: 1, name: \"Alice\" }
-                let userRef = { user: user1 }
-                userRef.user.id = 2;
+                struct User { id: number, name: string }
+                struct UserRef { user: User }
+
+                let user1 = User { id: 1, name: \"Alice\" }
+                let userRef = UserRef { user: user1 }
+                userRef.user.id = 2
                 userRef
             "), Value::Ref(1));
 
@@ -1071,9 +1156,12 @@ mod tests {
         fn access_ref_after_ref_variable_is_overwritten() {
             let mut vm = VM::new();
             assert_eq!(vm.eval("
-                let user1 = { id: 1, name: \"Alice\" }
-                let userRef = { user: user1 }
-                user1 = {};
+                struct User { id: number, name: string }
+                struct UserRef { user: User }
+
+                let user1 = User { id: 1, name: \"Alice\" }
+                let userRef = UserRef { user: user1 }
+                user1 = User {}
                 userRef
             "), Value::Ref(1));
 
@@ -1155,14 +1243,15 @@ mod tests {
         fn clean_up_all_unused_refs() {
             let mut vm = VM::new();
             vm.eval("
-                let alice = { name: \"Alice\" }
+                struct User { name: string }
+                let alice = User { name: \"Alice\" }
             ");
             assert_eq!(vm.objects.len(), 1);
 
             vm.gc();
             assert_eq!(vm.objects.len(), 1);
 
-            vm.eval("alice = {};");
+            vm.eval("alice = User {};");
             vm.gc();
             assert_eq!(vm.objects.len(), 1); // New empty object assigned into alice and bob
         }
@@ -1171,14 +1260,16 @@ mod tests {
         fn clean_up_objects_referred_by_another_object() {
             let mut vm = VM::new();
             vm.eval("
-                let users = { alice: { name: \"Alice\" } }
+                struct User { name: string }
+                struct Users { alice: User }
+                let users = Users { alice: User { name: \"Alice\" } }
             ");
             assert_eq!(vm.objects.len(), 2);
 
             vm.gc();
             assert_eq!(vm.objects.len(), 2);
 
-            vm.eval("users = {};");
+            vm.eval("users = Users {}");
             vm.gc();
             assert_eq!(vm.objects.len(), 1); // New empty object assigned into alice and bob
         }
@@ -1187,30 +1278,34 @@ mod tests {
         fn circular_reference() {
             let mut vm = VM::new();
             vm.eval("
-                let alice = { name: \"Alice\" }
-                let bob = { name: \"Bob\" }
+                struct User { name: string } // TODO: friend
+                let alice = User { name: \"Alice\" }
+                let bob = User { name: \"Bob\" }
                 alice.friend = bob
                 bob.friend = alice
             ");
+
             assert_eq!(vm.objects.len(), 2);
 
             vm.gc();
             assert_eq!(vm.objects.len(), 2);
 
-            vm.eval("
-                alice = {};
-                bob = alice;
-            ");
+            println!("{:?}", vm.eval("
+                alice = User { name: \"Alice\" }
+                bob = alice
+            "));
             vm.gc();
-            assert_eq!(vm.objects.len(), 1); // New empty object assigned into alice and bob
+            assert_eq!(vm.objects.len(), 1); // New object assigned into alice and bob
         }
 
         #[test]
         fn object_allocated_in_function() {
             let mut vm = VM::new();
             vm.eval("
+                struct User { name: string }
+
                 function createUser() {
-                    let user = { name: \"Alice\" }
+                    let user = User { name: \"Alice\" }
                 }
             ");
             assert_eq!(vm.objects.len(), 0);
@@ -1226,8 +1321,10 @@ mod tests {
         fn object_returned_from_function() {
             let mut vm = VM::new();
             vm.eval("
+                struct User { name: string }
+
                 function createUser() {
-                    return { name: \"Alice\" }
+                    return User { name: \"Alice\" }
                 }
             ");
             assert_eq!(vm.objects.len(), 0);
@@ -1246,17 +1343,21 @@ mod tests {
         #[test]
         fn reuse_released_address() {
             let mut vm = VM::new();
-            vm.eval("let a = {i:0}; let b = {i:1}");
+            vm.eval("
+                struct Obj { i: number }
+                let a = Obj {i:0}
+                let b = Obj {i:1}
+             ");
             assert_eq!(vm.objects.len(), 2);
 
-            vm.eval("a = {i:2}; b = a");
+            vm.eval("a = Obj {i:2} b = a");
             assert_eq!(vm.objects.len(), 3);
 
             vm.gc();    // address 0 and 1 are released
             assert_eq!(vm.objects.len(), 1);
 
-            vm.eval("b = {i:3};");  // address 1 is reused
-            vm.eval("b = {i:4};");  // address 2 is reused
+            vm.eval("b = Obj {i:3}");  // address 1 is reused
+            vm.eval("b = Obj {i:4}");  // address 2 is reused
             assert_eq!(vm.eval("a"), Value::Ref(2));
             assert_eq!(*vm.objects.get(&2).unwrap().borrow().get("i").unwrap(), Value::Number(2.0));
         }
@@ -1269,7 +1370,7 @@ mod tests {
         fn assign_variable_declared_with_type_annotation() {
             let mut vm = VM::new();
             assert_eq!(vm.eval("
-                let x: number = true;
+                let x: number = true
             "), Value::String("TypeError: Expected type Number, actual type Bool".to_string()));
         }
 
@@ -1277,8 +1378,8 @@ mod tests {
         fn assign_variable_declared_without_type_annotation() {
             let mut vm = VM::new();
             assert_eq!(vm.eval("
-                let x = 0;
-                x = true;
+                let x = 0
+                x = true
             "), Value::String("TypeError: Expected type Number, actual type Bool".to_string()));
         }
 
@@ -1305,9 +1406,24 @@ mod tests {
             let mut vm = VM::new();
             assert_eq!(vm.eval("
                 function f() { return \"test\" }
-                let x = 0;
-                x = f();
+                let x = 0
+                x = f()
             "), Value::String("TypeError: Expected type Number, actual type String".to_string()));
+        }
+    }
+
+    mod struct_declaration {
+        use crate::value::Value;
+        use crate::vm::VM;
+
+        #[test]
+        fn declare_struct() {
+            let mut vm = VM::new();
+            assert_eq!(vm.eval("
+                struct User { id: number, name: string }
+
+                let user = User { id: 1, name: \"Alice\" }
+            "), Value::Number(0.0));
         }
     }
 }
