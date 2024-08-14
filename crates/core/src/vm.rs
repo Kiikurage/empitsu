@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::{Debug, Error, Formatter};
 use std::ops::{ControlFlow, Deref, DerefMut};
 use std::rc::Rc;
@@ -151,6 +151,36 @@ impl VM {
             }
             Err(message) => Value::String(message),
         }
+    }
+
+    pub fn gc(&mut self) {
+        let mut retained_objects = HashSet::new();
+
+        for env in self.environments.iter() {
+            for variable in env.borrow().variables.values() {
+                if let Value::Ref(address) = variable {
+                    retained_objects.insert(*address);
+                }
+            }
+        }
+
+        let mut queue = retained_objects.iter().copied().collect::<VecDeque<_>>();
+        while let Some(address) = queue.pop_front() {
+            let members = match self.objects.get(&address) {
+                Some(object) => object.borrow(),
+                None => continue,
+            };
+
+            for value in members.values() {
+                if let Value::Ref(address) = value {
+                    if retained_objects.insert(*address) {
+                        queue.push_back(*address);
+                    }
+                }
+            }
+        }
+
+        self.objects.retain(|address, _| retained_objects.contains(address));
     }
 
     fn eval_node(&mut self, node: &Node) -> ControlFlow<BreakResult, Value> {
@@ -976,6 +1006,108 @@ mod tests {
             assert_eq!(VM::new().eval("print(1)"), Value::String("TypeError: Expected type string, actual type \"number\"".to_string()));
             assert_eq!(VM::new().eval("print(true)"), Value::String("TypeError: Expected type string, actual type \"bool\"".to_string()));
             assert_eq!(VM::new().eval("print(\"ABC\")"), Value::Number(0f64));
+        }
+    }
+
+    mod gc {
+        use crate::vm::{Value, VM};
+        use std::collections::HashMap;
+
+        #[test]
+        fn clean_up_all_unused_refs() {
+            let mut vm = VM::new();
+            vm.eval("
+                let alice = { name: \"Alice\" }
+            ");
+            assert_eq!(vm.objects.len(), 1);
+
+            vm.gc();
+            assert_eq!(vm.objects.len(), 1);
+
+            vm.eval("
+                alice = 0;
+            ");
+            vm.gc();
+            assert_eq!(vm.objects.len(), 0);
+        }
+
+        #[test]
+        fn clean_up_objects_referred_by_another_object() {
+            let mut vm = VM::new();
+            vm.eval("
+                let users = { alice: { name: \"Alice\" } }
+            ");
+            assert_eq!(vm.objects.len(), 2);
+
+            vm.gc();
+            assert_eq!(vm.objects.len(), 2);
+
+            vm.eval("
+                users = 0;
+            ");
+            vm.gc();
+            assert_eq!(vm.objects.len(), 0);
+        }
+
+        #[test]
+        fn circular_reference() {
+            let mut vm = VM::new();
+            vm.eval("
+                let alice = { name: \"Alice\" }
+                let bob = { name: \"Bob\" }
+                alice.friend = bob
+                bob.friend = alice
+            ");
+            assert_eq!(vm.objects.len(), 2);
+
+            vm.gc();
+            assert_eq!(vm.objects.len(), 2);
+
+            vm.eval("
+                alice = 0;
+                bob = 0;
+            ");
+            vm.gc();
+            assert_eq!(vm.objects.len(), 0);
+        }
+
+        #[test]
+        fn object_allocated_in_function() {
+            let mut vm = VM::new();
+            vm.eval("
+                function createUser() {
+                    let user = { name: \"Alice\" }
+                }
+            ");
+            assert_eq!(vm.objects.len(), 0);
+
+            vm.eval("createUser()");
+            assert_eq!(vm.objects.len(), 1);
+
+            vm.gc();
+            assert_eq!(vm.objects.len(), 0);
+        }
+
+        #[test]
+        fn object_returned_from_function() {
+            let mut vm = VM::new();
+            vm.eval("
+                function createUser() {
+                    return { name: \"Alice\" }
+                }
+            ");
+            assert_eq!(vm.objects.len(), 0);
+
+            vm.eval("let user = createUser()");
+            assert_eq!(vm.objects.len(), 1);
+
+            vm.gc();
+            assert_eq!(vm.objects.len(), 1);
+
+            vm.eval("user = 0");
+            vm.gc();
+            assert_eq!(vm.objects.len(), 0);
+
         }
     }
 }
