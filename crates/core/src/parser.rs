@@ -1,6 +1,7 @@
 use crate::lexer::scan;
-use crate::node::Node;
+use crate::node::{FunctionParameterDefinition, Node};
 use crate::punctuator_kind::PunctuatorKind;
+use crate::type_::Type;
 use crate::token::Token;
 use crate::token_iter::TokenIter;
 
@@ -187,6 +188,17 @@ fn parse_variable_declaration(tokens: &mut TokenIter) -> Result<Option<Node>, St
     };
     tokens.next();
 
+    let typ = if matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::Colon))) {
+        tokens.next();
+
+        match parse_type_annotation(tokens)? {
+            Some(node) => Some(node),
+            None => return Err("Expected type annotation".to_string()),
+        }
+    } else {
+        None
+    };
+
     let value = if matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::Equal))) {
         tokens.next();
 
@@ -198,7 +210,7 @@ fn parse_variable_declaration(tokens: &mut TokenIter) -> Result<Option<Node>, St
         None
     };
 
-    Ok(Some(Node::VariableDeclaration(identifier, value.map(Box::new))))
+    Ok(Some(Node::VariableDeclaration(identifier, typ, value.map(Box::new))))
 }
 
 fn parse_function_declaration(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
@@ -445,7 +457,7 @@ fn parse_statement_expression(tokens: &mut TokenIter) -> Result<Option<Node>, St
 }
 
 fn parse_function_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
-    return parse_function(tokens, false);
+    parse_function(tokens, false)
 }
 
 fn parse_if_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
@@ -720,9 +732,24 @@ fn parse_function(tokens: &mut TokenIter, is_declaration: bool) -> Result<Option
             return Err(format!("SyntaxError: \"{}\" is a reserved word", identifier));
         }
 
-        parameters.push(identifier.clone());
+        let identifier = identifier.clone();
         tokens.next();
 
+        if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::Colon))) {
+            return Err("Expected ':'".to_string());
+        }
+        tokens.next();
+        
+        let type_ = match parse_type_annotation(tokens)? {
+            Some(node) => node,
+            None => return Err("Expected type annotation".to_string()),
+        };
+        
+        parameters.push(FunctionParameterDefinition { 
+            name: identifier, 
+            type_
+        });
+        
         if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::Comma))) {
             break;
         }
@@ -753,6 +780,32 @@ fn is_reserved_words(word: &str) -> bool {
     matches!(word, "if" | "let" | "for" | "function" | "true" | "false" | "else" | "return" | "break")
 }
 
+fn parse_type_annotation(tokens: &mut TokenIter) -> Result<Option<Type>, String> {
+    parse_primitive_type_annotation(tokens)
+}
+
+fn parse_primitive_type_annotation(tokens: &mut TokenIter) -> Result<Option<Type>, String> {
+    match tokens.peek() {
+        Some(Token::Identifier(identifier)) => {
+            match identifier.as_str() {
+                "number" => {
+                    tokens.next();
+                    Ok(Some(Type::Number))
+                }
+                "bool" => {
+                    tokens.next();
+                    Ok(Some(Type::Bool))
+                }
+                "string" => {
+                    tokens.next();
+                    Ok(Some(Type::String))
+                }
+                _ => Ok(None),
+            }
+        }
+        _ => Ok(None),
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -848,13 +901,14 @@ mod tests {
         mod variable_declaration {
             use crate::node::Node;
             use crate::parser::parse;
+            use crate::type_::Type;
 
             #[test]
             fn variable_declaration() {
                 assert_eq!(
                     parse("let x"),
                     Ok(Node::Program(vec![
-                        Node::VariableDeclaration("x".to_string(), None),
+                        Node::VariableDeclaration("x".to_string(), None, None),
                     ]))
                 );
             }
@@ -864,7 +918,17 @@ mod tests {
                 assert_eq!(
                     parse("let x = 1"),
                     Ok(Node::Program(vec![
-                        Node::VariableDeclaration("x".to_string(), Some(Box::new(Node::Number(1.0f64)))),
+                        Node::VariableDeclaration("x".to_string(), None, Some(Box::new(Node::Number(1.0f64)))),
+                    ]))
+                );
+            }
+
+            #[test]
+            fn with_type_annotation() {
+                assert_eq!(
+                    parse("let x: number = 1"),
+                    Ok(Node::Program(vec![
+                        Node::VariableDeclaration("x".to_string(), Some(Type::Number), Some(Box::new(Node::Number(1.0f64)))),
                     ]))
                 );
             }

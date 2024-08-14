@@ -1,12 +1,19 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::{Debug, Error, Formatter};
-use std::ops::{ControlFlow, Deref, DerefMut};
+use std::ops::{ControlFlow, Deref};
 use std::rc::Rc;
 
-use crate::node::Node;
+use crate::node::{FunctionParameterDefinition, Node};
 use crate::parser::parse;
 use crate::punctuator_kind::PunctuatorKind;
+use crate::type_::Type;
+
+#[derive(Clone, PartialEq, Debug)]
+struct Variable {
+    type_: Type,
+    value: Value,
+}
 
 #[derive(Clone, PartialEq)]
 pub enum Value {
@@ -15,7 +22,7 @@ pub enum Value {
     String(String),
     Function {
         name: String,
-        parameters: Vec<String>,
+        parameters: Vec<FunctionParameterDefinition>,
         body: Box<Node>,
         closure: Rc<RefCell<Environment>>,
     },
@@ -23,13 +30,15 @@ pub enum Value {
 }
 
 impl Value {
-    fn get_type(&self) -> &'static str {
+    fn get_type(&self) -> Type {
         match self {
-            Value::Number(_) => "number",
-            Value::Bool(_) => "bool",
-            Value::String(_) => "string",
-            Value::Function { .. } => "function",
-            Value::Ref(_) => "ref",
+            Value::Number(_) => Type::Number,
+            Value::Bool(_) => Type::Bool,
+            Value::String(_) => Type::String,
+            Value::Function { parameters, .. } => Type::Function(
+                parameters.iter().map(|parameter| parameter.type_.clone()).collect()
+            ),
+            Value::Ref(_) => Type::Ref,
         }
     }
 
@@ -37,7 +46,7 @@ impl Value {
         match self {
             Value::Number(value) => ControlFlow::Continue(*value),
             _ => ControlFlow::Break(BreakResult::Error(Value::String(
-                format!("TypeError: Expected type number, actual type {:?}", self.get_type())
+                format!("TypeError: Expected type Number, actual type {:?}", self.get_type())
             ))),
         }
     }
@@ -46,16 +55,24 @@ impl Value {
         match self {
             Value::Bool(value) => ControlFlow::Continue(*value),
             _ => ControlFlow::Break(BreakResult::Error(Value::String(
-                format!("TypeError: Expected type bool, actual type {:?}", self.get_type())
+                format!("TypeError: Expected type Bool, actual type {:?}", self.get_type())
             ))),
         }
     }
 
-    fn to_string(self) -> ControlFlow<BreakResult, String> {
+    fn into_string(self) -> ControlFlow<BreakResult, String> {
         match self {
-            Value::String(value) => ControlFlow::Continue(value),
+            Value::String(value) => ControlFlow::Continue(value.clone()),
+            Value::Function { name, parameters, .. } => {
+                ControlFlow::Continue(
+                    format!("function {}({})", name, parameters
+                        .iter().map(|parameter| format!("{}:{:?}", parameter.name, parameter.type_))
+                        .collect::<Vec<String>>()
+                        .join(", "))
+                )
+            }
             _ => ControlFlow::Break(BreakResult::Error(Value::String(
-                format!("TypeError: Expected type string, actual type {:?}", self.get_type())
+                format!("TypeError: Expected type String, actual type {:?}", self.get_type())
             ))),
         }
     }
@@ -67,15 +84,20 @@ impl Debug for Value {
             Value::Number(value) => write!(f, "{}", value),
             Value::Bool(value) => write!(f, "{}", value),
             Value::String(value) => write!(f, "{}", value),
-            Value::Function { name, parameters, .. } => write!(f, "function {}({})", name, parameters.join(", ")),
+            Value::Function { .. } => {
+                match self.clone().into_string() {
+                    ControlFlow::Continue(value) => write!(f, "{}", value),
+                    _ => unreachable!()
+                }
+            }
             Value::Ref(value) => write!(f, "ref {}", value),
         }
     }
 }
 
-#[derive(Debug, PartialEq)]
-struct Environment {
-    variables: HashMap<String, Value>,
+#[derive(Default, Debug, PartialEq)]
+pub struct Environment {
+    variables: HashMap<String, Variable>,
     parent: Option<Rc<RefCell<Environment>>>,
 }
 
@@ -87,13 +109,13 @@ impl Environment {
         }
     }
 
-    fn declare_variable(&mut self, name: &str, value: &Value) {
-        self.variables.insert(name.to_string(), value.clone());
+    fn declare_variable(&mut self, name: &str, type_: &Type, value: &Value) {
+        self.variables.insert(name.to_string(), Variable { type_: type_.clone(), value: value.clone() });
     }
 
-    fn get_variable(&self, name: &str) -> ControlFlow<BreakResult, Value> {
+    fn get_variable(&self, name: &str) -> ControlFlow<BreakResult, Variable> {
         match self.variables.get(name) {
-            Some(value) => ControlFlow::Continue(value.clone()),
+            Some(variable) => ControlFlow::Continue(variable.clone()),
             None => {
                 match &self.parent {
                     Some(parent) => parent.borrow().get_variable(name),
@@ -104,24 +126,22 @@ impl Environment {
     }
 
     fn set_variable(&mut self, name: &str, value: &Value) -> ControlFlow<BreakResult, ()> {
-        if self.variables.contains_key(name) {
-            self.variables.insert(name.to_string(), value.clone());
-            ControlFlow::Continue(())
-        } else {
-            match &self.parent {
-                Some(parent) => parent.borrow_mut().set_variable(name, value),
-                None => ControlFlow::Break(BreakResult::Error(Value::String(format!("Undefined variable: {}", name)))),
+        match self.variables.get_mut(name) {
+            Some(variable) => {
+                variable.value = value.clone();
+                ControlFlow::Continue(())
+            }
+            None => {
+                match &self.parent {
+                    Some(parent) => parent.borrow_mut().set_variable(name, value),
+                    None => ControlFlow::Break(BreakResult::Error(Value::String(format!("Undefined variable: {}", name)))),
+                }
             }
         }
     }
 }
 
-impl Default for Environment {
-    fn default() -> Self {
-        Environment::new()
-    }
-}
-
+#[derive(Default)]
 pub struct VM {
     environments: Vec<Rc<RefCell<Environment>>>,
     objects: HashMap<usize, RefCell<HashMap<String, Value>>>,
@@ -158,8 +178,8 @@ impl VM {
 
         for env in self.environments.iter() {
             for variable in env.borrow().variables.values() {
-                if let Value::Ref(address) = variable {
-                    retained_objects.insert(*address);
+                if let Value::Ref(address) = variable.value {
+                    retained_objects.insert(address);
                 }
             }
         }
@@ -220,12 +240,21 @@ impl VM {
                     }
                 }
             }
-            Node::VariableDeclaration(name, value) => {
+            Node::VariableDeclaration(name, type_, value) => {
                 let value = match value {
                     Some(value) => self.eval_node(value)?,
                     None => Value::Number(0.0),
                 };
-                self.declare_variable(name, &value);
+                let type_ = match type_ {
+                    Some(type_) => type_,
+                    None => &value.get_type(),
+                };
+                if type_ != &value.get_type() {
+                    return ControlFlow::Break(BreakResult::Error(Value::String(
+                        format!("TypeError: Expected type {:?}, actual type {:?}", type_, value.get_type())
+                    )));
+                }
+                self.declare_variable(name, type_, &value);
                 ControlFlow::Continue(Value::Number(0.0))
             }
             Node::ForStatement(variable, iterator, body) => {
@@ -238,7 +267,7 @@ impl VM {
                     _ => return ControlFlow::Break(BreakResult::Error(Value::String("Unsupported iterator type".to_string())))
                 };
                 let mut i = start.as_number()?;
-                self.declare_variable(variable, &start);
+                self.declare_variable(variable, &Type::Number, &start); // TODO
                 while i < end.as_number()? {
                     self.set_variable(variable, &Value::Number(i))?;
                     match self.eval_node(body) {
@@ -258,7 +287,7 @@ impl VM {
                     body: body.clone(),
                     closure: self.environments.last().unwrap().clone(),
                 };
-                self.declare_variable(name, &function);
+                self.declare_variable(name, &function.get_type(), &function);
 
                 ControlFlow::Continue(function)
             }
@@ -293,7 +322,20 @@ impl VM {
                 let value = self.eval_node(value)?;
                 match lhs.as_ref() {
                     Node::Identifier(name) => {
-                        self.set_variable(name, &value)?;
+                        let left_type = self.get_variable(name)?.type_;
+                        let right_type = value.get_type();
+
+                        if left_type != right_type {
+                            return ControlFlow::Break(
+                                BreakResult::Error(
+                                    Value::String(
+                                        format!("TypeError: Expected type {:?}, actual type {:?}", left_type, right_type)
+                                    )
+                                )
+                            );
+                        }
+
+                        self.set_variable(name, &value)?
                     }
                     Node::MemberExpression(object, property) => {
                         let property = match property.deref() {
@@ -310,6 +352,9 @@ impl VM {
                             }
                             _ => return ControlFlow::Break(BreakResult::Error(Value::String("Expected reference".to_string()))),
                         };
+
+                        // TODO: 型検査
+                        // x.y = z;
 
                         members.insert(property.clone(), value.clone());
                     }
@@ -376,13 +421,15 @@ impl VM {
                                     Value::Number(value) => ControlFlow::Continue(Value::String(value.to_string())),
                                     Value::Bool(value) => ControlFlow::Continue(Value::String(value.to_string())),
                                     Value::String(value) => ControlFlow::Continue(Value::String(value.clone())),
-                                    Value::Function { name, parameters, .. } => ControlFlow::Continue(Value::String(format!("function {}({})", name, parameters.join(", ")))),
+                                    Value::Function { .. } => {
+                                        ControlFlow::Continue(Value::String(val.into_string()?))
+                                    }
                                     Value::Ref(address) => ControlFlow::Continue(Value::String(address.to_string())),
                                 }
                             }
                             "print" => {
                                 for argument in arguments {
-                                    println!("{}", self.eval_node(argument)?.to_string()?);
+                                    println!("{}", self.eval_node(argument)?.into_string()?);
                                 }
                                 ControlFlow::Continue(Value::Number(0.0))
                             }
@@ -393,14 +440,14 @@ impl VM {
                                         Value::Number(value) => println!("{}", value),
                                         Value::Bool(value) => println!("{}", value),
                                         Value::String(value) => println!("{}", value),
-                                        Value::Function { name, parameters, .. } => println!("function {}({})", name, parameters.join(", ")),
+                                        Value::Function { .. } => println!("{}", value.into_string()?),
                                         Value::Ref(value) => println!("ref {}", value),
                                     }
                                 }
                                 ControlFlow::Continue(Value::Number(0.0))
                             }
                             _ => {
-                                match self.get_variable(name)? {
+                                match self.get_variable(name)?.value {
                                     Value::Function { parameters, body, closure, .. } => {
                                         let mut evaluated_arguments = vec![];
                                         for argument in arguments {
@@ -413,8 +460,13 @@ impl VM {
                                         }));
                                         self.environments.push(environment);
 
-                                        for (argument, parameter) in evaluated_arguments.iter().zip(parameters.iter()) {
-                                            self.declare_variable(parameter, argument);
+                                        for (argument, FunctionParameterDefinition { name, type_ }) in evaluated_arguments.iter().zip(parameters.iter()) {
+                                            if &argument.get_type() != type_ {
+                                                return ControlFlow::Break(BreakResult::Error(Value::String(
+                                                    format!("TypeError: Expected type {:?}, actual type {:?}", type_, argument.get_type())
+                                                )));
+                                            }
+                                            self.declare_variable(name, type_, argument);
                                         }
                                         let ret = match self.eval_node(body.deref()) {
                                             ControlFlow::Continue(value) => value,
@@ -436,7 +488,9 @@ impl VM {
             Node::Number(value) => ControlFlow::Continue(Value::Number(*value)),
             Node::Bool(value) => ControlFlow::Continue(Value::Bool(*value)),
             Node::String(value) => ControlFlow::Continue(Value::String(value.clone())),
-            Node::Identifier(name) => self.get_variable(name),
+            Node::Identifier(name) => {
+                ControlFlow::Continue(self.get_variable(name)?.value)
+            }
             Node::ReturnExpression(value) => {
                 ControlFlow::Break(BreakResult::Return(
                     match value {
@@ -508,14 +562,14 @@ impl VM {
         self.environments.pop();
     }
 
-    fn declare_variable(&mut self, name: &str, value: &Value) {
+    fn declare_variable(&mut self, name: &str, type_: &Type, value: &Value) {
         match self.environments.last() {
-            Some(environment) => environment.borrow_mut().declare_variable(name, value),
+            Some(environment) => environment.borrow_mut().declare_variable(name, type_, value),
             None => panic!("No environment"),
         }
     }
 
-    fn get_variable(&self, name: &str) -> ControlFlow<BreakResult, Value> {
+    fn get_variable(&self, name: &str) -> ControlFlow<BreakResult, Variable> {
         match self.environments.last() {
             Some(environment) => environment.borrow().get_variable(name),
             None => panic!("No environment"),
@@ -597,8 +651,8 @@ mod tests {
         assert_eq!(VM::new().eval("true || false"), Value::Bool(true));
         assert_eq!(VM::new().eval("false || true"), Value::Bool(true));
         assert_eq!(VM::new().eval("false || false"), Value::Bool(false));
-        assert_eq!(VM::new().eval("false + 1"), Value::String("TypeError: Expected type number, actual type \"bool\"".to_string()));
-        assert_eq!(VM::new().eval("\"hello\" + 1"), Value::String("TypeError: Expected type number, actual type \"string\"".to_string()));
+        assert_eq!(VM::new().eval("false + 1"), Value::String("TypeError: Expected type Number, actual type Bool".to_string()));
+        assert_eq!(VM::new().eval("\"hello\" + 1"), Value::String("TypeError: Expected type Number, actual type String".to_string()));
 
         assert_eq!(VM::new().eval("\
         let x = 0;
@@ -618,13 +672,13 @@ mod tests {
             } else {
                 print(\"false\")
             }
-        "), Value::String("TypeError: Expected type bool, actual type \"number\"".to_string()));
+        "), Value::String("TypeError: Expected type Bool, actual type Number".to_string()));
     }
 
     #[test]
     fn declare_function() {
         assert_eq!(VM::new().eval("
-            function test (x) {
+            function test (x: number) {
                 print(string(x*2))
             }
 
@@ -660,7 +714,7 @@ mod tests {
         assert_eq!(VM::new().eval("
             let x = 0
 
-            function setX (y) {
+            function setX (y: number) {
                 x = y
             }
 
@@ -675,7 +729,7 @@ mod tests {
     fn closure2() {
         assert_eq!(VM::new().eval("
             let x = 0
-            function setX (y) {
+            function setX (y: number) {
                 x = y
             }
 
@@ -695,7 +749,7 @@ mod tests {
     #[test]
     fn function_object() {
         assert_eq!(VM::new().eval("
-            let double = function double_fn_expression(x) {
+            let double = function double_fn_expression(x: number) {
                 x * 2
             }
 
@@ -706,7 +760,7 @@ mod tests {
     #[test]
     fn anonymous_function_object() {
         assert_eq!(VM::new().eval("
-            let double = function (x) {
+            let double = function (x: number) {
                 x * 2
             }
 
@@ -717,8 +771,8 @@ mod tests {
     #[test]
     fn function_object_cannot_be_referred_by_name() {
         assert_eq!(VM::new().eval("
-            function f(x) { x * 10 }
-            let double = function f(x) { x * 2 }
+            function f(x: number) { x * 10 }
+            let double = function f(x: number) { x * 2 }
 
             f(3)
         "), Value::Number(30.0));
@@ -831,6 +885,29 @@ mod tests {
         "), Value::Number(100.0));
     }
 
+    mod variable_declaration {
+        use crate::vm::{Type, Value, Variable, VM};
+        use std::ops::ControlFlow;
+
+        #[test]
+        fn declare_variable_with_type() {
+            let mut vm = VM::new();
+            assert_eq!(
+                vm.eval("let x: number = 1"),
+                Value::Number(0.0)
+            );
+
+            let variable = match vm.get_variable(&"x") {
+                ControlFlow::Continue(variable) => variable,
+                _ => panic!("Expected variable"),
+            };
+            assert_eq!(variable, Variable {
+                type_: Type::Number,
+                value: Value::Number(1.0),
+            });
+        }
+    }
+
     mod reference {
         use crate::vm::{Value, VM};
         use std::collections::HashMap;
@@ -935,7 +1012,7 @@ mod tests {
             assert_eq!(vm.eval("
                 let user1 = { id: 1, name: \"Alice\" }
                 let userRef = { user: user1 }
-                user1 = 0;
+                user1 = {};
                 userRef
             "), Value::Ref(1));
 
@@ -1003,15 +1080,14 @@ mod tests {
 
         #[test]
         fn print() {
-            assert_eq!(VM::new().eval("print(1)"), Value::String("TypeError: Expected type string, actual type \"number\"".to_string()));
-            assert_eq!(VM::new().eval("print(true)"), Value::String("TypeError: Expected type string, actual type \"bool\"".to_string()));
+            assert_eq!(VM::new().eval("print(1)"), Value::String("TypeError: Expected type String, actual type Number".to_string()));
+            assert_eq!(VM::new().eval("print(true)"), Value::String("TypeError: Expected type String, actual type Bool".to_string()));
             assert_eq!(VM::new().eval("print(\"ABC\")"), Value::Number(0f64));
         }
     }
 
     mod gc {
-        use crate::vm::{Value, VM};
-        use std::collections::HashMap;
+        use crate::vm::VM;
 
         #[test]
         fn clean_up_all_unused_refs() {
@@ -1024,11 +1100,9 @@ mod tests {
             vm.gc();
             assert_eq!(vm.objects.len(), 1);
 
-            vm.eval("
-                alice = 0;
-            ");
+            vm.eval("alice = {};");
             vm.gc();
-            assert_eq!(vm.objects.len(), 0);
+            assert_eq!(vm.objects.len(), 1); // New empty object assigned into alice and bob
         }
 
         #[test]
@@ -1042,11 +1116,9 @@ mod tests {
             vm.gc();
             assert_eq!(vm.objects.len(), 2);
 
-            vm.eval("
-                users = 0;
-            ");
+            vm.eval("users = {};");
             vm.gc();
-            assert_eq!(vm.objects.len(), 0);
+            assert_eq!(vm.objects.len(), 1); // New empty object assigned into alice and bob
         }
 
         #[test]
@@ -1064,11 +1136,11 @@ mod tests {
             assert_eq!(vm.objects.len(), 2);
 
             vm.eval("
-                alice = 0;
-                bob = 0;
+                alice = {};
+                bob = alice;
             ");
             vm.gc();
-            assert_eq!(vm.objects.len(), 0);
+            assert_eq!(vm.objects.len(), 1); // New empty object assigned into alice and bob
         }
 
         #[test]
@@ -1104,10 +1176,58 @@ mod tests {
             vm.gc();
             assert_eq!(vm.objects.len(), 1);
 
-            vm.eval("user = 0");
+            vm.eval("user = {}");
             vm.gc();
-            assert_eq!(vm.objects.len(), 0);
+            assert_eq!(vm.objects.len(), 1); // New empty object assigned into alice and bob
+        }
+    }
 
+    mod type_check {
+        use crate::vm::{Value, VM};
+
+        #[test]
+        fn assign_variable_declared_with_type_annotation() {
+            let mut vm = VM::new();
+            assert_eq!(vm.eval("
+                let x: number = true;
+            "), Value::String("TypeError: Expected type Number, actual type Bool".to_string()));
+        }
+
+        #[test]
+        fn assign_variable_declared_without_type_annotation() {
+            let mut vm = VM::new();
+            assert_eq!(vm.eval("
+                let x = 0;
+                x = true;
+            "), Value::String("TypeError: Expected type Number, actual type Bool".to_string()));
+        }
+
+        #[test]
+        fn function_parameter() {
+            let mut vm = VM::new();
+            assert_eq!(vm.eval("
+                function f(x: number) { x }
+                f(true)
+            "), Value::String("TypeError: Expected type Number, actual type Bool".to_string()));
+        }
+
+        #[test]
+        fn return_value() {
+            let mut vm = VM::new();
+            assert_eq!(vm.eval("
+                function f() { return \"test\" }
+                let x: number = f()
+            "), Value::String("TypeError: Expected type Number, actual type String".to_string()));
+        }
+
+        #[test]
+        fn return_value_with_inferred_type() {
+            let mut vm = VM::new();
+            assert_eq!(vm.eval("
+                function f() { return \"test\" }
+                let x = 0;
+                x = f();
+            "), Value::String("TypeError: Expected type Number, actual type String".to_string()));
         }
     }
 }

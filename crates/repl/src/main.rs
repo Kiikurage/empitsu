@@ -1,5 +1,4 @@
 use std::io;
-use std::io::Write;
 
 use core::parser::parse;
 use core::vm::VM;
