@@ -6,3 +6,4 @@ pub mod parser;
 pub mod vm;
 mod token_iter;
 mod type_;
+mod value;

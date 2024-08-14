@@ -27,8 +27,7 @@ pub enum Node {
     Number(f64),
     Bool(bool),
     String(String),
-    Object(Vec<Node>), // list of property definitions
-    ObjectPropertyDefinition(Box<Node>, Box<Node>), // name, value
+    Object(Vec<ObjectPropertyDefinition>),
     Identifier(String),
 }
 
@@ -36,4 +35,10 @@ pub enum Node {
 pub struct FunctionParameterDefinition {
     pub name: String,
     pub type_: Type,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ObjectPropertyDefinition {
+    pub name: String,
+    pub value: Box<Node>,
 }

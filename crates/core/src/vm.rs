@@ -1,98 +1,19 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::fmt::{Debug, Error, Formatter};
+use std::fmt::Debug;
 use std::ops::{ControlFlow, Deref};
 use std::rc::Rc;
 
-use crate::node::{FunctionParameterDefinition, Node};
+use crate::node::{FunctionParameterDefinition, Node, ObjectPropertyDefinition};
 use crate::parser::parse;
 use crate::punctuator_kind::PunctuatorKind;
 use crate::type_::Type;
+use crate::value::Value;
 
 #[derive(Clone, PartialEq, Debug)]
 struct Variable {
     type_: Type,
     value: Value,
-}
-
-#[derive(Clone, PartialEq)]
-pub enum Value {
-    Number(f64),
-    Bool(bool),
-    String(String),
-    Function {
-        name: String,
-        parameters: Vec<FunctionParameterDefinition>,
-        body: Box<Node>,
-        closure: Rc<RefCell<Environment>>,
-    },
-    Ref(usize),
-}
-
-impl Value {
-    fn get_type(&self) -> Type {
-        match self {
-            Value::Number(_) => Type::Number,
-            Value::Bool(_) => Type::Bool,
-            Value::String(_) => Type::String,
-            Value::Function { parameters, .. } => Type::Function(
-                parameters.iter().map(|parameter| parameter.type_.clone()).collect()
-            ),
-            Value::Ref(_) => Type::Ref,
-        }
-    }
-
-    fn as_number(&self) -> ControlFlow<BreakResult, f64> {
-        match self {
-            Value::Number(value) => ControlFlow::Continue(*value),
-            _ => ControlFlow::Break(BreakResult::Error(Value::String(
-                format!("TypeError: Expected type Number, actual type {:?}", self.get_type())
-            ))),
-        }
-    }
-
-    fn as_bool(&self) -> ControlFlow<BreakResult, bool> {
-        match self {
-            Value::Bool(value) => ControlFlow::Continue(*value),
-            _ => ControlFlow::Break(BreakResult::Error(Value::String(
-                format!("TypeError: Expected type Bool, actual type {:?}", self.get_type())
-            ))),
-        }
-    }
-
-    fn into_string(self) -> ControlFlow<BreakResult, String> {
-        match self {
-            Value::String(value) => ControlFlow::Continue(value.clone()),
-            Value::Function { name, parameters, .. } => {
-                ControlFlow::Continue(
-                    format!("function {}({})", name, parameters
-                        .iter().map(|parameter| format!("{}:{:?}", parameter.name, parameter.type_))
-                        .collect::<Vec<String>>()
-                        .join(", "))
-                )
-            }
-            _ => ControlFlow::Break(BreakResult::Error(Value::String(
-                format!("TypeError: Expected type String, actual type {:?}", self.get_type())
-            ))),
-        }
-    }
-}
-
-impl Debug for Value {
-    fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
-        match self {
-            Value::Number(value) => write!(f, "{}", value),
-            Value::Bool(value) => write!(f, "{}", value),
-            Value::String(value) => write!(f, "{}", value),
-            Value::Function { .. } => {
-                match self.clone().into_string() {
-                    ControlFlow::Continue(value) => write!(f, "{}", value),
-                    _ => unreachable!()
-                }
-            }
-            Value::Ref(value) => write!(f, "ref {}", value),
-        }
-    }
 }
 
 #[derive(Default, Debug, PartialEq)]
@@ -141,24 +62,29 @@ impl Environment {
     }
 }
 
-#[derive(Default)]
-pub struct VM {
-    environments: Vec<Rc<RefCell<Environment>>>,
-    objects: HashMap<usize, RefCell<HashMap<String, Value>>>,
-}
-
-enum BreakResult {
+pub enum BreakResult {
     Return(Value),
     Break(Value),
     Error(Value),
 }
 
-impl VM {
-    pub fn new() -> Self {
+pub struct VM {
+    environments: Vec<Rc<RefCell<Environment>>>,
+    objects: HashMap<usize, RefCell<HashMap<String, Value>>>,
+}
+
+impl Default for VM {
+    fn default() -> Self {
         VM {
             environments: vec![Rc::new(RefCell::new(Environment::new()))],
             objects: HashMap::new(),
         }
+    }
+}
+
+impl VM {
+    pub fn new() -> Self {
+        Default::default()
     }
 
     pub fn eval(&mut self, input: &str) -> Value {
@@ -230,7 +156,7 @@ impl VM {
             // Statement
             Node::EmptyStatement => ControlFlow::Continue(Value::Number(0.0)),
             Node::IfStatement(condition, true_branch, false_branch) => {
-                let condition = self.eval_node(condition)?.as_bool()?;
+                let condition = self.eval_node(condition)?.as_bool().into_control_flow()?;
                 if condition {
                     self.eval_node(true_branch)
                 } else {
@@ -266,9 +192,10 @@ impl VM {
                     }
                     _ => return ControlFlow::Break(BreakResult::Error(Value::String("Unsupported iterator type".to_string())))
                 };
-                let mut i = start.as_number()?;
+                let mut i = start.as_number().into_control_flow()?;
+                let end = end.as_number().into_control_flow()?;
                 self.declare_variable(variable, &Type::Number, &start); // TODO
-                while i < end.as_number()? {
+                while i < end {
                     self.set_variable(variable, &Value::Number(i))?;
                     match self.eval_node(body) {
                         ControlFlow::Break(BreakResult::Break(_)) => { break }
@@ -303,7 +230,10 @@ impl VM {
                 ControlFlow::Continue(function)
             }
             Node::IfExpression(condition, true_branch, false_branch) => {
-                let condition = self.eval_node(condition)?.as_bool()?;
+                let condition = match self.eval_node(condition)?.as_bool() {
+                    Ok(condition) => condition,
+                    Err(message) => return ControlFlow::Break(BreakResult::Error(Value::String(message))),
+                };
 
                 if condition { self.eval_node(true_branch) } else { self.eval_node(false_branch) }
             }
@@ -367,12 +297,12 @@ impl VM {
                 let right = self.eval_node(right)?;
 
                 match operator {
-                    PunctuatorKind::Plus => ControlFlow::Continue(Value::Number(left.as_number()? + right.as_number()?)),
-                    PunctuatorKind::Minus => ControlFlow::Continue(Value::Number(left.as_number()? - right.as_number()?)),
-                    PunctuatorKind::Multiply => ControlFlow::Continue(Value::Number(left.as_number()? * right.as_number()?)),
-                    PunctuatorKind::Divide => ControlFlow::Continue(Value::Number(left.as_number()? / right.as_number()?)),
-                    PunctuatorKind::LogicalOr => ControlFlow::Continue(Value::Bool(left.as_bool()? || right.as_bool()?)),
-                    PunctuatorKind::LogicalAnd => ControlFlow::Continue(Value::Bool(left.as_bool()? && right.as_bool()?)),
+                    PunctuatorKind::Plus => ControlFlow::Continue(Value::Number(left.as_number().into_control_flow()? + right.as_number().into_control_flow()?)),
+                    PunctuatorKind::Minus => ControlFlow::Continue(Value::Number(left.as_number().into_control_flow()? - right.as_number().into_control_flow()?)),
+                    PunctuatorKind::Multiply => ControlFlow::Continue(Value::Number(left.as_number().into_control_flow()? * right.as_number().into_control_flow()?)),
+                    PunctuatorKind::Divide => ControlFlow::Continue(Value::Number(left.as_number().into_control_flow()? / right.as_number().into_control_flow()?)),
+                    PunctuatorKind::LogicalOr => ControlFlow::Continue(Value::Bool(left.as_bool().into_control_flow()? || right.as_bool().into_control_flow()?)),
+                    PunctuatorKind::LogicalAnd => ControlFlow::Continue(Value::Bool(left.as_bool().into_control_flow()? && right.as_bool().into_control_flow()?)),
                     _ => ControlFlow::Break(BreakResult::Error(Value::String(format!("Unexpected operator: {:?}", operator)))),
                 }
             }
@@ -380,9 +310,9 @@ impl VM {
                 let operand = self.eval_node(operand)?;
 
                 match operator {
-                    PunctuatorKind::Plus => ControlFlow::Continue(Value::Number(operand.as_number()?)),
-                    PunctuatorKind::Minus => ControlFlow::Continue(Value::Number(-operand.as_number()?)),
-                    PunctuatorKind::LogicalNot => ControlFlow::Continue(Value::Bool(!operand.as_bool()?)),
+                    PunctuatorKind::Plus => ControlFlow::Continue(Value::Number(operand.as_number().into_control_flow()?)),
+                    PunctuatorKind::Minus => ControlFlow::Continue(Value::Number(-operand.as_number().into_control_flow()?)),
+                    PunctuatorKind::LogicalNot => ControlFlow::Continue(Value::Bool(!operand.as_bool().into_control_flow()?)),
                     _ => ControlFlow::Break(BreakResult::Error(Value::String(format!("Unexpected operator: {:?}", operator)))),
                 }
             }
@@ -422,14 +352,14 @@ impl VM {
                                     Value::Bool(value) => ControlFlow::Continue(Value::String(value.to_string())),
                                     Value::String(value) => ControlFlow::Continue(Value::String(value.clone())),
                                     Value::Function { .. } => {
-                                        ControlFlow::Continue(Value::String(val.into_string()?))
+                                        ControlFlow::Continue(Value::String(val.into_string().into_control_flow()?))
                                     }
                                     Value::Ref(address) => ControlFlow::Continue(Value::String(address.to_string())),
                                 }
                             }
                             "print" => {
                                 for argument in arguments {
-                                    println!("{}", self.eval_node(argument)?.into_string()?);
+                                    println!("{}", self.eval_node(argument)?.into_string().into_control_flow()?);
                                 }
                                 ControlFlow::Continue(Value::Number(0.0))
                             }
@@ -440,7 +370,7 @@ impl VM {
                                         Value::Number(value) => println!("{}", value),
                                         Value::Bool(value) => println!("{}", value),
                                         Value::String(value) => println!("{}", value),
-                                        Value::Function { .. } => println!("{}", value.into_string()?),
+                                        Value::Function { .. } => println!("{}", value.into_string().into_control_flow()?),
                                         Value::Ref(value) => println!("ref {}", value),
                                     }
                                 }
@@ -523,17 +453,8 @@ impl VM {
             }
             Node::Object(definitions) => {
                 let mut members = HashMap::new();
-                for definition in definitions {
-                    match definition {
-                        Node::ObjectPropertyDefinition(name, value) => {
-                            let name = match name.deref() {
-                                Node::Identifier(name) => name,
-                                _ => return ControlFlow::Break(BreakResult::Error(Value::String("Expected identifier".to_string()))),
-                            };
-                            members.insert(name.clone(), self.eval_node(value)?);
-                        }
-                        _ => unreachable!(),
-                    }
+                for ObjectPropertyDefinition { name, value } in definitions {
+                    members.insert(name.clone(), self.eval_node(value)?);
                 }
                 let address = self.objects.len();
                 self.objects.insert(address, RefCell::new(members));
@@ -544,9 +465,6 @@ impl VM {
             // tmp
             Node::RangeIterator(_start, _end) => {
                 ControlFlow::Break(BreakResult::Break(Value::String("Unsupported".to_string())))
-            }
-            Node::ObjectPropertyDefinition(_, _) => {
-                ControlFlow::Break(BreakResult::Error(Value::String("Unsupported".to_string())))
             }
         }
     }
@@ -580,6 +498,19 @@ impl VM {
         match self.environments.last() {
             Some(environment) => environment.borrow_mut().set_variable(name, value),
             None => panic!("No environment"),
+        }
+    }
+}
+
+trait IntoControlFlow<T> {
+    fn into_control_flow(self) -> ControlFlow<BreakResult, T>;
+}
+
+impl<T> IntoControlFlow<T> for Result<T, String> {
+    fn into_control_flow(self) -> ControlFlow<BreakResult, T> {
+        match self {
+            Ok(value) => ControlFlow::Continue(value),
+            Err(message) => ControlFlow::Break(BreakResult::Error(Value::String(message))),
         }
     }
 }
@@ -897,7 +828,7 @@ mod tests {
                 Value::Number(0.0)
             );
 
-            let variable = match vm.get_variable(&"x") {
+            let variable = match vm.get_variable("x") {
                 ControlFlow::Continue(variable) => variable,
                 _ => panic!("Expected variable"),
             };
@@ -1231,3 +1162,4 @@ mod tests {
         }
     }
 }
+

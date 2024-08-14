@@ -1,9 +1,9 @@
 use crate::lexer::scan;
-use crate::node::{FunctionParameterDefinition, Node};
+use crate::node::{FunctionParameterDefinition, Node, ObjectPropertyDefinition};
 use crate::punctuator_kind::PunctuatorKind;
-use crate::type_::Type;
 use crate::token::Token;
 use crate::token_iter::TokenIter;
+use crate::type_::Type;
 
 pub fn parse(input: &str) -> Result<Node, String> {
     parse_program(&mut TokenIter::new(&scan(input)?))
@@ -263,7 +263,7 @@ fn parse_assignment_expression(tokens: &mut TokenIter) -> Result<Option<Node>, S
     };
 
     if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::Equal))) {
-        return Ok(None)
+        return Ok(None);
     }
     tokens.next();
 
@@ -567,7 +567,7 @@ fn parse_call_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String>
                     break;
                 }
                 tokens.next();
-            },
+            }
             None => break
         }
     }
@@ -683,11 +683,12 @@ fn parse_object_literal(tokens: &mut TokenIter) -> Result<Option<Node>, String> 
     Ok(Some(Node::Object(definitions)))
 }
 
-fn parse_object_property_definition(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
-    let name = match parse_primary_expression(tokens)? {
-        Some(node) => node,
-        None => return Ok(None),
+fn parse_object_property_definition(tokens: &mut TokenIter) -> Result<Option<ObjectPropertyDefinition>, String> {
+    let name = match tokens.peek() {
+        Some(Token::Identifier(name)) => name.clone(),
+        _ => return Ok(None),
     };
+    tokens.next();
 
     if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::Colon))) {
         return Ok(None);
@@ -699,7 +700,7 @@ fn parse_object_property_definition(tokens: &mut TokenIter) -> Result<Option<Nod
         None => return Err("Expected expression".to_string()),
     };
 
-    Ok(Some(Node::ObjectPropertyDefinition(Box::new(name), Box::new(value))))
+    Ok(Some(ObjectPropertyDefinition { name, value: Box::new(value) }))
 }
 
 fn parse_function(tokens: &mut TokenIter, is_declaration: bool) -> Result<Option<Node>, String> {
@@ -739,17 +740,17 @@ fn parse_function(tokens: &mut TokenIter, is_declaration: bool) -> Result<Option
             return Err("Expected ':'".to_string());
         }
         tokens.next();
-        
+
         let type_ = match parse_type_annotation(tokens)? {
             Some(node) => node,
             None => return Err("Expected type annotation".to_string()),
         };
-        
-        parameters.push(FunctionParameterDefinition { 
-            name: identifier, 
-            type_
+
+        parameters.push(FunctionParameterDefinition {
+            name: identifier,
+            type_,
         });
-        
+
         if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::Comma))) {
             break;
         }
@@ -1698,9 +1699,8 @@ mod tests {
         }
 
         mod object_literal {
-            use crate::node::Node;
+            use crate::node::{Node, ObjectPropertyDefinition};
             use crate::parser::parse;
-            use crate::punctuator_kind::PunctuatorKind;
 
             #[test]
             fn empty_object() {
@@ -1718,14 +1718,14 @@ mod tests {
                     parse("{x:1, y:\"hello\"}"),
                     Ok(Node::Program(vec![
                         Node::Object(vec![
-                            Node::ObjectPropertyDefinition(
-                                Box::new(Node::Identifier("x".to_string())),
-                                Box::new(Node::Number(1f64)),
-                            ),
-                            Node::ObjectPropertyDefinition(
-                                Box::new(Node::Identifier("y".to_string())),
-                                Box::new(Node::String("hello".to_string())),
-                            ),
+                            ObjectPropertyDefinition {
+                                name: "x".to_string(),
+                                value: Box::new(Node::Number(1f64)),
+                            },
+                            ObjectPropertyDefinition {
+                                name: "y".to_string(),
+                                value: Box::new(Node::String("hello".to_string())),
+                            },
                         ]),
                     ]))
                 );
@@ -1737,21 +1737,21 @@ mod tests {
                     parse("{x:{y:1}, z:\"hello\"}"),
                     Ok(Node::Program(vec![
                         Node::Object(vec![
-                            Node::ObjectPropertyDefinition(
-                                Box::new(Node::Identifier("x".to_string())),
-                                Box::new(
+                            ObjectPropertyDefinition {
+                                name: "x".to_string(),
+                                value: Box::new(
                                     Node::Object(vec![
-                                        Node::ObjectPropertyDefinition(
-                                            Box::new(Node::Identifier("y".to_string())),
-                                            Box::new(Node::Number(1f64)),
-                                        )
+                                        ObjectPropertyDefinition {
+                                            name: "y".to_string(),
+                                            value: Box::new(Node::Number(1f64)),
+                                        }
                                     ])
                                 ),
-                            ),
-                            Node::ObjectPropertyDefinition(
-                                Box::new(Node::Identifier("z".to_string())),
-                                Box::new(Node::String("hello".to_string())),
-                            ),
+                            },
+                            ObjectPropertyDefinition {
+                                name: "z".to_string(),
+                                value: Box::new(Node::String("hello".to_string())),
+                            },
                         ]),
                     ]))
                 );
@@ -1765,10 +1765,10 @@ mod tests {
                         Node::AssignmentExpression(
                             Box::new(Node::Identifier("x".to_string())),
                             Box::new(Node::Object(vec![
-                                Node::ObjectPropertyDefinition(
-                                    Box::new(Node::Identifier("y".to_string())),
-                                    Box::new(Node::Number(1f64)),
-                                ),
+                                ObjectPropertyDefinition {
+                                    name: "y".to_string(),
+                                    value: Box::new(Node::Number(1f64)),
+                                },
                             ])),
                         ),
                     ]))
