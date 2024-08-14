@@ -8,7 +8,7 @@ use crate::node::{FunctionParameterDefinition, Node, ObjectPropertyDefinition};
 use crate::parser::parse;
 use crate::punctuator_kind::PunctuatorKind;
 use crate::type_::Type;
-use crate::value::Value;
+use crate::value::{NativeFunction, Value};
 
 #[derive(Clone, PartialEq, Debug)]
 struct Variable {
@@ -75,10 +75,82 @@ pub struct VM {
 
 impl Default for VM {
     fn default() -> Self {
-        VM {
+        let mut vm = VM {
             environments: vec![Rc::new(RefCell::new(Environment::new()))],
             objects: HashMap::new(),
-        }
+        };
+        
+        vm.install_native_function("number", &[Type::Any], |args, _vm| {
+            let value = match args.first() {
+                Some(value) => value,
+                None => return ControlFlow::Break(BreakResult::Error(Value::String("Expected argument".to_string()))),
+            };
+            match value {
+                Value::Number(value) => ControlFlow::Continue(Value::Number(*value)),
+                Value::Bool(value) => ControlFlow::Continue(Value::Number(if *value { 1.0 } else { 0.0 })),
+                Value::String(value) => {
+                    match value.parse::<f64>() {
+                        Ok(value) => ControlFlow::Continue(Value::Number(if value.is_nan() { 0.0 } else { value })),
+                        Err(_) => ControlFlow::Continue(Value::Number(0.0)),
+                    }
+                }
+                _ => ControlFlow::Break(BreakResult::Error(Value::String(format!("Failed to cast {:?} to Number", value.get_type()))))
+            }
+        });
+        vm.install_native_function("bool", &[Type::Any], |args, _vm| {
+            let value = match args.first() {
+                Some(value) => value,
+                None => return ControlFlow::Break(BreakResult::Error(Value::String("Expected argument".to_string()))),
+            };
+            match value {
+                Value::Number(value) => ControlFlow::Continue(Value::Bool(*value != 0.0)),
+                Value::Bool(value) => ControlFlow::Continue(Value::Bool(*value)),
+                Value::String(value) => ControlFlow::Continue(Value::Bool(value != "false")),
+                Value::Function { .. } => ControlFlow::Continue(Value::Bool(true)),
+                _ => ControlFlow::Break(BreakResult::Error(Value::String(format!("Failed to cast {:?} to Bool", value.get_type())))),
+            }
+        });
+        vm.install_native_function("string", &[Type::Any], |args, _vm| {
+            let value = match args.first() {
+                Some(value) => value,
+                None => return ControlFlow::Break(BreakResult::Error(Value::String("Expected argument".to_string()))),
+            };
+            match value {
+                Value::Number(value) => ControlFlow::Continue(Value::String(value.to_string())),
+                Value::Bool(value) => ControlFlow::Continue(Value::String(value.to_string())),
+                Value::String(value) => ControlFlow::Continue(Value::String(value.clone())),
+                Value::Function { .. } => {
+                    ControlFlow::Continue(Value::String(value.clone().into_string().into_control_flow()?))
+                }
+                Value::Ref(address) => ControlFlow::Continue(Value::String(address.to_string())),
+                _ => ControlFlow::Break(BreakResult::Error(Value::String(format!("Failed to cast {:?} to Bool", value.get_type())))),
+            }
+        });
+        vm.install_native_function("print", &[Type::Any], |args, _vm| {
+            let value = match args.first() {
+                Some(value) => value,
+                None => return ControlFlow::Break(BreakResult::Error(Value::String("Expected argument".to_string()))),
+            };
+            println!("{}", value.clone().into_string().into_control_flow()?);
+            ControlFlow::Continue(Value::Number(0.0))
+        });
+        vm.install_native_function("debug", &[Type::Any], |args, _vm| {
+            let value = match args.first() {
+                Some(value) => value,
+                None => return ControlFlow::Break(BreakResult::Error(Value::String("Expected argument".to_string()))),
+            };
+            match value {
+                Value::Number(value) => println!("{}", value),
+                Value::Bool(value) => println!("{}", value),
+                Value::String(value) => println!("{}", value),
+                Value::Function { .. } => println!("{}", value.clone().into_string().into_control_flow()?),
+                Value::NativeFunction { .. } => println!("{}", value.clone().into_string().into_control_flow()?),
+                Value::Ref(value) => println!("ref {}", value),
+            }
+            ControlFlow::Continue(Value::Number(0.0))
+        });
+
+        vm
     }
 }
 
@@ -316,103 +388,56 @@ impl VM {
                     _ => ControlFlow::Break(BreakResult::Error(Value::String(format!("Unexpected operator: {:?}", operator)))),
                 }
             }
-            Node::CallExpression(callee, arguments) => {
-                match callee.deref() {
-                    Node::Identifier(name) => {
-                        match name.as_str() {
-                            "number" => {
-                                let val = self.eval_node(arguments.first().unwrap())?;
-                                match val {
-                                    Value::Number(value) => ControlFlow::Continue(Value::Number(value)),
-                                    Value::Bool(value) => ControlFlow::Continue(Value::Number(if value { 1.0 } else { 0.0 })),
-                                    Value::String(value) => {
-                                        match value.parse::<f64>() {
-                                            Ok(value) => ControlFlow::Continue(Value::Number(if value.is_nan() { 0.0 } else { value })),
-                                            Err(_) => ControlFlow::Continue(Value::Number(0.0)),
-                                        }
-                                    }
-                                    Value::Function { .. } => ControlFlow::Continue(Value::Number(0.0)),
-                                    Value::Ref(_) => ControlFlow::Break(BreakResult::Error(Value::String("Failed to cast ref to number".to_string()))),
-                                }
-                            }
-                            "bool" => {
-                                let val = self.eval_node(arguments.first().unwrap())?;
-                                match val {
-                                    Value::Number(value) => ControlFlow::Continue(Value::Bool(value != 0.0)),
-                                    Value::Bool(value) => ControlFlow::Continue(Value::Bool(value)),
-                                    Value::String(value) => ControlFlow::Continue(Value::Bool(value != "false")),
-                                    Value::Function { .. } => ControlFlow::Continue(Value::Bool(true)),
-                                    Value::Ref(_) => ControlFlow::Break(BreakResult::Error(Value::String("Failed to cast ref to bool".to_string()))),
-                                }
-                            }
-                            "string" => {
-                                let val = self.eval_node(arguments.first().unwrap())?;
-                                match val {
-                                    Value::Number(value) => ControlFlow::Continue(Value::String(value.to_string())),
-                                    Value::Bool(value) => ControlFlow::Continue(Value::String(value.to_string())),
-                                    Value::String(value) => ControlFlow::Continue(Value::String(value.clone())),
-                                    Value::Function { .. } => {
-                                        ControlFlow::Continue(Value::String(val.into_string().into_control_flow()?))
-                                    }
-                                    Value::Ref(address) => ControlFlow::Continue(Value::String(address.to_string())),
-                                }
-                            }
-                            "print" => {
-                                for argument in arguments {
-                                    println!("{}", self.eval_node(argument)?.into_string().into_control_flow()?);
-                                }
-                                ControlFlow::Continue(Value::Number(0.0))
-                            }
-                            "debug" => {
-                                for argument in arguments {
-                                    let value = self.eval_node(argument)?;
-                                    match value {
-                                        Value::Number(value) => println!("{}", value),
-                                        Value::Bool(value) => println!("{}", value),
-                                        Value::String(value) => println!("{}", value),
-                                        Value::Function { .. } => println!("{}", value.into_string().into_control_flow()?),
-                                        Value::Ref(value) => println!("ref {}", value),
-                                    }
-                                }
-                                ControlFlow::Continue(Value::Number(0.0))
-                            }
-                            _ => {
-                                match self.get_variable(name)?.value {
-                                    Value::Function { parameters, body, closure, .. } => {
-                                        let mut evaluated_arguments = vec![];
-                                        for argument in arguments {
-                                            evaluated_arguments.push(self.eval_node(argument)?);
-                                        }
-
-                                        let environment = Rc::new(RefCell::new(Environment {
-                                            variables: HashMap::new(),
-                                            parent: Some(closure),
-                                        }));
-                                        self.environments.push(environment);
-
-                                        for (argument, FunctionParameterDefinition { name, type_ }) in evaluated_arguments.iter().zip(parameters.iter()) {
-                                            if &argument.get_type() != type_ {
-                                                return ControlFlow::Break(BreakResult::Error(Value::String(
-                                                    format!("TypeError: Expected type {:?}, actual type {:?}", type_, argument.get_type())
-                                                )));
-                                            }
-                                            self.declare_variable(name, type_, argument);
-                                        }
-                                        let ret = match self.eval_node(body.deref()) {
-                                            ControlFlow::Continue(value) => value,
-                                            ControlFlow::Break(BreakResult::Return(value)) => value,
-                                            others => return others,
-                                        };
-
-                                        self.environments.pop();
-                                        ControlFlow::Continue(ret)
-                                    }
-                                    _ => ControlFlow::Break(BreakResult::Error(Value::String(format!("{} is not a function", name)))),
-                                }
-                            }
+            Node::CallExpression(function, arguments) => {
+                let function = self.eval_node(function)?;
+                match function {
+                    Value::Function { parameters, body, closure, .. } => {
+                        let mut evaluated_arguments = vec![];
+                        for argument in arguments {
+                            evaluated_arguments.push(self.eval_node(argument)?);
                         }
+
+                        let environment = Rc::new(RefCell::new(Environment {
+                            variables: HashMap::new(),
+                            parent: Some(closure),
+                        }));
+                        self.environments.push(environment);
+
+                        for (argument, FunctionParameterDefinition { name, type_ }) in evaluated_arguments.iter().zip(parameters.iter()) {
+                            if &argument.get_type() != type_ {
+                                return ControlFlow::Break(BreakResult::Error(Value::String(
+                                    format!("TypeError: Expected type {:?}, actual type {:?}", type_, argument.get_type())
+                                )));
+                            }
+                            self.declare_variable(name, type_, argument);
+                        }
+                        let ret = match self.eval_node(body.deref()) {
+                            ControlFlow::Continue(value) => value,
+                            ControlFlow::Break(BreakResult::Return(value)) => value,
+                            others => return others,
+                        };
+
+                        self.environments.pop();
+                        ControlFlow::Continue(ret)
                     }
-                    _ => ControlFlow::Break(BreakResult::Error(Value::String(format!("Failed to call {:?}", callee))))
+                    Value::NativeFunction { body, .. } => {
+                        let mut evaluated_arguments = vec![];
+                        for argument in arguments {
+                            evaluated_arguments.push(self.eval_node(argument)?);
+                        }
+
+                        let environment = Rc::new(RefCell::new(Environment {
+                            variables: HashMap::new(),
+                            parent: Some(self.environments.first().unwrap().clone()),
+                        }));
+                        self.environments.push(environment);
+
+                        let ret = body(&evaluated_arguments, self);
+
+                        self.environments.pop();
+                        ret
+                    }
+                    _ => ControlFlow::Break(BreakResult::Error(Value::String(format!("{:?} is not a function", function)))),
                 }
             }
             Node::Number(value) => ControlFlow::Continue(Value::Number(*value)),
@@ -499,6 +524,24 @@ impl VM {
             Some(environment) => environment.borrow_mut().set_variable(name, value),
             None => panic!("No environment"),
         }
+    }
+
+    fn install_native_function(
+        &mut self,
+        name: &str,
+        parameter_types: &[Type],
+        body: NativeFunction,
+    ) {
+        let mut global = self.environments.first().unwrap().borrow_mut();
+
+        let native_function = Value::NativeFunction {
+            name: name.to_string(),
+            parameters: parameter_types.iter().enumerate()
+                .map(|(i, type_)| FunctionParameterDefinition { name: format!("v{}", { i }), type_: type_.clone() })
+                .collect(),
+            body,
+        };
+        global.variables.insert(name.to_string(), Variable { type_: native_function.get_type(), value: native_function });
     }
 }
 
@@ -707,6 +750,13 @@ mod tests {
 
             f(3)
         "), Value::Number(30.0));
+    }
+
+    #[test]
+    fn call_function_immediately() {
+        assert_eq!(VM::new().eval("
+            (function (x: number) { x * 2 })(3)
+        "), Value::Number(6.0));
     }
 
     #[test]

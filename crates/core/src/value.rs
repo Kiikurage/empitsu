@@ -1,10 +1,13 @@
 use std::cell::RefCell;
 use std::fmt::{Debug, Error, Formatter};
+use std::ops::ControlFlow;
 use std::rc::Rc;
 
 use crate::node::{FunctionParameterDefinition, Node};
 use crate::type_::Type;
-use crate::vm::Environment;
+use crate::vm::{BreakResult, Environment, VM};
+
+pub type NativeFunction = fn(&Vec<Value>, &mut VM) -> ControlFlow<BreakResult, Value>;
 
 #[derive(Clone, PartialEq)]
 pub enum Value {
@@ -17,6 +20,11 @@ pub enum Value {
         body: Box<Node>,
         closure: Rc<RefCell<Environment>>,
     },
+    NativeFunction {
+        name: String,
+        parameters: Vec<FunctionParameterDefinition>,
+        body: NativeFunction,
+    },
     Ref(usize),
 }
 
@@ -27,6 +35,9 @@ impl Value {
             Value::Bool(_) => Type::Bool,
             Value::String(_) => Type::String,
             Value::Function { parameters, .. } => Type::Function(
+                parameters.iter().map(|parameter| parameter.type_.clone()).collect()
+            ),
+            Value::NativeFunction { parameters, .. } => Type::Function(
                 parameters.iter().map(|parameter| parameter.type_.clone()).collect()
             ),
             Value::Ref(_) => Type::Ref,
@@ -62,6 +73,14 @@ impl Value {
                         .join(", "))
                 )
             }
+            Value::NativeFunction { name, parameters, .. } => {
+                Ok(
+                    format!("function {}({})", name, parameters
+                        .iter().map(|parameter| format!("{}:{:?}", parameter.name, parameter.type_))
+                        .collect::<Vec<String>>()
+                        .join(", "))
+                )
+            }
             _ => Err(
                 format!("TypeError: Expected type String, actual type {:?}", self.get_type())
             ),
@@ -76,6 +95,7 @@ impl Debug for Value {
             Value::Bool(value) => write!(f, "{}", value),
             Value::String(value) => write!(f, "{}", value),
             Value::Function { .. } => write!(f, "{}", self.clone().into_string().unwrap()),
+            Value::NativeFunction { .. } => write!(f, "{}", self.clone().into_string().unwrap()),
             Value::Ref(value) => write!(f, "ref {}", value),
         }
     }
