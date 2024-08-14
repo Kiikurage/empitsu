@@ -199,7 +199,7 @@ fn parse_variable_declaration(tokens: &mut TokenIter) -> Result<Option<Node>, St
         None
     };
 
-    let value = if matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::Equal))) {
+    let value = if matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::Assign))) {
         tokens.next();
 
         match parse_expression(tokens)? {
@@ -262,7 +262,7 @@ fn parse_assignment_expression(tokens: &mut TokenIter) -> Result<Option<Node>, S
         None => return Ok(None)
     };
 
-    if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::Equal))) {
+    if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::Assign))) {
         return Ok(None);
     }
     tokens.next();
@@ -300,10 +300,8 @@ fn parse_logical_or_expression(tokens: &mut TokenIter) -> Result<Option<Node>, S
         None => return Ok(None),
     };
 
-    loop {
-        if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::LogicalOr))) {
-            break;
-        }
+    while let Some(Token::Punctuator(operator @ PunctuatorKind::LogicalOr)) = tokens.peek() {
+        let operator = operator.clone();
         tokens.next();
 
         let rhs = match parse_logical_and_expression(tokens)? {
@@ -311,22 +309,70 @@ fn parse_logical_or_expression(tokens: &mut TokenIter) -> Result<Option<Node>, S
             None => return Err("Expected expression".to_string()),
         };
 
-        lhs = Node::BinaryExpression(Box::new(lhs), PunctuatorKind::LogicalOr, Box::new(rhs));
+        lhs = Node::BinaryExpression(Box::new(lhs), operator, Box::new(rhs));
     }
 
     Ok(Some(lhs))
 }
 
 fn parse_logical_and_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
+    let mut lhs = match parse_equality_expression(tokens)? {
+        Some(node) => node,
+        None => return Ok(None),
+    };
+
+    while let Some(Token::Punctuator(operator @ PunctuatorKind::LogicalAnd)) = tokens.peek() {
+        let operator = operator.clone();
+        tokens.next();
+
+        let rhs = match parse_equality_expression(tokens)? {
+            Some(node) => node,
+            None => return Err("Expected expression".to_string()),
+        };
+
+        lhs = Node::BinaryExpression(Box::new(lhs), operator, Box::new(rhs));
+    }
+
+    Ok(Some(lhs))
+}
+
+fn parse_equality_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
+    let mut lhs = match parse_relational_expression(tokens)? {
+        Some(node) => node,
+        None => return Ok(None),
+    };
+
+    while let Some(Token::Punctuator(operator @ (
+    PunctuatorKind::Equal |
+    PunctuatorKind::NotEqual
+    ))) = tokens.peek() {
+        let operator = operator.clone();
+        tokens.next();
+
+        let rhs = match parse_relational_expression(tokens)? {
+            Some(node) => node,
+            None => return Err("Expected expression".to_string()),
+        };
+
+        lhs = Node::BinaryExpression(Box::new(lhs), operator, Box::new(rhs));
+    }
+
+    Ok(Some(lhs))
+}
+
+fn parse_relational_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
     let mut lhs = match parse_additive_expression(tokens)? {
         Some(node) => node,
         None => return Ok(None),
     };
 
-    loop {
-        if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::LogicalAnd))) {
-            break;
-        }
+    while let Some(Token::Punctuator(operator @ (
+    PunctuatorKind::LessThan |
+    PunctuatorKind::LessThanOrEqual |
+    PunctuatorKind::GreaterThan |
+    PunctuatorKind::GreaterThanOrEqual
+    ))) = tokens.peek() {
+        let operator = operator.clone();
         tokens.next();
 
         let rhs = match parse_additive_expression(tokens)? {
@@ -334,7 +380,7 @@ fn parse_logical_and_expression(tokens: &mut TokenIter) -> Result<Option<Node>, 
             None => return Err("Expected expression".to_string()),
         };
 
-        lhs = Node::BinaryExpression(Box::new(lhs), PunctuatorKind::LogicalAnd, Box::new(rhs));
+        lhs = Node::BinaryExpression(Box::new(lhs), operator, Box::new(rhs));
     }
 
     Ok(Some(lhs))
@@ -346,18 +392,12 @@ fn parse_additive_expression(tokens: &mut TokenIter) -> Result<Option<Node>, Str
         None => return Ok(None),
     };
 
-    loop {
-        let operator = match tokens.peek() {
-            Some(Token::Punctuator(PunctuatorKind::Plus)) => {
-                tokens.next();
-                PunctuatorKind::Plus
-            }
-            Some(Token::Punctuator(PunctuatorKind::Minus)) => {
-                tokens.next();
-                PunctuatorKind::Minus
-            }
-            _ => break
-        };
+    while let Some(Token::Punctuator(operator @ (
+    PunctuatorKind::Plus |
+    PunctuatorKind::Minus
+    ))) = tokens.peek() {
+        let operator = operator.clone();
+        tokens.next();
 
         let rhs = match parse_multiplicative_expression(tokens)? {
             Some(node) => node,
@@ -376,18 +416,12 @@ fn parse_multiplicative_expression(tokens: &mut TokenIter) -> Result<Option<Node
         None => return Ok(None),
     };
 
-    loop {
-        let operator = match tokens.peek() {
-            Some(Token::Punctuator(PunctuatorKind::Multiply)) => {
-                tokens.next();
-                PunctuatorKind::Multiply
-            }
-            Some(Token::Punctuator(PunctuatorKind::Divide)) => {
-                tokens.next();
-                PunctuatorKind::Divide
-            }
-            _ => break
-        };
+    while let Some(Token::Punctuator(operator @ (
+    PunctuatorKind::Multiply |
+    PunctuatorKind::Divide
+    ))) = tokens.peek() {
+        let operator = operator.clone();
+        tokens.next();
 
         let rhs = match parse_unary_expression(tokens)? {
             Some(node) => node,
@@ -402,17 +436,14 @@ fn parse_multiplicative_expression(tokens: &mut TokenIter) -> Result<Option<Node
 
 fn parse_unary_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
     let operator = match tokens.peek() {
-        Some(Token::Punctuator(PunctuatorKind::Plus)) => {
+        Some(Token::Punctuator(operator @ (
+        PunctuatorKind::Plus |
+        PunctuatorKind::Minus |
+        PunctuatorKind::LogicalNot
+        ))) => {
+            let operator = operator.clone();
             tokens.next();
-            PunctuatorKind::Plus
-        }
-        Some(Token::Punctuator(PunctuatorKind::Minus)) => {
-            tokens.next();
-            PunctuatorKind::Minus
-        }
-        Some(Token::Punctuator(PunctuatorKind::LogicalNot)) => {
-            tokens.next();
-            PunctuatorKind::LogicalNot
+            operator
         }
         _ => return parse_statement_expression(tokens),
     };
@@ -1161,6 +1192,182 @@ mod tests {
                                 Box::new(Node::Bool(false)),
                                 PunctuatorKind::Plus,
                                 Box::new(Node::Number(1f64)),
+                            )),
+                        )
+                    ]))
+                );
+            }
+        }
+
+        mod equality_expression {
+            use crate::node::Node;
+            use crate::parser::parse;
+            use crate::punctuator_kind::PunctuatorKind;
+
+            #[test]
+            fn equal() {
+                assert_eq!(
+                    parse("1==2"),
+                    Ok(Node::Program(vec![
+                        Node::BinaryExpression(
+                            Box::new(Node::Number(1f64)),
+                            PunctuatorKind::Equal,
+                            Box::new(Node::Number(2f64)),
+                        )
+                    ]))
+                );
+            }
+
+            #[test]
+            fn not_equal() {
+                assert_eq!(
+                    parse("1!=2"),
+                    Ok(Node::Program(vec![
+                        Node::BinaryExpression(
+                            Box::new(Node::Number(1f64)),
+                            PunctuatorKind::NotEqual,
+                            Box::new(Node::Number(2f64)),
+                        )
+                    ]))
+                );
+            }
+
+            #[test]
+            fn not_equal_and_equal() {
+                assert_eq!(
+                    parse("1!=2==3"),
+                    Ok(Node::Program(vec![
+                        Node::BinaryExpression(
+                            Box::new(Node::BinaryExpression(
+                                Box::new(Node::Number(1f64)),
+                                PunctuatorKind::NotEqual,
+                                Box::new(Node::Number(2f64)),
+                            )),
+                            PunctuatorKind::Equal,
+                            Box::new(Node::Number(3f64)),
+                        )
+                    ]))
+                );
+            }
+
+            #[test]
+            fn equality_and_relational_expressions() {
+                assert_eq!(
+                    parse("1>2==3>4"),
+                    Ok(Node::Program(vec![
+                        Node::BinaryExpression(
+                            Box::new(Node::BinaryExpression(
+                                Box::new(Node::Number(1f64)),
+                                PunctuatorKind::GreaterThan,
+                                Box::new(Node::Number(2f64)),
+                            )),
+                            PunctuatorKind::Equal,
+                            Box::new(Node::BinaryExpression(
+                                Box::new(Node::Number(3f64)),
+                                PunctuatorKind::GreaterThan,
+                                Box::new(Node::Number(4f64)),
+                            )),
+                        )
+                    ]))
+                );
+            }
+        }
+
+        mod relational_expression {
+            use crate::node::Node;
+            use crate::parser::parse;
+            use crate::punctuator_kind::PunctuatorKind;
+
+            #[test]
+            fn greater_than() {
+                assert_eq!(
+                    parse("1>2"),
+                    Ok(Node::Program(vec![
+                        Node::BinaryExpression(
+                            Box::new(Node::Number(1f64)),
+                            PunctuatorKind::GreaterThan,
+                            Box::new(Node::Number(2f64)),
+                        )
+                    ]))
+                );
+            }
+
+            #[test]
+            fn greater_than_or_equal() {
+                assert_eq!(
+                    parse("1>=2"),
+                    Ok(Node::Program(vec![
+                        Node::BinaryExpression(
+                            Box::new(Node::Number(1f64)),
+                            PunctuatorKind::GreaterThanOrEqual,
+                            Box::new(Node::Number(2f64)),
+                        )
+                    ]))
+                );
+            }
+
+            #[test]
+            fn less_than() {
+                assert_eq!(
+                    parse("1<2"),
+                    Ok(Node::Program(vec![
+                        Node::BinaryExpression(
+                            Box::new(Node::Number(1f64)),
+                            PunctuatorKind::LessThan,
+                            Box::new(Node::Number(2f64)),
+                        )
+                    ]))
+                );
+            }
+
+            #[test]
+            fn less_than_or_equal() {
+                assert_eq!(
+                    parse("1<=2"),
+                    Ok(Node::Program(vec![
+                        Node::BinaryExpression(
+                            Box::new(Node::Number(1f64)),
+                            PunctuatorKind::LessThanOrEqual,
+                            Box::new(Node::Number(2f64)),
+                        )
+                    ]))
+                );
+            }
+
+            #[test]
+            fn greater_than_expressions() {
+                assert_eq!(
+                    parse("1>2>3"),
+                    Ok(Node::Program(vec![
+                        Node::BinaryExpression(
+                            Box::new(Node::BinaryExpression(
+                                Box::new(Node::Number(1f64)),
+                                PunctuatorKind::GreaterThan,
+                                Box::new(Node::Number(2f64)),
+                            )),
+                            PunctuatorKind::GreaterThan,
+                            Box::new(Node::Number(3f64)),
+                        )
+                    ]))
+                );
+            }
+
+            #[test]
+            fn greater_than_and_additive_expression() {
+                assert_eq!(
+                    parse("1+2>3+4"),
+                    Ok(Node::Program(vec![
+                        Node::BinaryExpression(
+                            Box::new(Node::BinaryExpression(
+                                Box::new(Node::Number(1f64)),
+                                PunctuatorKind::Plus,
+                                Box::new(Node::Number(2f64)),
+                            )),
+                            PunctuatorKind::GreaterThan,
+                            Box::new(Node::BinaryExpression(
+                                Box::new(Node::Number(3f64)),
+                                PunctuatorKind::Plus,
+                                Box::new(Node::Number(4f64)),
                             )),
                         )
                     ]))

@@ -79,7 +79,7 @@ impl Default for VM {
             environments: vec![Rc::new(RefCell::new(Environment::new()))],
             objects: HashMap::new(),
         };
-        
+
         vm.install_native_function("number", &[Type::Any], |args, _vm| {
             let value = match args.first() {
                 Some(value) => value,
@@ -375,6 +375,12 @@ impl VM {
                     PunctuatorKind::Divide => ControlFlow::Continue(Value::Number(left.as_number().into_control_flow()? / right.as_number().into_control_flow()?)),
                     PunctuatorKind::LogicalOr => ControlFlow::Continue(Value::Bool(left.as_bool().into_control_flow()? || right.as_bool().into_control_flow()?)),
                     PunctuatorKind::LogicalAnd => ControlFlow::Continue(Value::Bool(left.as_bool().into_control_flow()? && right.as_bool().into_control_flow()?)),
+                    PunctuatorKind::Equal => ControlFlow::Continue(Value::Bool(left == right)),  // TODO: 演算子オーバーロード
+                    PunctuatorKind::NotEqual => ControlFlow::Continue(Value::Bool(left != right)),  // TODO: 演算子オーバーロード
+                    PunctuatorKind::LessThan => ControlFlow::Continue(Value::Bool(left.as_number().into_control_flow()? < right.as_number().into_control_flow()?)),
+                    PunctuatorKind::LessThanOrEqual => ControlFlow::Continue(Value::Bool(left.as_number().into_control_flow()? <= right.as_number().into_control_flow()?)),
+                    PunctuatorKind::GreaterThan => ControlFlow::Continue(Value::Bool(left.as_number().into_control_flow()? > right.as_number().into_control_flow()?)),
+                    PunctuatorKind::GreaterThanOrEqual => ControlFlow::Continue(Value::Bool(left.as_number().into_control_flow()? >= right.as_number().into_control_flow()?)),
                     _ => ControlFlow::Break(BreakResult::Error(Value::String(format!("Unexpected operator: {:?}", operator)))),
                 }
             }
@@ -864,6 +870,71 @@ mod tests {
         debug(x)
         x
         "), Value::Number(100.0));
+    }
+
+    mod expression {
+        use crate::value::Value;
+        use crate::vm::VM;
+
+        #[test]
+        fn equal() {
+            assert_eq!(VM::new().eval("1 == 1"), Value::Bool(true));
+            assert_eq!(VM::new().eval("1 == 2"), Value::Bool(false));
+            assert_eq!(VM::new().eval("true == true"), Value::Bool(true));
+            assert_eq!(VM::new().eval("true == false"), Value::Bool(false));
+            assert_eq!(VM::new().eval("\"a\" == \"a\""), Value::Bool(true));
+            assert_eq!(VM::new().eval("\"a\" == \"b\""), Value::Bool(false));
+        }
+
+        #[test]
+        fn not_equal() {
+            assert_eq!(VM::new().eval("1 != 1"), Value::Bool(false));
+            assert_eq!(VM::new().eval("1 != 2"), Value::Bool(true));
+            assert_eq!(VM::new().eval("true != true"), Value::Bool(false));
+            assert_eq!(VM::new().eval("true != false"), Value::Bool(true));
+            assert_eq!(VM::new().eval("\"a\" != \"a\""), Value::Bool(false));
+            assert_eq!(VM::new().eval("\"a\" != \"b\""), Value::Bool(true));
+        }
+
+        #[test]
+        fn less_than() {
+            assert_eq!(VM::new().eval("1 < 0"), Value::Bool(false));
+            assert_eq!(VM::new().eval("1 < 1"), Value::Bool(false));
+            assert_eq!(VM::new().eval("1 < 2"), Value::Bool(true));
+            assert_eq!(VM::new().eval("true < false"), Value::String("TypeError: Expected type Number, actual type Bool".to_string()));
+            assert_eq!(VM::new().eval("\"a\" < \"a\""), Value::String("TypeError: Expected type Number, actual type String".to_string()));
+            assert_eq!(VM::new().eval("\"0.0\" < \"1.0\""), Value::String("TypeError: Expected type Number, actual type String".to_string()));
+        }
+
+        #[test]
+        fn less_than_or_equal() {
+            assert_eq!(VM::new().eval("1 <= 0"), Value::Bool(false));
+            assert_eq!(VM::new().eval("1 <= 1"), Value::Bool(true));
+            assert_eq!(VM::new().eval("1 <= 2"), Value::Bool(true));
+            assert_eq!(VM::new().eval("true < false"), Value::String("TypeError: Expected type Number, actual type Bool".to_string()));
+            assert_eq!(VM::new().eval("\"a\" < \"a\""), Value::String("TypeError: Expected type Number, actual type String".to_string()));
+            assert_eq!(VM::new().eval("\"0.0\" < \"1.0\""), Value::String("TypeError: Expected type Number, actual type String".to_string()));
+        }
+
+        #[test]
+        fn greater_than() {
+            assert_eq!(VM::new().eval("0 > 1"), Value::Bool(false));
+            assert_eq!(VM::new().eval("1 > 1"), Value::Bool(false));
+            assert_eq!(VM::new().eval("2 > 1"), Value::Bool(true));
+            assert_eq!(VM::new().eval("true > false"), Value::String("TypeError: Expected type Number, actual type Bool".to_string()));
+            assert_eq!(VM::new().eval("\"a\" > \"a\""), Value::String("TypeError: Expected type Number, actual type String".to_string()));
+            assert_eq!(VM::new().eval("\"0.0\" > \"1.0\""), Value::String("TypeError: Expected type Number, actual type String".to_string()));
+        }
+
+        #[test]
+        fn greater_than_or_equal() {
+            assert_eq!(VM::new().eval("0 >= 1"), Value::Bool(false));
+            assert_eq!(VM::new().eval("1 >= 1"), Value::Bool(true));
+            assert_eq!(VM::new().eval("2 >= 1"), Value::Bool(true));
+            assert_eq!(VM::new().eval("true >= false"), Value::String("TypeError: Expected type Number, actual type Bool".to_string()));
+            assert_eq!(VM::new().eval("\"a\" >= \"a\""), Value::String("TypeError: Expected type Number, actual type String".to_string()));
+            assert_eq!(VM::new().eval("\"0.0\" >= \"1.0\""), Value::String("TypeError: Expected type Number, actual type String".to_string()));
+        }
     }
 
     mod variable_declaration {

@@ -99,12 +99,48 @@ fn scan_token(chars: &mut Vec<char>) -> Result<Option<Token>, String> {
             Ok(Some(Token::Punctuator(PunctuatorKind::Comma)))
         }
         Some('=') => {
-            chars.remove(0);
-            Ok(Some(Token::Punctuator(PunctuatorKind::Equal)))
+            if matches!(chars.get(1), Some('=')) {
+                chars.remove(0);
+                chars.remove(0);
+
+                Ok(Some(Token::Punctuator(PunctuatorKind::Equal)))
+            } else {
+                chars.remove(0);
+                Ok(Some(Token::Punctuator(PunctuatorKind::Assign)))
+            }
         }
         Some('!') => {
-            chars.remove(0);
-            Ok(Some(Token::Punctuator(PunctuatorKind::LogicalNot)))
+            if matches!(chars.get(1), Some('=')) {
+                chars.remove(0);
+                chars.remove(0);
+
+                Ok(Some(Token::Punctuator(PunctuatorKind::NotEqual)))
+            } else {
+                chars.remove(0);
+                Ok(Some(Token::Punctuator(PunctuatorKind::LogicalNot)))
+            }
+        }
+        Some('<') => {
+            if matches!(chars.get(1), Some('=')) {
+                chars.remove(0);
+                chars.remove(0);
+
+                Ok(Some(Token::Punctuator(PunctuatorKind::LessThanOrEqual)))
+            } else {
+                chars.remove(0);
+                Ok(Some(Token::Punctuator(PunctuatorKind::LessThan)))
+            }
+        }
+        Some('>') => {
+            if matches!(chars.get(1), Some('=')) {
+                chars.remove(0);
+                chars.remove(0);
+
+                Ok(Some(Token::Punctuator(PunctuatorKind::GreaterThanOrEqual)))
+            } else {
+                chars.remove(0);
+                Ok(Some(Token::Punctuator(PunctuatorKind::GreaterThan)))
+            }
         }
         Some('&') => {
             if matches!(chars.get(1), Some('&')) {
