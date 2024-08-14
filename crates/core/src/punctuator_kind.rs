@@ -23,4 +23,6 @@ pub enum PunctuatorKind {
     GreaterThan,
     GreaterThanOrEqual,
     NewLine,
+    Question,
+    BitwiseOr,
 }

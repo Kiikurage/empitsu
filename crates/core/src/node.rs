@@ -34,6 +34,8 @@ pub enum Node {
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeExpression {
     Identifier(String),
+    Optional(Box<TypeExpression>),
+    Union(Vec<TypeExpression>),
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -3,11 +3,6 @@
 特徴：シンプル、手軽に使える、ほどよくルーズ、富豪プログラミング推奨
 
 TODO:
-  - [ ] セミコロンの省略を行末でのみ許可
-  - [ ] 文法レベルでのOptionのサポート
-      - [ ] built-in type null
-      - [ ] TypeExpression::Option(TypeExpression) = "T?" (:= T | null)
-      - [ ] TypeExpression::Union(Vec<TypeExpression>) = "T1 | T2 | T3"
   - [ ] 構造体の実行時型検査
   - [ ] 型検査器をVMから切り離す
   - [ ] 静的型検査

@@ -22,6 +22,10 @@ fn scan_token(chars: &mut Vec<char>) -> Result<Option<Token>, String> {
             chars.remove(0);
             Ok(Some(Token::Punctuator(PunctuatorKind::NewLine)))
         }
+        Some('?') => {
+            chars.remove(0);
+            Ok(Some(Token::Punctuator(PunctuatorKind::Question)))
+        }
         Some('+') => {
             chars.remove(0);
             Ok(Some(Token::Punctuator(PunctuatorKind::Plus)))
@@ -161,7 +165,8 @@ fn scan_token(chars: &mut Vec<char>) -> Result<Option<Token>, String> {
                 chars.remove(0);
                 Ok(Some(Token::Punctuator(PunctuatorKind::LogicalOr)))
             } else {
-                Err("Unexpected character".to_string())
+                chars.remove(0);
+                Ok(Some(Token::Punctuator(PunctuatorKind::BitwiseOr)))
             }
         }
         Some('.') => {
@@ -421,6 +426,12 @@ mod tests {
         fn newline() {
             assert("\n", Ok(Some(Token::Punctuator(PunctuatorKind::NewLine))), "");
             assert("\na", Ok(Some(Token::Punctuator(PunctuatorKind::NewLine))), "a");
+        }
+
+        #[test]
+        fn question() {
+            assert("?", Ok(Some(Token::Punctuator(PunctuatorKind::Question))), "");
+            assert("?a", Ok(Some(Token::Punctuator(PunctuatorKind::Question))), "a");
         }
     }
 

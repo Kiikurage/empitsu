@@ -1,10 +1,11 @@
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fmt::{Debug, Error, Formatter};
 use std::ops::ControlFlow;
 use std::rc::Rc;
 
 use crate::node::Node;
-use crate::type_::{FunctionParameterDefinition, Type};
+use crate::type_::{FunctionParameterDefinition, FunctionType, StructType, Type};
 use crate::vm::{BreakResult, Environment, VM};
 
 pub type NativeFunction = fn(&Vec<Value>, &mut VM) -> ControlFlow<BreakResult, Value>;
@@ -14,18 +15,24 @@ pub enum Value {
     Number(f64),
     Bool(bool),
     String(String),
-    Function {
-        name: String,
-        parameters: Vec<FunctionParameterDefinition>,
-        body: Box<Node>,
-        closure: Rc<RefCell<Environment>>,
-    },
-    NativeFunction {
-        name: String,
-        parameters: Vec<FunctionParameterDefinition>,
-        body: NativeFunction,
-    },
+    Function(FunctionValue),
+    NativeFunction(NativeFunctionValue),
     Ref(usize),
+}
+
+#[derive(Clone, PartialEq)]
+pub struct FunctionValue {
+    pub name: String,
+    pub parameters: Vec<FunctionParameterDefinition>,
+    pub body: Box<Node>,
+    pub closure: Rc<RefCell<Environment>>,
+}
+
+#[derive(Clone, PartialEq)]
+pub struct NativeFunctionValue {
+    pub name: String,
+    pub parameters: Vec<FunctionParameterDefinition>,
+    pub body: NativeFunction,
 }
 
 impl Value {
@@ -34,9 +41,13 @@ impl Value {
             Value::Number(_) => Type::Number,
             Value::Bool(_) => Type::Bool,
             Value::String(_) => Type::String,
-            Value::Function { parameters, .. } => Type::Function(parameters.clone()),
-            Value::NativeFunction { parameters, .. } => Type::Function(parameters.clone()),
-            Value::Ref(_) => Type::Ref,
+            Value::Function(function) => Type::Function(FunctionType {
+                parameters: function.parameters.clone(),
+            }),
+            Value::NativeFunction(function) => Type::Function(FunctionType {
+                parameters: function.parameters.clone(),
+            }),
+            Value::Ref(_) => Type::Ref
         }
     }
 
@@ -61,17 +72,17 @@ impl Value {
     pub fn into_string(self) -> Result<String, String> {
         match self {
             Value::String(value) => Ok(value.clone()),
-            Value::Function { name, parameters, .. } => {
+            Value::Function(function) => {
                 Ok(
-                    format!("function {}({})", name, parameters
+                    format!("function {}({})", function.name, function.parameters
                         .iter().map(|parameter| format!("{}:{:?}", parameter.name, parameter.type_))
                         .collect::<Vec<String>>()
                         .join(", "))
                 )
             }
-            Value::NativeFunction { name, parameters, .. } => {
+            Value::NativeFunction(function) => {
                 Ok(
-                    format!("function {}({})", name, parameters
+                    format!("function {}({})", function.name, function.parameters
                         .iter().map(|parameter| format!("{}:{:?}", parameter.name, parameter.type_))
                         .collect::<Vec<String>>()
                         .join(", "))
@@ -95,4 +106,10 @@ impl Debug for Value {
             Value::Ref(value) => write!(f, "ref {}", value),
         }
     }
+}
+
+#[derive(Clone, PartialEq)]
+pub struct StructValue {
+    pub type_: StructType,
+    pub properties: HashMap<String, Value>,
 }

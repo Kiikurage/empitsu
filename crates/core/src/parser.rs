@@ -913,16 +913,71 @@ fn is_reserved_words(word: &str) -> bool {
     matches!(word, "if" | "let" | "for" | "function" | "true" | "false" | "else" | "return" | "break" | "struct")
 }
 
+// Type
+
 fn parse_type_expression(tokens: &mut TokenIter) -> Result<Option<TypeExpression>, String> {
-    parse_type_identifier(tokens)
+    parse_union_type(tokens)
 }
 
-fn parse_type_identifier(tokens: &mut TokenIter) -> Result<Option<TypeExpression>, String> {
+fn parse_union_type(tokens: &mut TokenIter) -> Result<Option<TypeExpression>, String> {
+    let mut types = vec![];
+    match parse_optional_type(tokens)? {
+        Some(type_) => types.push(type_),
+        None => return Ok(None),
+    };
+
+    while let Some(Token::Punctuator(PunctuatorKind::BitwiseOr)) = tokens.peek() {
+        tokens.next();
+
+        match parse_optional_type(tokens)? {
+            Some(type_) => types.push(type_),
+            None => return Err("Expected type expression".to_string()),
+        }
+    }
+
+    if types.len() == 1 {
+        Ok(Some(types.remove(0)))
+    } else {
+        Ok(Some(TypeExpression::Union(types)))
+    }
+}
+
+fn parse_optional_type(tokens: &mut TokenIter) -> Result<Option<TypeExpression>, String> {
+    let type_ = match parse_primary_type(tokens)? {
+        Some(type_) => type_,
+        None => return Ok(None),
+    };
+
+    if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::Question))) {
+        return Ok(Some(type_));
+    }
+    tokens.next();
+
+    Ok(Some(TypeExpression::Optional(Box::new(type_))))
+}
+
+fn parse_primary_type(tokens: &mut TokenIter) -> Result<Option<TypeExpression>, String> {
     match tokens.peek() {
+        Some(Token::Punctuator(PunctuatorKind::LeftParen)) => {
+            tokens.next();
+
+            let type_ = match parse_type_expression(tokens)? {
+                Some(node) => node,
+                None => return Err("Expected type expression".to_string()),
+            };
+
+            if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::RightParen))) {
+                return Err("Expected ')'".to_string());
+            }
+            tokens.next();
+
+            Ok(Some(type_))
+        }
         Some(Token::Identifier(identifier)) => {
             if is_reserved_words(identifier) {
                 return Err(format!("SyntaxError: \"{}\" is a reserved word", identifier));
             }
+
             let identifier = identifier.clone();
             tokens.next();
 
@@ -2202,6 +2257,140 @@ mod tests {
             }
         }
     }
+
+    mod type_expression {
+        mod union_type {
+            use crate::node::{Node, TypeExpression};
+            use crate::parser::parse;
+
+            #[test]
+            fn union_type() {
+                assert_eq!(
+                    parse("let x:T|U|V"),
+                    Ok(Node::Program(vec![
+                        Node::VariableDeclaration(
+                            "x".to_string(),
+                            Some(TypeExpression::Union(vec![
+                                TypeExpression::Identifier("T".to_string()),
+                                TypeExpression::Identifier("U".to_string()),
+                                TypeExpression::Identifier("V".to_string()),
+                            ])),
+                            None,
+                        ),
+                    ]))
+                );
+            }
+
+            #[test]
+            fn wrapped_type() {
+                assert_eq!(
+                    parse("let x:(T|U)|V"),
+                    Ok(Node::Program(vec![
+                        Node::VariableDeclaration(
+                            "x".to_string(),
+                            Some(TypeExpression::Union(vec![
+                                TypeExpression::Union(vec![
+                                    TypeExpression::Identifier("T".to_string()),
+                                    TypeExpression::Identifier("U".to_string()),
+                                ]),
+                                TypeExpression::Identifier("V".to_string())
+                            ])),
+                            None,
+                        ),
+                    ]))
+                );
+            }
+
+            #[test]
+            fn with_optional() {
+                assert_eq!(
+                    parse("let x:T|U?"),
+                    Ok(Node::Program(vec![
+                        Node::VariableDeclaration(
+                            "x".to_string(),
+                            Some(TypeExpression::Union(vec![
+                                TypeExpression::Identifier("T".to_string()),
+                                TypeExpression::Optional(
+                                    Box::new(TypeExpression::Identifier("U".to_string()))
+                                ),
+                            ])),
+                            None,
+                        ),
+                    ]))
+                );
+            }
+        }
+
+        mod optional_type {
+            use crate::node::{Node, TypeExpression};
+            use crate::parser::parse;
+
+            #[test]
+            fn optional_type() {
+                assert_eq!(
+                    parse("let x:T?"),
+                    Ok(Node::Program(vec![
+                        Node::VariableDeclaration(
+                            "x".to_string(),
+                            Some(TypeExpression::Optional(
+                                Box::new(TypeExpression::Identifier("T".to_string()))
+                            )),
+                            None,
+                        ),
+                    ]))
+                );
+            }
+
+            #[test]
+            fn optional_of_wrapped_type() {
+                assert_eq!(
+                    parse("let x:(T)?"),
+                    Ok(Node::Program(vec![
+                        Node::VariableDeclaration(
+                            "x".to_string(),
+                            Some(TypeExpression::Optional(
+                                Box::new(TypeExpression::Identifier("T".to_string()))
+                            )),
+                            None,
+                        ),
+                    ]))
+                );
+            }
+        }
+
+        mod primary_type {
+            use crate::node::{Node, TypeExpression};
+            use crate::parser::parse;
+
+            #[test]
+            fn type_identifier() {
+                assert_eq!(
+                    parse("let x:T"),
+                    Ok(Node::Program(vec![
+                        Node::VariableDeclaration(
+                            "x".to_string(),
+                            Some(TypeExpression::Identifier("T".to_string())),
+                            None,
+                        ),
+                    ]))
+                );
+            }
+
+            #[test]
+            fn type_wrapped_by_paren() {
+                assert_eq!(
+                    parse("let x:(T)"),
+                    Ok(Node::Program(vec![
+                        Node::VariableDeclaration(
+                            "x".to_string(),
+                            Some(TypeExpression::Identifier("T".to_string())),
+                            None,
+                        ),
+                    ]))
+                );
+            }
+        }
+   }
 
     mod semicolon {
         use crate::parser::parse;
