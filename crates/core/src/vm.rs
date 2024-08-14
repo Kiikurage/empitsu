@@ -487,7 +487,7 @@ impl VM {
                 for ObjectPropertyDefinition { name, value } in definitions {
                     members.insert(name.clone(), self.eval_node(value)?);
                 }
-                let address = self.objects.len();
+                let address = self.allocate_object();
                 self.objects.insert(address, RefCell::new(members));
 
                 ControlFlow::Continue(Value::Ref(address))
@@ -548,6 +548,15 @@ impl VM {
             body,
         };
         global.variables.insert(name.to_string(), Variable { type_: native_function.get_type(), value: native_function });
+    }
+    
+    fn allocate_object(&self) -> usize {
+        for i in 0.. {
+            if !self.objects.contains_key(&i) {
+                return i;
+            }
+        }
+        panic!("Failed to allocate object");
     }
 }
 
@@ -1139,6 +1148,7 @@ mod tests {
     }
 
     mod gc {
+        use crate::value::Value;
         use crate::vm::VM;
 
         #[test]
@@ -1231,6 +1241,24 @@ mod tests {
             vm.eval("user = {}");
             vm.gc();
             assert_eq!(vm.objects.len(), 1); // New empty object assigned into alice and bob
+        }
+
+        #[test]
+        fn reuse_released_address() {
+            let mut vm = VM::new();
+            vm.eval("let a = {i:0}; let b = {i:1}");
+            assert_eq!(vm.objects.len(), 2);
+
+            vm.eval("a = {i:2}; b = a");
+            assert_eq!(vm.objects.len(), 3);
+
+            vm.gc();    // address 0 and 1 are released
+            assert_eq!(vm.objects.len(), 1);
+
+            vm.eval("b = {i:3};");  // address 1 is reused
+            vm.eval("b = {i:4};");  // address 2 is reused
+            assert_eq!(vm.eval("a"), Value::Ref(2));
+            assert_eq!(*vm.objects.get(&2).unwrap().borrow().get("i").unwrap(), Value::Number(2.0));
         }
     }
 
