@@ -2,11 +2,6 @@
 
 特徴：シンプル、手軽に使える、ほどよくルーズ、富豪プログラミング推奨
 
-TODO:
-  - [ ] 構造体の実行時型検査
-  - [ ] 型検査器をVMから切り離す
-  - [ ] 静的型検査
-
 # 実装状況一覧
 
 - [ ] プリミティブ・組み込み型・標準ライブラリ
@@ -52,14 +47,15 @@ TODO:
     - [x] 変数
     - [x] 関数の引数
     - [ ] タプル型
-    - [ ] 関数の戻り値
+    - [x] 関数の戻り値
     - [ ] インターフェース・トレイト・型クラス
     - [ ] ジェネリクス
     - [ ] エイリアス
-    - [ ] ユニオン型
+    - [x] ユニオン型
   - [ ] オーバーロード
   - [ ] getter/setter
 - [ ] 静的型検査
+  - [x] 値を評価せずに型検査
   - [ ] ジェネリクス
   - [ ] アクセス修飾子
   - [ ] mutability
@@ -158,32 +154,4 @@ TODO:
 - 文法レベルでのリアクティブ性のサポート
 - ラベル
     - コードスメル感がある
-
-
-# If文とIf式
-
-- If文
-    - "if" <condition:Expression> <true:Statement> [ "else" <false:Statement> ] 
-- If式
-    - "if" <condition:Expression> <true:Block|Expression> "else" <false:Block|Expression>
-    
-# Blockの評価値
-
-Block内の最後の式をBlockの評価値とする
-
-# ループ
-
-```text
-for (v in iterator) { ... }
-for (v in 0 to 10) { ... }
-
-function f() {
-    print(x);
-}
-
-{
-    let x = 10;
-    f(); 
-}
-```
 

@@ -9,13 +9,13 @@ pub enum Node {
     IfStatement(Box<Node>, Box<Node>, Option<Box<Node>>), // condition, true-branch, false-branch
     ForStatement(String, Box<Node>, Box<Node>), // variable, iterator, body
     VariableDeclaration(String, Option<TypeExpression>, Option<Box<Node>>), // name, type, initial_value
-    FunctionDeclaration(String, Vec<FunctionParameterDeclaration>, Box<Node>), // name, parameters, body
+    FunctionDeclaration(FunctionNode), // name, parameters, body
     StructDeclaration(String, Vec<StructPropertyDeclaration>), // name, properties
 
     // Expressions
     ReturnExpression(Option<Box<Node>>), // return value
     BreakExpression,
-    FunctionExpression(Option<String>, Vec<FunctionParameterDeclaration>, Box<Node>), // name, parameters, body
+    FunctionExpression(FunctionNode), // name, parameters, body
     IfExpression(Box<Node>, Box<Node>, Box<Node>), // condition, true-branch, false-branch
     BlockExpression(Vec<Node>),
     RangeIterator(Box<Node>, Box<Node>), // temporary
@@ -24,11 +24,22 @@ pub enum Node {
     UnaryExpression(PunctuatorKind, Box<Node>),
     CallExpression(Box<Node>, Vec<Node>),
     MemberExpression(Box<Node>, Box<Node>),
+    Identifier(String),
+
+    // Literal
     Number(f64),
     Bool(bool),
     String(String),
     Struct(TypeExpression, Vec<StructPropertyInitializer>),
-    Identifier(String),
+    Null,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FunctionNode {
+    pub name: String,
+    pub parameters: Vec<FunctionParameterDeclaration>,
+    pub return_type: Box<TypeExpression>,
+    pub body: Box<Node>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

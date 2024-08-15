@@ -7,3 +7,4 @@ pub mod vm;
 mod token_iter;
 mod type_;
 mod value;
+mod type_checker;

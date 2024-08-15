@@ -1,5 +1,5 @@
 use crate::lexer::scan;
-use crate::node::{FunctionParameterDeclaration, Node, StructPropertyDeclaration, StructPropertyInitializer, TypeExpression};
+use crate::node::{FunctionNode, FunctionParameterDeclaration, Node, StructPropertyDeclaration, StructPropertyInitializer, TypeExpression};
 use crate::punctuator_kind::PunctuatorKind;
 use crate::token::Token;
 use crate::token_iter::TokenIter;
@@ -757,9 +757,12 @@ fn parse_primary_expression(tokens: &mut TokenIter) -> Result<Option<Node>, Stri
         }
         Some(Token::Identifier(identifier)) => {
             let identifier = identifier.clone();
-
             tokens.next();
-            Ok(Some(Node::Identifier(identifier)))
+
+            match identifier.as_str() {
+                "null" => Ok(Some(Node::Null)),
+                _ => Ok(Some(Node::Identifier(identifier)))
+            }
         }
         Some(Token::Number(value)) => {
             let value = *value;
@@ -849,9 +852,9 @@ fn parse_function(tokens: &mut TokenIter, is_declaration: bool) -> Result<Option
 
             let name = name.clone();
             tokens.next();
-            Some(name)
+            name
         }
-        _ => None,
+        _ => "(anonymous)".to_string(),
     };
 
     if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::LeftParen))) {
@@ -894,23 +897,40 @@ fn parse_function(tokens: &mut TokenIter, is_declaration: bool) -> Result<Option
     }
     tokens.next();
 
+    if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::Colon))) {
+        return Err("Expected ':'".to_string());
+    }
+    tokens.next();
+
+    let return_type = match parse_type_expression(tokens)? {
+        Some(node) => node,
+        None => return Err("Expected type expression".to_string()),
+    };
+
     let block = match parse_block_statement(tokens)? {
         Some(node) => node,
         None => return Err("Expected block statement".to_string()),
     };
 
     if is_declaration {
-        match name {
-            Some(name) => Ok(Some(Node::FunctionDeclaration(name, parameters, Box::new(block)))),
-            None => Err("Expected identifier".to_string()),
-        }
+        Ok(Some(Node::FunctionDeclaration(FunctionNode {
+            name,
+            parameters,
+            return_type: Box::new(return_type),
+            body: Box::new(block),
+        })))
     } else {
-        Ok(Some(Node::FunctionExpression(name, parameters, Box::new(block))))
+        Ok(Some(Node::FunctionExpression(FunctionNode {
+            name,
+            parameters,
+            return_type: Box::new(return_type),
+            body: Box::new(block),
+        })))
     }
 }
 
 fn is_reserved_words(word: &str) -> bool {
-    matches!(word, "if" | "let" | "for" | "function" | "true" | "false" | "else" | "return" | "break" | "struct")
+    matches!(word, "if" | "let" | "for" | "function" | "true" | "false" | "else" | "return" | "break" | "struct" | "null")
 }
 
 // Type
@@ -974,10 +994,6 @@ fn parse_primary_type(tokens: &mut TokenIter) -> Result<Option<TypeExpression>, 
             Ok(Some(type_))
         }
         Some(Token::Identifier(identifier)) => {
-            if is_reserved_words(identifier) {
-                return Err(format!("SyntaxError: \"{}\" is a reserved word", identifier));
-            }
-
             let identifier = identifier.clone();
             tokens.next();
 
@@ -2390,7 +2406,7 @@ mod tests {
                 );
             }
         }
-   }
+    }
 
     mod semicolon {
         use crate::parser::parse;

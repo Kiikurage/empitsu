@@ -4,7 +4,7 @@ use crate::token::Token;
 pub fn scan(input: &str) -> Result<Vec<Token>, String> {
     let mut chars = input.chars().collect::<Vec<char>>();
     let mut tokens = Vec::new();
-    while !chars.is_empty() { 
+    while !chars.is_empty() {
         if let Some(token) = scan_token(&mut chars)? {
             tokens.push(token)
         }
@@ -64,7 +64,7 @@ fn scan_token(chars: &mut Vec<char>) -> Result<Option<Token>, String> {
                         if c == '*' && matches!(chars.get(1), Some('/')) {
                             chars.remove(0);
                             chars.remove(0);
-                            break
+                            break;
                         }
                         body.push(c);
                         chars.remove(0);
@@ -292,7 +292,7 @@ mod tests {
     }
 
     mod tokens {
-        use crate::lexer::{PunctuatorKind, scan, Token};
+        use crate::lexer::{scan, PunctuatorKind, Token};
 
         #[test]
         fn test_scan_tokens() {
@@ -369,8 +369,8 @@ mod tests {
     }
 
     mod punctuator {
-        use crate::lexer::{PunctuatorKind, Token};
         use crate::lexer::tests::assert;
+        use crate::lexer::{PunctuatorKind, Token};
 
         #[test]
         fn left_paren() {
