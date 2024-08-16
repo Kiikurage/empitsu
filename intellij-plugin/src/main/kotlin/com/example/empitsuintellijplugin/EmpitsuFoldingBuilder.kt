@@ -22,49 +22,55 @@ class EmpitsuFoldingBuilder: FoldingBuilderEx(), DumbAware {
             override fun visitStructPropertyDeclarations(declarations: EmpitsuStructPropertyDeclarations) {
                 super.visitStructPropertyDeclarations(declarations)
 
-                descriptors.add(
-                    FoldingDescriptor(
-                        declarations.node,
-                        TextRange(
-                            declarations.textRange.startOffset + 1,
-                            declarations.textRange.endOffset - 1
-                        ),
-                        FoldingGroup.newGroup("empitsu"),
-                        "...",
+                if (declarations.textRange.length > 2) {
+                    descriptors.add(
+                        FoldingDescriptor(
+                            declarations.node,
+                            TextRange(
+                                declarations.textRange.startOffset + 1,
+                                declarations.textRange.endOffset - 1
+                            ),
+                            FoldingGroup.newGroup("empitsu"),
+                            "...",
+                        )
                     )
-                )
+                }
             }
 
             override fun visitStructPropertyInitializers(initializers: EmpitsuStructPropertyInitializers) {
                 super.visitStructPropertyInitializers(initializers)
 
-                descriptors.add(
-                    FoldingDescriptor(
-                        initializers.node,
-                        TextRange(
-                            initializers.textRange.startOffset + 1,
-                            initializers.textRange.endOffset - 1
-                        ),
-                        FoldingGroup.newGroup("empitsu"),
-                        "...",
+                if (initializers.textRange.length > 2) {
+                    descriptors.add(
+                        FoldingDescriptor(
+                            initializers.node,
+                            TextRange(
+                                initializers.textRange.startOffset + 1,
+                                initializers.textRange.endOffset - 1
+                            ),
+                            FoldingGroup.newGroup("empitsu"),
+                            "...",
+                        )
                     )
-                )
+                }
             }
 
             override fun visitBlockExpression(statement: EmpitsuBlockExpression) {
                 super.visitBlockExpression(statement)
 
-                descriptors.add(
-                    FoldingDescriptor(
-                        statement.node,
-                        TextRange(
-                            statement.textRange.startOffset + 1,
-                            statement.textRange.endOffset - 1
-                        ),
-                        FoldingGroup.newGroup("empitsu"),
-                        "...",
+                if (statement.textRange.length > 2) {
+                    descriptors.add(
+                        FoldingDescriptor(
+                            statement.node,
+                            TextRange(
+                                statement.textRange.startOffset + 1,
+                                statement.textRange.endOffset - 1
+                            ),
+                            FoldingGroup.newGroup("empitsu"),
+                            "...",
+                        )
                     )
-                )
+                }
             }
 
             override fun visitPsiElement(o: PsiElement) {

@@ -26,3 +26,5 @@ IntelliJ系IDEにEmpitsu言語サポートを追加するプラグイン
   ```
   ./gradlew buildPlugin
   ```
+  
+  `build/distributions/` 以下にzipファイルが生成される
