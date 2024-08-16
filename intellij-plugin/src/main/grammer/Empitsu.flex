@@ -23,20 +23,20 @@ import com.intellij.psi.tree.IElementType;
 %%
 
 <IN_BLOCK_COMMENT> {
-	"*/" 							{ yybegin(YYINITIAL); return EmpitsuTypes.COMMENT; }
-	[^] 							{ return EmpitsuTypes.COMMENT; }
+	"*/" 											{ yybegin(YYINITIAL); return EmpitsuTypes.COMMENT; }
+	[^] 											{ return EmpitsuTypes.COMMENT; }
 }
 
 <IN_STRING_LITERAL> {
-	"\""				 			{ yybegin(YYINITIAL); return EmpitsuTypes.DOUBLE_QUOTE; }
-	[^] 							{ return EmpitsuTypes.STRING_CHARACTER; }
+	"\""				 							{ yybegin(YYINITIAL); return EmpitsuTypes.STRING_END; }
+	[^] 											{ return EmpitsuTypes.STRING_CHARACTER; }
 }
 
 <YYINITIAL> {
 	[ \r\t\n]+ 							  { return EmpitsuTypes.WHITE_SPACE; }
 	"//" [^\r\n]* 						{ return EmpitsuTypes.COMMENT; }
 	"/*" 											{ yybegin(IN_BLOCK_COMMENT); return EmpitsuTypes.COMMENT; }
-	"\"" 											{ yybegin(IN_STRING_LITERAL); return EmpitsuTypes.DOUBLE_QUOTE; }
+	"\"" 											{ yybegin(IN_STRING_LITERAL); return EmpitsuTypes.STRING_BEGIN; }
 	\d+("." \d+)? 	 				  { return EmpitsuTypes.NUMBER; }
 	"if" 											{ return EmpitsuTypes.IF; }
 	"let" 										{ return EmpitsuTypes.LET; }

@@ -2,3 +2,5 @@
 /target
 /build
 /.gradle
+idea-flex.skeleton
+jflex-*.jar

@@ -16,7 +16,9 @@
   	WHITE_SPACE = "white space"
   	COMMENT = "comment"
 		NUMBER = "number"
+		STRING_BEGIN = "string begin"
 		STRING_CHARACTER = "character"
+		STRING_END = "string end"
 		IDENTIFIER = "identifier"
 
 		IF = "if"

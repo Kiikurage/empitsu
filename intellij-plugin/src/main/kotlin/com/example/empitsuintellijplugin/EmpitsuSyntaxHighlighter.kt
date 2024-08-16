@@ -31,7 +31,10 @@ class EmpitsuSyntaxHighlighter : SyntaxHighlighterBase() {
 
     override fun getTokenHighlights(tokenType: IElementType): Array<out TextAttributesKey> {
         return when (tokenType) {
-            EmpitsuTypes.STRING -> return STRINGS
+            EmpitsuTypes.STRING_BEGIN,
+            EmpitsuTypes.STRING_CHARACTER,
+            EmpitsuTypes.STRING_END -> return STRINGS
+
             EmpitsuTypes.NUMBER -> return NUMBERS
             EmpitsuTypes.COMMENT -> return COMMENTS
 
