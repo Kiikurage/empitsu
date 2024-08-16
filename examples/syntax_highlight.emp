@@ -1,0 +1,79 @@
+// line comment
+/* block comment */
+/* complex block comment /* */
+
+/**
+ * Statement
+ */
+
+if (condition) { /* true branch */ } // if statement
+if (condition) { /* true branch */ } else { /* false branch */ }
+
+{ 1 } // block statement
+{ /* empty body */ }
+
+return 1 // return statement
+return /* no return value */
+
+break // break statement
+
+for (i in iterator) { /* loop body */ } // for statement
+
+let withoutType = "test" // variable declaration with initial value
+let withoutValue: bool // variable declaration with type
+let full: number = 123 // variable declaration with type and initial value
+
+struct User { id: number, name: string } // struct declaration
+struct User { id: number, name: string, } // struct declaration with trailing comma
+struct User { } // struct declaraiton without members
+
+function f(v1:number, v2:string):number {} // function declaration
+function f(v1:number, v2:string,):number {} // function declaration with trailing comma
+function f():number {} // function declaration with no arguments
+
+/**
+ * Expression
+ */
+
+x = 1 // assignment expression
+x||y // logical or expression
+x&&y // logical and expression
+x==y // equality expression
+x!=y
+x<y // relational expression
+x<=y
+x>y
+x>=y
+x+y // additive expression
+x-y
+x*y // multiplicative expression
+x/y
++x // unary expression
+-x
+!x
+x = if (condition) { true } else { false } // if expression
+x = if (condition) true else false // if expression without brace
+x = { x; y } // block expression
+x = return 1 // return expression
+x = break // break expression
+fn(1, true, "hi") // call expression
+fn(1, true,) // call expression with trailing comma
+fn() // call expression without arguments
+x.y // member expression
+user = User { id: 0, name: "Alice" } // struct literal
+user = User { id: 0, name: "Alice", } // struct literal with trailing comma
+true  // boolean literal
+false
+123  // number literal
+"hello"  // string literal
+null  // null literal
+
+/**
+ *  Type expression
+ */
+
+let x: T  // primary type
+let x: T?  // optional type
+let x: (T|U) // union type
+
+/* non-terminated block comment *

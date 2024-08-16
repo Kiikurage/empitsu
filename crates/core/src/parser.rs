@@ -799,7 +799,7 @@ fn parse_struct_literal(tokens: &mut TokenIter) -> Result<Option<Node>, String> 
     let mut definitions = Vec::new();
 
     while !tokens.is_empty() {
-        match parse_object_property_initializer(tokens)? {
+        match parse_struct_property_initializer(tokens)? {
             Some(definition) => definitions.push(definition),
             None => break
         }
@@ -818,7 +818,7 @@ fn parse_struct_literal(tokens: &mut TokenIter) -> Result<Option<Node>, String> 
     Ok(Some(Node::Struct(type_, definitions)))
 }
 
-fn parse_object_property_initializer(tokens: &mut TokenIter) -> Result<Option<StructPropertyInitializer>, String> {
+fn parse_struct_property_initializer(tokens: &mut TokenIter) -> Result<Option<StructPropertyInitializer>, String> {
     let name = match tokens.peek() {
         Some(Token::Identifier(name)) => name.clone(),
         _ => return Ok(None),
@@ -930,7 +930,7 @@ fn parse_function(tokens: &mut TokenIter, is_declaration: bool) -> Result<Option
 }
 
 fn is_reserved_words(word: &str) -> bool {
-    matches!(word, "if" | "let" | "for" | "function" | "true" | "false" | "else" | "return" | "break" | "struct" | "null")
+    matches!(word, "if" | "let" | "for" | "function" | "true" | "false" | "else" | "return" | "break" | "struct" | "null" | "in")
 }
 
 // Type

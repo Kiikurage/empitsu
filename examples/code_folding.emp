@@ -1,0 +1,37 @@
+// Block expression
+let x = {
+  1
+  2
+}
+
+// Nested block
+{
+    x = {
+        1
+        2
+    }
+}
+
+// if statement
+if (condition) {
+    true
+} else {
+    false
+}
+
+// for statement
+for (i in iterator) {
+    1
+}
+
+// struct declaration
+struct User {
+   id: number,
+   name: string
+}
+
+// struct literal
+let user = User {
+    id: 0,
+    name: 0,
+}

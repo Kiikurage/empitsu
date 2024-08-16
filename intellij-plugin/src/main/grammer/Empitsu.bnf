@@ -1,0 +1,177 @@
+{
+  parserClass="com.example.empitsuintellijplugin.parser.EmpitsuParser"
+
+  extends="com.intellij.extapi.psi.ASTWrapperPsiElement"
+
+  psiClassPrefix="Empitsu"
+  psiImplClassSuffix="Impl"
+  psiPackage="com.example.empitsuintellijplugin.psi"
+  psiImplPackage="com.example.empitsuintellijplugin.psi.impl"
+
+  elementTypeHolderClass="com.example.empitsuintellijplugin.psi.EmpitsuTypes"
+  elementTypeClass="com.example.empitsuintellijplugin.psi.EmpitsuElementType"
+  tokenTypeClass="com.example.empitsuintellijplugin.psi.EmpitsuTokenType"
+
+  tokens=[
+  	WHITE_SPACE = "white space"
+  	COMMENT = "comment"
+		NUMBER = "number"
+		STRING_CHARACTER = "character"
+		IDENTIFIER = "identifier"
+
+		IF = "if"
+    LET = "let"
+    FOR = "for"
+    FUNCTION = "function"
+    TRUE = "true"
+    FALSE = "false"
+    ELSE = "else"
+    RETURN = "return"
+    BREAK = "break"
+    STRUCT = "struct"
+    NULL = "null"
+    IN = "in"
+
+		PLUS = "+"
+		MINUS = "-"
+		MULTIPLY = "*"
+		DIVIDE = "/"
+		LEFT_PAREN = "("
+		RIGHT_PAREN = ")"
+		LEFT_BRACE = "{"
+		RIGHT_BRACE = "}"
+		SEMICOLON = ";"
+		COMMA = ","
+		ASSIGN = "="
+		LOGICAL_NOT = "!"
+		LOGICAL_AND = "&&"
+		LOGICAL_OR = "||"
+		DOT = "."
+		COLON = ":"
+		EQUAL = "=="
+		NOT_EQUAL = "!="
+		LESS_THAN = "<"
+		LESS_THAN_OR_EQUAL = "<="
+		GREATER_THAN = ">"
+		GREATER_THAN_OR_EQUAL = ">="
+		QUESTION = "?"
+		BITWISE_OR = "|"
+		DOUBLE_QUOTE = "\""
+  ]
+}
+
+program ::= statement*
+
+statement ::=
+	ifStatement |
+	emptyStatement |
+	blockStatement |
+	returnStatement |
+	breakStatement |
+	forStatement |
+	variableDeclaration |
+	functionDeclaration |
+	structDeclaration |
+	expressionStatement
+
+emptyStatement ::= ";"
+
+ifStatement ::= "if" "(" expression ")" statement ("else" statement)?
+
+blockStatement ::= blockExpression
+
+returnStatement ::= returnExpression
+
+breakStatement ::= breakExpression
+
+forStatement ::= "for" "(" IDENTIFIER "in" expression ")" statement
+
+variableDeclaration ::= "let" IDENTIFIER (":" typeExpression)? ("=" expression)?
+
+functionDeclaration ::= "function" IDENTIFIER "(" functionParameterDeclaration ","? ")" ":" typeExpression blockStatement
+
+functionParameterDeclaration ::= (IDENTIFIER ":" typeExpression ("," IDENTIFIER ":" typeExpression)*)?
+
+structDeclaration ::= "struct" IDENTIFIER structPropertyDeclarations
+
+structPropertyDeclarations ::= "{"
+	(IDENTIFIER ":" typeExpression ("," IDENTIFIER ":" typeExpression)*)? ","?
+"}"
+
+expressionStatement ::= expression
+
+expression ::= assignmentExpression | rangeExpression | logicalOrExpression
+
+assignmentExpression ::= leftHandSideExpression "=" expression
+
+rangeExpression ::= logicalOrExpression "to" logicalOrExpression
+
+logicalOrExpression ::= logicalAndExpression ("||" logicalAndExpression)*
+
+logicalAndExpression ::= equalityExpression ("&&" equalityExpression)*
+
+equalityExpression ::= relationalExpression (("==" | "!=") relationalExpression)*
+
+relationalExpression ::= additiveExpression (("<" | "<=" | ">" | ">=") additiveExpression)*
+
+additiveExpression ::= multiplicativeExpression (("+" | "-") multiplicativeExpression)*
+
+multiplicativeExpression ::= unaryExpression (("*" | "/") unaryExpression)*
+
+unaryExpression ::=
+	statementExpression |
+	("+" | "-" | "!") statementExpression
+
+statementExpression ::=
+	functionExpression |
+	ifExpression |
+	returnExpression |
+	breakExpression |
+	blockExpression |
+	callExpression
+
+functionExpression ::= "function" IDENTIFIER? "(" functionParameterDeclaration ","? ")" ":" typeExpression blockStatement
+
+ifExpression ::= "if" "(" expression ")" expression "else" expression
+
+blockExpression ::= "{" statement* "}"
+
+returnExpression ::= "return" expression?
+
+breakExpression ::= "break"
+
+callExpression ::= memberExpression ("(" argumentList ","? ")")?
+
+argumentList ::= (expression ("," expression)*)?
+
+leftHandSideExpression ::= memberExpression
+
+memberExpression ::= primaryExpression ("." primaryExpression)*
+
+primaryExpression ::=
+	structLiteral |
+	"(" expression ")" |
+	"true" |
+	"false" |
+	"null" |
+	IDENTIFIER |
+	NUMBER |
+	string
+
+string ::= "\"" STRING_CHARACTER* "\""
+
+structLiteral ::= IDENTIFIER structPropertyInitializers
+
+structPropertyInitializers ::= "{"
+	(IDENTIFIER ":" expression ("," IDENTIFIER ":" expression)*)? ","?
+"}"
+
+typeExpression ::= unionType
+
+unionType ::= optionalType ("|" optionalType)*
+
+optionalType ::= primaryType "?"?
+
+primaryType ::=
+	("(" typeExpression ")") |
+	IDENTIFIER
