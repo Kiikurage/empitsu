@@ -33,10 +33,10 @@ class EmpitsuSyntaxHighlighter : SyntaxHighlighterBase() {
         return when (tokenType) {
             EmpitsuTypes.STRING_BEGIN,
             EmpitsuTypes.STRING_CHARACTER,
-            EmpitsuTypes.STRING_END -> return STRINGS
+            EmpitsuTypes.STRING_END -> STRINGS
 
-            EmpitsuTypes.NUMBER -> return NUMBERS
-            EmpitsuTypes.COMMENT -> return COMMENTS
+            EmpitsuTypes.NUMBER -> NUMBERS
+            EmpitsuTypes.COMMENT -> COMMENTS
 
             EmpitsuTypes.IF,
             EmpitsuTypes.LET,
@@ -49,10 +49,10 @@ class EmpitsuSyntaxHighlighter : SyntaxHighlighterBase() {
             EmpitsuTypes.BREAK,
             EmpitsuTypes.STRUCT,
             EmpitsuTypes.NULL,
-            EmpitsuTypes.IN -> return KEYWORDS
+            EmpitsuTypes.IN -> KEYWORDS
 
-            TokenType.BAD_CHARACTER -> return BAD_CHARACTERS
-            else -> return emptyArray()
+            TokenType.BAD_CHARACTER -> BAD_CHARACTERS
+            else -> emptyArray()
         }
     }
 }

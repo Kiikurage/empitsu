@@ -5,17 +5,17 @@
 
     <!-- Public plugin name should be written in Title Case.
          Guidelines: https://plugins.jetbrains.com/docs/marketplace/plugin-overview-page.html#plugin-name -->
-    <name>Empitsu-intellij-plugin</name>
+    <name>Empitsu</name>
 
     <!-- A displayed Vendor name or Organization ID displayed on the Plugins Page. -->
-    <vendor email="support@yourcompany.com" url="https://www.yourcompany.com">YourCompany</vendor>
+    <vendor url="https://github.com/Kiikurage/empitsu">Kikurage</vendor>
 
     <!-- Description of the plugin displayed on the Plugin Page and IDE Plugin Manager.
          Simple HTML elements (text formatting, paragraphs, and lists) can be added inside of <![CDATA[ ]]> tag.
          Guidelines: https://plugins.jetbrains.com/docs/marketplace/plugin-overview-page.html#plugin-description -->
     <description><![CDATA[
-    Enter short description for your plugin here.<br>
-    <em>most HTML tags may be used</em>
+        <h1>Empitsu</h1>
+        Add Empitsu language support to IntelliJ IDEs.
   ]]></description>
 
     <!-- Product and plugin compatibility requirements.
@@ -43,7 +43,5 @@
         <lang.commenter
                 language="Empitsu"
                 implementationClass="com.example.empitsuintellijplugin.EmpitsuCommenter"/>
-        <configurationType
-                implementation="com.example.empitsuintellijplugin.EmpitsuRunConfigurationType"/>
     </extensions>
 </idea-plugin>

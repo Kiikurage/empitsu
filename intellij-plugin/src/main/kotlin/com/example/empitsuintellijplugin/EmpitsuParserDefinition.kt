@@ -28,7 +28,7 @@ class EmpitsuParserDefinition : ParserDefinition {
 
     override fun getWhitespaceTokens() = TokenSet.create(EmpitsuTypes.WHITE_SPACE)
 
-    override fun getStringLiteralElements() = TokenSet.EMPTY
+    override fun getStringLiteralElements(): TokenSet = TokenSet.EMPTY
 
     override fun createElement(node: ASTNode?): PsiElement {
         return EmpitsuTypes.Factory.createElement(node)

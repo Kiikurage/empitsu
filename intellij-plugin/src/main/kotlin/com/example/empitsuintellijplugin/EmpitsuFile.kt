@@ -8,7 +8,7 @@ class EmpitsuFile(
     viewProvider: FileViewProvider
 ): PsiFileBase(viewProvider, EmpitsuLanguage.INSTANCE) {
     override fun getFileType(): FileType {
-        return EmpitsuFileType.INSTANCE
+        return EmpitsuFileTypeInstance
     }
 
     override fun toString(): String {
