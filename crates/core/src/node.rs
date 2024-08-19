@@ -1,4 +1,4 @@
-use crate::punctuator_kind::PunctuatorKind;
+use crate::punctuation_kind::PunctuationKind;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Node {
@@ -20,8 +20,8 @@ pub enum Node {
     BlockExpression(Vec<Node>),
     RangeIterator(Box<Node>, Box<Node>), // temporary
     AssignmentExpression(Box<Node>, Box<Node>),
-    BinaryExpression(Box<Node>, PunctuatorKind, Box<Node>),
-    UnaryExpression(PunctuatorKind, Box<Node>),
+    BinaryExpression(Box<Node>, PunctuationKind, Box<Node>),
+    UnaryExpression(PunctuationKind, Box<Node>),
     CallExpression(Box<Node>, Vec<Node>),
     MemberExpression(Box<Node>, Box<Node>),
     Identifier(String),

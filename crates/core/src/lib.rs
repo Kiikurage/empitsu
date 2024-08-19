@@ -1,10 +1,13 @@
 pub mod lexer;
-pub mod punctuator_kind;
+pub mod punctuation_kind;
 pub mod token;
 pub mod node;
 pub mod parser;
 pub mod vm;
-mod token_iter;
+mod token_iterator;
 mod type_;
 mod value;
 mod type_checker;
+mod char_iterator;
+mod error;
+mod multi_peek;

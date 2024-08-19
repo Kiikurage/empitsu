@@ -1,6 +1,6 @@
 use crate::node::{Node, TypeExpression};
 use crate::parser::parse;
-use crate::punctuator_kind::PunctuatorKind;
+use crate::punctuation_kind::PunctuationKind;
 use crate::type_::{FunctionParameterDefinition, FunctionType, StructPropertyDefinition, StructType, Type};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -183,26 +183,26 @@ impl TypeChecker {
             }
             Node::BinaryExpression(_lhs, operator, _rhs) => {
                 match operator {
-                    PunctuatorKind::Plus => Ok(Type::Number),
-                    PunctuatorKind::Minus => Ok(Type::Number),
-                    PunctuatorKind::Multiply => Ok(Type::Number),
-                    PunctuatorKind::Divide => Ok(Type::Number),
-                    PunctuatorKind::LogicalAnd => Ok(Type::Bool),
-                    PunctuatorKind::LogicalOr => Ok(Type::Bool),
-                    PunctuatorKind::Equal => Ok(Type::Bool),
-                    PunctuatorKind::NotEqual => Ok(Type::Bool),
-                    PunctuatorKind::LessThan => Ok(Type::Bool),
-                    PunctuatorKind::LessThanOrEqual => Ok(Type::Bool),
-                    PunctuatorKind::GreaterThan => Ok(Type::Bool),
-                    PunctuatorKind::GreaterThanOrEqual => Ok(Type::Bool),
+                    PunctuationKind::Plus => Ok(Type::Number),
+                    PunctuationKind::Minus => Ok(Type::Number),
+                    PunctuationKind::Asterisk => Ok(Type::Number),
+                    PunctuationKind::Slash => Ok(Type::Number),
+                    PunctuationKind::AndAnd => Ok(Type::Bool),
+                    PunctuationKind::VerticalLineVerticalLine => Ok(Type::Bool),
+                    PunctuationKind::EqualEqual => Ok(Type::Bool),
+                    PunctuationKind::ExclamationEqual => Ok(Type::Bool),
+                    PunctuationKind::LeftBracket => Ok(Type::Bool),
+                    PunctuationKind::LeftBracketEqual => Ok(Type::Bool),
+                    PunctuationKind::RightBracket => Ok(Type::Bool),
+                    PunctuationKind::RightBracketEqual => Ok(Type::Bool),
                     _ => Err(format!("Unexpected operator: {:?}", operator)),
                 }
             }
             Node::UnaryExpression(operator, _operand) => {
                 match operator {
-                    PunctuatorKind::Plus => Ok(Type::Number),
-                    PunctuatorKind::Minus => Ok(Type::Number),
-                    PunctuatorKind::LogicalNot => Ok(Type::Bool),
+                    PunctuationKind::Plus => Ok(Type::Number),
+                    PunctuationKind::Minus => Ok(Type::Number),
+                    PunctuationKind::Exclamation => Ok(Type::Bool),
                     _ => Err(format!("Unexpected operator: {:?}", operator)),
                 }
             }
@@ -253,7 +253,7 @@ impl TypeChecker {
     pub fn check(&mut self, input: &str) -> Result<(), String> {
         match parse(input) {
             Ok(ast) => self.check_node(&ast),
-            Err(message) => Err(message),
+            Err(error) => Err(error.get_message()),
         }
     }
 
@@ -440,20 +440,20 @@ impl TypeChecker {
                 let rhs_type = self.eval_node_type(rhs)?;
 
                 match operator {
-                    PunctuatorKind::Equal |
-                    PunctuatorKind::NotEqual => {
+                    PunctuationKind::EqualEqual |
+                    PunctuationKind::ExclamationEqual => {
                         if !rhs_type.is_assignable(&lhs_type) {
                             return Err(format!("TypeError: Expected type {:?}, but actual type is {:?}", lhs_type, rhs_type));
                         }
                     }
-                    PunctuatorKind::Plus |
-                    PunctuatorKind::Minus |
-                    PunctuatorKind::Multiply |
-                    PunctuatorKind::Divide |
-                    PunctuatorKind::LessThan |
-                    PunctuatorKind::LessThanOrEqual |
-                    PunctuatorKind::GreaterThan |
-                    PunctuatorKind::GreaterThanOrEqual => {
+                    PunctuationKind::Plus |
+                    PunctuationKind::Minus |
+                    PunctuationKind::Asterisk |
+                    PunctuationKind::Slash |
+                    PunctuationKind::LeftBracket |
+                    PunctuationKind::LeftBracketEqual |
+                    PunctuationKind::RightBracket |
+                    PunctuationKind::RightBracketEqual => {
                         if !lhs_type.is_assignable(&Type::Number) {
                             return Err(format!("TypeError: Expected type {:?}, but actual type is {:?}", Type::Number, lhs_type));
                         }
@@ -461,8 +461,8 @@ impl TypeChecker {
                             return Err(format!("TypeError: Expected type {:?}, but actual type is {:?}", Type::Number, rhs_type));
                         }
                     }
-                    PunctuatorKind::LogicalAnd |
-                    PunctuatorKind::LogicalOr => {
+                    PunctuationKind::AndAnd |
+                    PunctuationKind::VerticalLineVerticalLine => {
                         if !lhs_type.is_assignable(&Type::Bool) {
                             return Err(format!("TypeError: Expected type {:?}, but actual type is {:?}", Type::Bool, lhs_type));
                         }
@@ -481,13 +481,13 @@ impl TypeChecker {
                 let operand_type = self.eval_node_type(operand)?;
 
                 match operator {
-                    PunctuatorKind::Plus |
-                    PunctuatorKind::Minus => {
+                    PunctuationKind::Plus |
+                    PunctuationKind::Minus => {
                         if !operand_type.is_assignable(&Type::Number) {
                             return Err(format!("TypeError: Expected type {:?}, but actual type is {:?}", Type::Number, operand_type));
                         }
                     }
-                    PunctuatorKind::LogicalNot => {
+                    PunctuationKind::Exclamation => {
                         if !operand_type.is_assignable(&Type::Bool) {
                             return Err(format!("TypeError: Expected type {:?}, but actual type is {:?}", Type::Bool, operand_type));
                         }

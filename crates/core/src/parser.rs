@@ -1,20 +1,21 @@
+use crate::error::Error;
 use crate::lexer::scan;
 use crate::node::{FunctionNode, FunctionParameterDeclaration, Node, StructPropertyDeclaration, StructPropertyInitializer, TypeExpression};
-use crate::punctuator_kind::PunctuatorKind;
-use crate::token::Token;
-use crate::token_iter::TokenIter;
+use crate::punctuation_kind::PunctuationKind;
+use crate::token::TokenKind;
+use crate::token_iterator::TokenIterator;
 
-pub fn parse(input: &str) -> Result<Node, String> {
-    parse_program(&mut TokenIter::new(&scan(input)?))
+pub fn parse(input: &str) -> Result<Node, Error> {
+    parse_program(&mut TokenIterator::new(&scan(input)))
 }
 
-pub fn parse_program(tokens: &mut TokenIter) -> Result<Node, String> {
+pub fn parse_program(tokens: &mut TokenIterator) -> Result<Node, Error> {
     let mut nodes = Vec::new();
 
-    while !tokens.is_empty() {
+    while tokens.peek()?.is_some() {
         match parse_statement(tokens)? {
             Some(node) => nodes.push(node),
-            None => return Err("Expected statement".to_string()),
+            None => return Err(Error::unexpected_token(tokens.get_position().clone(), "statement")),
         }
     }
 
@@ -27,90 +28,79 @@ pub fn parse_program(tokens: &mut TokenIter) -> Result<Node, String> {
 
 // Statement
 
-fn parse_statement(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
-    let current = tokens.current;
-
+fn parse_statement(tokens: &mut TokenIterator) -> Result<Option<Node>, Error> {
     // Can be recovered by if-expression
-    if let Ok(Some(node)) = parse_if_statement(tokens) {
+    if let Ok(Some(node)) = tokens.try_or_rollback(parse_if_statement) {
         return Ok(Some(node));
     }
-    tokens.set_current(current);
 
-    if let Some(node) = parse_block_statement(tokens)? {
+    if let Some(node) = tokens.try_or_rollback(parse_block_statement)? {
         return Ok(Some(node));
     }
-    tokens.set_current(current);
 
-    if let Some(node) = parse_return_statement(tokens)? {
+    if let Some(node) = tokens.try_or_rollback(parse_return_statement)? {
         return Ok(Some(node));
     }
-    tokens.set_current(current);
 
-    if let Some(node) = parse_break_statement(tokens)? {
+    if let Some(node) = tokens.try_or_rollback(parse_break_statement)? {
         return Ok(Some(node));
     }
-    tokens.set_current(current);
 
-    if let Some(node) = parse_for_statement(tokens)? {
+    if let Some(node) = tokens.try_or_rollback(parse_for_statement)? {
         return Ok(Some(node));
     }
-    tokens.set_current(current);
 
-    if let Some(node) = parse_variable_declaration(tokens)? {
+    if let Some(node) = tokens.try_or_rollback(parse_variable_declaration)? {
         return Ok(Some(node));
     }
-    tokens.set_current(current);
 
-    if let Some(node) = parse_function_declaration(tokens)? {
+    if let Some(node) = tokens.try_or_rollback(parse_function_declaration)? {
         return Ok(Some(node));
     }
-    tokens.set_current(current);
 
-    if let Some(node) = parse_struct_declaration(tokens)? {
+    if let Some(node) = tokens.try_or_rollback(parse_struct_declaration)? {
         return Ok(Some(node));
     }
-    tokens.set_current(current);
 
-    if let Some(node) = parse_expression_statement(tokens)? {
+    if let Some(node) = tokens.try_or_rollback(parse_expression_statement)? {
         return Ok(Some(node));
     }
-    tokens.set_current(current);
 
     Ok(None)
 }
 
-fn parse_if_statement(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
-    if !matches!(tokens.peek(), Some(Token::Identifier(ref name)) if name == "if") {
+fn parse_if_statement(tokens: &mut TokenIterator) -> Result<Option<Node>, Error> {
+    if !matches!(tokens.peek()?, Some(TokenKind::Identifier(ref name)) if name == "if") {
         return Ok(None);
     }
     tokens.next();
 
-    if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::LeftParen))) {
-        return Err("Expected '('".to_string());
+    if !matches!(tokens.peek()?, Some(TokenKind::Punctuation(PunctuationKind::LeftParen))) {
+        return Err(Error::unexpected_token(tokens.get_position().clone(), "\"(\""));
     }
     tokens.next();
 
     let condition = match parse_expression(tokens)? {
         Some(node) => node,
-        None => return Err("Expected expression".to_string()),
+        None => return Err(Error::unexpected_token(tokens.get_position().clone(), "expression"))
     };
 
-    if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::RightParen))) {
-        return Err("Expected ')'".to_string());
+    if !matches!(tokens.peek()?, Some(TokenKind::Punctuation(PunctuationKind::RightParen))) {
+        return Err(Error::unexpected_token(tokens.get_position().clone(), "\")\""));
     }
     tokens.next();
 
     let true_branch = match parse_statement(tokens)? {
         Some(node) => node,
-        None => return Err("Expected statement".to_string()),
+        None => return Err(Error::unexpected_token(tokens.get_position().clone(), "statement"))
     };
 
-    let false_branch = if matches!(tokens.peek(), Some(Token::Identifier(ref name)) if name == "else") {
+    let false_branch = if matches!(tokens.peek()?, Some(TokenKind::Identifier(ref name)) if name == "else") {
         tokens.next();
 
         match parse_statement(tokens)? {
             Some(node) => Some(node),
-            None => return Err("Expected statement".to_string()),
+            None => return Err(Error::unexpected_token(tokens.get_position().clone(), "statement")),
         }
     } else {
         None
@@ -119,11 +109,11 @@ fn parse_if_statement(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
     Ok(Some(Node::IfStatement(Box::new(condition), Box::new(true_branch), false_branch.map(Box::new))))
 }
 
-fn parse_block_statement(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
+fn parse_block_statement(tokens: &mut TokenIterator) -> Result<Option<Node>, Error> {
     parse_block_expression(tokens)
 }
 
-fn parse_return_statement(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
+fn parse_return_statement(tokens: &mut TokenIterator) -> Result<Option<Node>, Error> {
     let return_expression = match parse_return_expression(tokens)? {
         Some(node) => node,
         None => return Ok(None),
@@ -134,7 +124,7 @@ fn parse_return_statement(tokens: &mut TokenIter) -> Result<Option<Node>, String
     Ok(Some(return_expression))
 }
 
-fn parse_break_statement(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
+fn parse_break_statement(tokens: &mut TokenIterator) -> Result<Option<Node>, Error> {
     let break_expression = match parse_break_expression(tokens)? {
         Some(node) => node,
         None => return Ok(None),
@@ -145,80 +135,80 @@ fn parse_break_statement(tokens: &mut TokenIter) -> Result<Option<Node>, String>
     Ok(Some(break_expression))
 }
 
-fn parse_for_statement(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
-    if !matches!(tokens.peek(), Some(Token::Identifier(ref name)) if name == "for") {
+fn parse_for_statement(tokens: &mut TokenIterator) -> Result<Option<Node>, Error> {
+    if !matches!(tokens.peek()?, Some(TokenKind::Identifier(ref name)) if name == "for") {
         return Ok(None);
     }
     tokens.next();
 
-    if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::LeftParen))) {
-        return Err("Expected '('".to_string());
+    if !matches!(tokens.peek()?, Some(TokenKind::Punctuation(PunctuationKind::LeftParen))) {
+        return Err(Error::unexpected_token(tokens.get_position().clone(), "\"(\""));
     }
     tokens.next();
 
-    let identifier = match tokens.peek() {
-        Some(Token::Identifier(identifier)) => identifier.clone(),
-        _ => return Err("Expected identifier".to_string()),
+    let identifier = match tokens.peek()? {
+        Some(TokenKind::Identifier(identifier)) => identifier.clone(),
+        _ => return Err(Error::unexpected_token(tokens.get_position().clone(), "identifier")),
     };
     tokens.next();
 
-    if !matches!(tokens.peek(), Some(Token::Identifier(ref name)) if name == "in") {
-        return Err("Expected 'in'".to_string());
+    if !matches!(tokens.peek()?, Some(TokenKind::Identifier(ref name)) if name == "in") {
+        return Err(Error::unexpected_token(tokens.get_position().clone(), "\"in\""));
     }
     tokens.next();
 
     let iterator = match parse_expression(tokens)? {
         Some(node) => node,
-        None => return Err("Expected expression".to_string()),
+        None => return Err(Error::unexpected_token(tokens.get_position().clone(), "expression")),
     };
 
-    if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::RightParen))) {
-        return Err("Expected ')'".to_string());
+    if !matches!(tokens.peek()?, Some(TokenKind::Punctuation(PunctuationKind::RightParen))) {
+        return Err(Error::unexpected_token(tokens.get_position().clone(), "\")\""));
     }
     tokens.next();
 
     let body = match parse_statement(tokens)? {
         Some(node) => node,
-        None => return Err("Expected statement".to_string()),
+        None => return Err(Error::unexpected_token(tokens.get_position().clone(), "statement")),
     };
 
     Ok(Some(Node::ForStatement(identifier, Box::new(iterator), Box::new(body))))
 }
 
-fn parse_variable_declaration(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
-    if !matches!(tokens.peek(), Some(Token::Identifier(ref name)) if name == "let") {
+fn parse_variable_declaration(tokens: &mut TokenIterator) -> Result<Option<Node>, Error> {
+    if !matches!(tokens.peek()?, Some(TokenKind::Identifier(ref name)) if name == "let") {
         return Ok(None);
     }
     tokens.next();
 
-    let identifier = match tokens.peek() {
-        Some(Token::Identifier(identifier)) => {
-            if is_reserved_words(identifier) {
-                return Err(format!("SyntaxError: \"{}\" is a reserved word", identifier));
+    let identifier = match tokens.peek()? {
+        Some(TokenKind::Identifier(identifier)) => {
+            if is_reserved_words(&identifier) {
+                return Err(Error::reserved_word(tokens.get_position().clone(), identifier));
             }
             identifier.clone()
         }
-        _ => return Err("Expected identifier".to_string()),
+        _ => return Err(Error::unexpected_token(tokens.get_position().clone(), "identifier")),
     };
     tokens.next();
 
-    let type_ = if matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::Colon))) {
+    let type_ = if matches!(tokens.peek()?, Some(TokenKind::Punctuation(PunctuationKind::Colon))) {
         tokens.next();
 
         match parse_type_expression(tokens)? {
             Some(node) => Some(node),
-            None => return Err("Expected type annotation".to_string()),
+            None => return Err(Error::unexpected_token(tokens.get_position().clone(), "type annotation")),
         }
     } else {
         None
     };
 
-    let value = if matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::Assign))) {
+    let value = if matches!(tokens.peek()?, Some(TokenKind::Punctuation(PunctuationKind::Equal))) {
         tokens.next();
 
         match parse_expression(tokens)? {
             Some(node) => Some(node),
-            None => return Err("Expected expression".to_string()),
+            None => return Err(Error::unexpected_token(tokens.get_position().clone(), "expression")),
         }
     } else {
         None
@@ -229,51 +219,51 @@ fn parse_variable_declaration(tokens: &mut TokenIter) -> Result<Option<Node>, St
     Ok(Some(Node::VariableDeclaration(identifier, type_, value.map(Box::new))))
 }
 
-fn parse_function_declaration(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
+fn parse_function_declaration(tokens: &mut TokenIterator) -> Result<Option<Node>, Error> {
     parse_function(tokens, true)
 }
 
-fn parse_struct_declaration(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
-    if !matches!(tokens.peek(), Some(Token::Identifier(ref name)) if name == "struct") {
+fn parse_struct_declaration(tokens: &mut TokenIterator) -> Result<Option<Node>, Error> {
+    if !matches!(tokens.peek()?, Some(TokenKind::Identifier(ref name)) if name == "struct") {
         return Ok(None);
     }
     tokens.next();
 
-    let name = match tokens.peek() {
-        Some(Token::Identifier(name)) => {
-            if is_reserved_words(name) {
-                return Err(format!("SyntaxError: \"{}\" is a reserved word", name));
+    let name = match tokens.peek()? {
+        Some(TokenKind::Identifier(name)) => {
+            if is_reserved_words(&name) {
+                return Err(Error::reserved_word(tokens.get_position().clone(), name));
             }
 
             let name = name.clone();
             tokens.next();
             name
         }
-        _ => return Err("Expected identifier".to_string()),
+        _ => return Err(Error::unexpected_token(tokens.get_position().clone(), "identifier")),
     };
 
-    if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::LeftBrace))) {
-        return Err("Expected '{'".to_string());
+    if !matches!(tokens.peek()?, Some(TokenKind::Punctuation(PunctuationKind::LeftBrace))) {
+        return Err(Error::unexpected_token(tokens.get_position().clone(), "\"{\""));
     }
     tokens.next();
 
     let mut properties = Vec::new();
-    while let Some(Token::Identifier(name)) = tokens.peek() {
-        if is_reserved_words(name) {
-            return Err(format!("SyntaxError: \"{}\" is a reserved word", name));
+    while let Some(TokenKind::Identifier(name)) = tokens.peek()? {
+        if is_reserved_words(&name) {
+            return Err(Error::reserved_word(tokens.get_position().clone(), name));
         }
 
         let name = name.clone();
         tokens.next();
 
-        if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::Colon))) {
-            return Err("Expected ':'".to_string());
+        if !matches!(tokens.peek()?, Some(TokenKind::Punctuation(PunctuationKind::Colon))) {
+            return Err(Error::unexpected_token(tokens.get_position().clone(), "\":\""));
         }
         tokens.next();
 
         let type_ = match parse_type_expression(tokens)? {
             Some(node) => node,
-            None => return Err("Expected type annotation".to_string()),
+            None => return Err(Error::unexpected_token(tokens.get_position().clone(), "type annotation")),
         };
 
         properties.push(StructPropertyDeclaration {
@@ -281,21 +271,21 @@ fn parse_struct_declaration(tokens: &mut TokenIter) -> Result<Option<Node>, Stri
             type_,
         });
 
-        if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::Comma))) {
+        if !matches!(tokens.peek()?, Some(TokenKind::Punctuation(PunctuationKind::Comma))) {
             break;
         }
         tokens.next();
     }
 
-    if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::RightBrace))) {
-        return Err("Expected '}'".to_string());
+    if !matches!(tokens.peek()?, Some(TokenKind::Punctuation(PunctuationKind::RightBrace))) {
+        return Err(Error::unexpected_token(tokens.get_position().clone(), "\"}\""));
     }
     tokens.next();
 
     Ok(Some(Node::StructDeclaration(name, properties)))
 }
 
-fn parse_expression_statement(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
+fn parse_expression_statement(tokens: &mut TokenIterator) -> Result<Option<Node>, Error> {
     let expression = match parse_expression(tokens)? {
         Some(node) => node,
         None => return Ok(None),
@@ -306,103 +296,108 @@ fn parse_expression_statement(tokens: &mut TokenIter) -> Result<Option<Node>, St
     Ok(Some(expression))
 }
 
-fn parse_statement_end(tokens: &mut TokenIter) -> Result<(), String> {
-    match tokens.peek_including_newline() {
-        None | Some(Token::Punctuator(PunctuatorKind::SemiColon | PunctuatorKind::NewLine)) => {
+fn parse_statement_end(tokens: &mut TokenIterator) -> Result<(), Error> {
+    match tokens.peek_including_newline()? {
+        None | Some(TokenKind::Punctuation(PunctuationKind::SemiColon) | TokenKind::LineTerminator) => {
             tokens.next_including_newline();
             Ok(())
         }
-        Some(Token::Punctuator(PunctuatorKind::RightBrace)) => Ok(()),
-        _ => Err("Expected ';'".to_string()),
+        Some(TokenKind::Punctuation(PunctuationKind::RightBrace)) => Ok(()),
+        _ => Err(Error::unexpected_token(tokens.get_position().clone(), "\";\"")),
     }
 }
 
 // Expression
 
-fn parse_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
-    let current = tokens.current;
-    let mut best_current = current;
+fn parse_expression(tokens: &mut TokenIterator) -> Result<Option<Node>, Error> {
+    let mut best_current = tokens.get_current();
     let mut best_result = None;
 
-    if let Some(node) = parse_assignment_expression(tokens)? {
-        if tokens.current >= best_current {
-            best_current = tokens.current;
-            best_result = Some(node);
+    tokens.try_and_rollback(|tokens| {
+        if let Some(node) = parse_assignment_expression(tokens)? {
+            if tokens.get_current() >= best_current {
+                best_current = tokens.get_current();
+                best_result = Some(node);
+            }
         }
-    }
-    tokens.set_current(current);
+        Ok(())
+    })?;
 
-    if let Some(node) = parse_range_expression(tokens)? {
-        if tokens.current >= best_current {
-            best_current = tokens.current;
-            best_result = Some(node);
+    tokens.try_and_rollback(|tokens| {
+        if let Some(node) = parse_range_expression(tokens)? {
+            if tokens.get_current() >= best_current {
+                best_current = tokens.get_current();
+                best_result = Some(node);
+            }
         }
-    }
-    tokens.set_current(current);
+        Ok(())
+    })?;
 
-    if let Some(node) = parse_logical_or_expression(tokens)? {
-        if tokens.current >= best_current {
-            best_current = tokens.current;
-            best_result = Some(node);
+    tokens.try_and_rollback(|tokens| {
+        if let Some(node) = parse_logical_or_expression(tokens)? {
+            if tokens.get_current() >= best_current {
+                best_current = tokens.get_current();
+                best_result = Some(node);
+            }
         }
-    }
-    tokens.set_current(current);
+        Ok(())
+    })?;
 
     tokens.set_current(best_current);
     Ok(best_result)
 }
 
-fn parse_assignment_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
+fn parse_assignment_expression(tokens: &mut TokenIterator) -> Result<Option<Node>, Error> {
     let lhs = match parse_left_hand_side_expression(tokens)? {
         Some(node) => node,
         None => return Ok(None)
     };
 
-    if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::Assign))) {
+    if !matches!(tokens.peek()?, Some(TokenKind::Punctuation(PunctuationKind::Equal))) {
         return Ok(None);
     }
     tokens.next();
 
     let rhs = match parse_expression(tokens)? {
         Some(node) => node,
-        None => return Err("Expected expression".to_string()),
+        None => return Err(Error::unexpected_token(tokens.get_position().clone(), "expression")),
     };
 
     Ok(Some(Node::AssignmentExpression(Box::new(lhs), Box::new(rhs))))
 }
 
-fn parse_range_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
+fn parse_range_expression(tokens: &mut TokenIterator) -> Result<Option<Node>, Error> {
     let start = match parse_logical_or_expression(tokens)? {
         Some(node) => node,
         None => return Ok(None),
     };
 
-    if !matches!(tokens.peek(), Some(Token::Identifier(ref name)) if name == "to") {
+    if !matches!(tokens.peek()?, Some(TokenKind::Identifier(ref name)) if name == "to") {
         return Ok(None);
     }
     tokens.next();
 
     let end = match parse_logical_or_expression(tokens)? {
         Some(node) => node,
-        None => return Err("Expected expression".to_string()),
+        None => return Err(Error::unexpected_token(tokens.get_position().clone(), "expression")),
     };
 
     Ok(Some(Node::RangeIterator(Box::new(start), Box::new(end))))
 }
 
-fn parse_logical_or_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
+fn parse_logical_or_expression(tokens: &mut TokenIterator) -> Result<Option<Node>, Error> {
     let mut lhs = match parse_logical_and_expression(tokens)? {
         Some(node) => node,
         None => return Ok(None),
     };
 
-    while let Some(Token::Punctuator(operator @ PunctuatorKind::LogicalOr)) = tokens.peek() {
+    while let Some(TokenKind::Punctuation(operator @ PunctuationKind::VerticalLineVerticalLine)) = tokens.peek()? {
         let operator = operator.clone();
         tokens.next();
 
         let rhs = match parse_logical_and_expression(tokens)? {
             Some(node) => node,
-            None => return Err("Expected expression".to_string()),
+            None => return Err(Error::unexpected_token(tokens.get_position().clone(), "expression")),
         };
 
         lhs = Node::BinaryExpression(Box::new(lhs), operator, Box::new(rhs));
@@ -411,19 +406,19 @@ fn parse_logical_or_expression(tokens: &mut TokenIter) -> Result<Option<Node>, S
     Ok(Some(lhs))
 }
 
-fn parse_logical_and_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
+fn parse_logical_and_expression(tokens: &mut TokenIterator) -> Result<Option<Node>, Error> {
     let mut lhs = match parse_equality_expression(tokens)? {
         Some(node) => node,
         None => return Ok(None),
     };
 
-    while let Some(Token::Punctuator(operator @ PunctuatorKind::LogicalAnd)) = tokens.peek() {
+    while let Some(TokenKind::Punctuation(operator @ PunctuationKind::AndAnd)) = tokens.peek()? {
         let operator = operator.clone();
         tokens.next();
 
         let rhs = match parse_equality_expression(tokens)? {
             Some(node) => node,
-            None => return Err("Expected expression".to_string()),
+            None => return Err(Error::unexpected_token(tokens.get_position().clone(), "expression")),
         };
 
         lhs = Node::BinaryExpression(Box::new(lhs), operator, Box::new(rhs));
@@ -432,22 +427,22 @@ fn parse_logical_and_expression(tokens: &mut TokenIter) -> Result<Option<Node>, 
     Ok(Some(lhs))
 }
 
-fn parse_equality_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
+fn parse_equality_expression(tokens: &mut TokenIterator) -> Result<Option<Node>, Error> {
     let mut lhs = match parse_relational_expression(tokens)? {
         Some(node) => node,
         None => return Ok(None),
     };
 
-    while let Some(Token::Punctuator(operator @ (
-    PunctuatorKind::Equal |
-    PunctuatorKind::NotEqual
-    ))) = tokens.peek() {
+    while let Some(TokenKind::Punctuation(operator @ (
+    PunctuationKind::EqualEqual |
+    PunctuationKind::ExclamationEqual
+    ))) = tokens.peek()? {
         let operator = operator.clone();
         tokens.next();
 
         let rhs = match parse_relational_expression(tokens)? {
             Some(node) => node,
-            None => return Err("Expected expression".to_string()),
+            None => return Err(Error::unexpected_token(tokens.get_position().clone(), "expression")),
         };
 
         lhs = Node::BinaryExpression(Box::new(lhs), operator, Box::new(rhs));
@@ -456,24 +451,24 @@ fn parse_equality_expression(tokens: &mut TokenIter) -> Result<Option<Node>, Str
     Ok(Some(lhs))
 }
 
-fn parse_relational_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
+fn parse_relational_expression(tokens: &mut TokenIterator) -> Result<Option<Node>, Error> {
     let mut lhs = match parse_additive_expression(tokens)? {
         Some(node) => node,
         None => return Ok(None),
     };
 
-    while let Some(Token::Punctuator(operator @ (
-    PunctuatorKind::LessThan |
-    PunctuatorKind::LessThanOrEqual |
-    PunctuatorKind::GreaterThan |
-    PunctuatorKind::GreaterThanOrEqual
-    ))) = tokens.peek() {
+    while let Some(TokenKind::Punctuation(operator @ (
+    PunctuationKind::LeftBracket |
+    PunctuationKind::LeftBracketEqual |
+    PunctuationKind::RightBracket |
+    PunctuationKind::RightBracketEqual
+    ))) = tokens.peek()? {
         let operator = operator.clone();
         tokens.next();
 
         let rhs = match parse_additive_expression(tokens)? {
             Some(node) => node,
-            None => return Err("Expected expression".to_string()),
+            None => return Err(Error::unexpected_token(tokens.get_position().clone(), "expression")),
         };
 
         lhs = Node::BinaryExpression(Box::new(lhs), operator, Box::new(rhs));
@@ -482,22 +477,22 @@ fn parse_relational_expression(tokens: &mut TokenIter) -> Result<Option<Node>, S
     Ok(Some(lhs))
 }
 
-fn parse_additive_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
+fn parse_additive_expression(tokens: &mut TokenIterator) -> Result<Option<Node>, Error> {
     let mut lhs = match parse_multiplicative_expression(tokens)? {
         Some(node) => node,
         None => return Ok(None),
     };
 
-    while let Some(Token::Punctuator(operator @ (
-    PunctuatorKind::Plus |
-    PunctuatorKind::Minus
-    ))) = tokens.peek() {
+    while let Some(TokenKind::Punctuation(operator @ (
+    PunctuationKind::Plus |
+    PunctuationKind::Minus
+    ))) = tokens.peek()? {
         let operator = operator.clone();
         tokens.next();
 
         let rhs = match parse_multiplicative_expression(tokens)? {
             Some(node) => node,
-            None => return Err("Expected expression".to_string()),
+            None => return Err(Error::unexpected_token(tokens.get_position().clone(), "expression")),
         };
 
         lhs = Node::BinaryExpression(Box::new(lhs), operator, Box::new(rhs));
@@ -506,22 +501,22 @@ fn parse_additive_expression(tokens: &mut TokenIter) -> Result<Option<Node>, Str
     Ok(Some(lhs))
 }
 
-fn parse_multiplicative_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
+fn parse_multiplicative_expression(tokens: &mut TokenIterator) -> Result<Option<Node>, Error> {
     let mut lhs = match parse_unary_expression(tokens)? {
         Some(node) => node,
         None => return Ok(None),
     };
 
-    while let Some(Token::Punctuator(operator @ (
-    PunctuatorKind::Multiply |
-    PunctuatorKind::Divide
-    ))) = tokens.peek() {
+    while let Some(TokenKind::Punctuation(operator @ (
+    PunctuationKind::Asterisk |
+    PunctuationKind::Slash
+    ))) = tokens.peek()? {
         let operator = operator.clone();
         tokens.next();
 
         let rhs = match parse_unary_expression(tokens)? {
             Some(node) => node,
-            None => return Err("Expected expression".to_string()),
+            None => return Err(Error::unexpected_token(tokens.get_position().clone(), "expression")),
         };
 
         lhs = Node::BinaryExpression(Box::new(lhs), operator, Box::new(rhs));
@@ -530,12 +525,12 @@ fn parse_multiplicative_expression(tokens: &mut TokenIter) -> Result<Option<Node
     Ok(Some(lhs))
 }
 
-fn parse_unary_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
-    let operator = match tokens.peek() {
-        Some(Token::Punctuator(operator @ (
-        PunctuatorKind::Plus |
-        PunctuatorKind::Minus |
-        PunctuatorKind::LogicalNot
+fn parse_unary_expression(tokens: &mut TokenIterator) -> Result<Option<Node>, Error> {
+    let operator = match tokens.peek()? {
+        Some(TokenKind::Punctuation(operator @ (
+        PunctuationKind::Plus |
+        PunctuationKind::Minus |
+        PunctuationKind::Exclamation
         ))) => {
             let operator = operator.clone();
             tokens.next();
@@ -546,95 +541,88 @@ fn parse_unary_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String
 
     let operand = match parse_statement_expression(tokens)? {
         Some(node) => node,
-        None => return Err("Expected expression".to_string()),
+        None => return Err(Error::unexpected_token(tokens.get_position().clone(), "expression")),
     };
 
     Ok(Some(Node::UnaryExpression(operator, Box::new(operand))))
 }
 
-fn parse_statement_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
-    let current = tokens.current;
-
-    if let Some(node) = parse_function_expression(tokens)? {
+fn parse_statement_expression(tokens: &mut TokenIterator) -> Result<Option<Node>, Error> {
+    if let Some(node) = tokens.try_or_rollback(parse_function_expression)? {
         return Ok(Some(node));
     }
-    tokens.set_current(current);
 
-    if let Some(node) = parse_if_expression(tokens)? {
+    if let Some(node) = tokens.try_or_rollback(parse_if_expression)? {
         return Ok(Some(node));
     }
-    tokens.set_current(current);
 
-    if let Some(node) = parse_return_expression(tokens)? {
+    if let Some(node) = tokens.try_or_rollback(parse_return_expression)? {
         return Ok(Some(node));
     }
-    tokens.set_current(current);
 
-    if let Some(node) = parse_break_expression(tokens)? {
+    if let Some(node) = tokens.try_or_rollback(parse_break_expression)? {
         return Ok(Some(node));
     }
-    tokens.set_current(current);
 
-    if let Some(node) = parse_block_expression(tokens)? {
+    if let Some(node) = tokens.try_or_rollback(parse_block_expression)? {
         return Ok(Some(node));
     }
-    tokens.set_current(current);
 
     parse_call_expression(tokens)
 }
 
-fn parse_function_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
+fn parse_function_expression(tokens: &mut TokenIterator) -> Result<Option<Node>, Error> {
     parse_function(tokens, false)
 }
 
-fn parse_if_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
-    if !matches!(tokens.peek(), Some(Token::Identifier(ref name)) if name == "if") {
+fn parse_if_expression(tokens: &mut TokenIterator) -> Result<Option<Node>, Error> {
+    if !matches!(tokens.peek()?, Some(TokenKind::Identifier(ref name)) if name == "if") {
         return Ok(None);
     }
     tokens.next();
 
-    if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::LeftParen))) {
-        return Err("Expected '('".to_string());
+    if !matches!(tokens.peek()?, Some(TokenKind::Punctuation(PunctuationKind::LeftParen))) {
+        return Err(Error::unexpected_token(tokens.get_position().clone(), "\"(\""));
     }
     tokens.next();
 
     let condition = match parse_expression(tokens)? {
         Some(node) => node,
-        None => return Err("Expected expression".to_string()),
+        None => return Err(Error::unexpected_token(tokens.get_position().clone(), "expression")),
     };
 
-    if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::RightParen))) {
-        return Err("Expected ')'".to_string());
+    if !matches!(tokens.peek()?, Some(TokenKind::Punctuation(PunctuationKind::RightParen))) {
+        return Err(Error::unexpected_token(tokens.get_position().clone(), "\")\""));
     }
     tokens.next();
 
     let true_branch = match parse_expression(tokens)? {
         Some(node) => node,
-        None => return Err("Expected expression".to_string()),
+        None => return Err(Error::unexpected_token(tokens.get_position().clone(), "expression")),
     };
 
-    if !matches!(tokens.peek(), Some(Token::Identifier(ref name)) if name == "else") {
-        return Err("Expected 'else'".to_string());
+    if !matches!(tokens.peek()?, Some(TokenKind::Identifier(ref name)) if name == "else") {
+        return Err(Error::unexpected_token(tokens.get_position().clone(), "\"else\""));
     }
     tokens.next();
 
     let false_branch = match parse_expression(tokens)? {
         Some(node) => node,
-        None => return Err("Expected expression".to_string()),
+        None => return Err(Error::unexpected_token(tokens.get_position().clone(), "expression")),
     };
 
     Ok(Some(Node::IfExpression(Box::new(condition), Box::new(true_branch), Box::new(false_branch))))
 }
 
-fn parse_block_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
-    if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::LeftBrace))) {
+fn parse_block_expression(tokens: &mut TokenIterator) -> Result<Option<Node>, Error> {
+    if !matches!(tokens.peek()?, Some(TokenKind::Punctuation(PunctuationKind::LeftBrace))) {
         return Ok(None);
     }
     tokens.next();
 
     let mut statements = Vec::new();
 
-    while !tokens.is_empty() {
+    while tokens.peek()?.is_some() {
         match parse_statement(tokens)? {
             Some(statement) => statements.push(statement),
             None => break
@@ -644,7 +632,7 @@ fn parse_block_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String
         return Ok(None);
     }
 
-    if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::RightBrace))) {
+    if !matches!(tokens.peek()?, Some(TokenKind::Punctuation(PunctuationKind::RightBrace))) {
         return Ok(None);
     }
     tokens.next();
@@ -652,8 +640,8 @@ fn parse_block_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String
     Ok(Some(Node::BlockExpression(statements)))
 }
 
-fn parse_return_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
-    if !matches!(tokens.peek(), Some(Token::Identifier(ref name)) if name == "return") {
+fn parse_return_expression(tokens: &mut TokenIterator) -> Result<Option<Node>, Error> {
+    if !matches!(tokens.peek()?, Some(TokenKind::Identifier(ref name)) if name == "return") {
         return Ok(None);
     }
     tokens.next();
@@ -663,8 +651,8 @@ fn parse_return_expression(tokens: &mut TokenIter) -> Result<Option<Node>, Strin
     Ok(Some(Node::ReturnExpression(expression.map(Box::new))))
 }
 
-fn parse_break_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
-    if !matches!(tokens.peek(), Some(Token::Identifier(ref name)) if name == "break") {
+fn parse_break_expression(tokens: &mut TokenIterator) -> Result<Option<Node>, Error> {
+    if !matches!(tokens.peek()?, Some(TokenKind::Identifier(ref name)) if name == "break") {
         return Ok(None);
     }
     tokens.next();
@@ -672,25 +660,25 @@ fn parse_break_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String
     Ok(Some(Node::BreakExpression))
 }
 
-fn parse_call_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
+fn parse_call_expression(tokens: &mut TokenIterator) -> Result<Option<Node>, Error> {
     let callee = match parse_member_expression(tokens)? {
         Some(node) => node,
         None => return Ok(None),
     };
 
-    if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::LeftParen))) {
+    if !matches!(tokens.peek()?, Some(TokenKind::Punctuation(PunctuationKind::LeftParen))) {
         return Ok(Some(callee));
     }
     tokens.next();
 
     let mut arguments = Vec::new();
 
-    while !tokens.is_empty() {
+    while tokens.peek()?.is_some() {
         match parse_expression(tokens)? {
             Some(expression) => {
                 arguments.push(expression);
 
-                if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::Comma))) {
+                if !matches!(tokens.peek()?, Some(TokenKind::Punctuation(PunctuationKind::Comma))) {
                     break;
                 }
                 tokens.next();
@@ -699,33 +687,33 @@ fn parse_call_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String>
         }
     }
 
-    if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::RightParen))) {
-        return Err("Expected ')'".to_string());
+    if !matches!(tokens.peek()?, Some(TokenKind::Punctuation(PunctuationKind::RightParen))) {
+        return Err(Error::unexpected_token(tokens.get_position().clone(), "\")\""));
     }
     tokens.next();
 
     Ok(Some(Node::CallExpression(Box::new(callee), arguments)))
 }
 
-fn parse_left_hand_side_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
+fn parse_left_hand_side_expression(tokens: &mut TokenIterator) -> Result<Option<Node>, Error> {
     parse_member_expression(tokens)
 }
 
-fn parse_member_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
+fn parse_member_expression(tokens: &mut TokenIterator) -> Result<Option<Node>, Error> {
     let mut lhs = match parse_primary_expression(tokens)? {
         Some(node) => node,
         None => return Ok(None),
     };
 
     loop {
-        if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::Dot))) {
+        if !matches!(tokens.peek()?, Some(TokenKind::Punctuation(PunctuationKind::Dot))) {
             break;
         }
         tokens.next();
 
         let rhs = match parse_primary_expression(tokens)? {
             Some(node) => node,
-            None => return Err("Expected primary expression".to_string()),
+            None => return Err(Error::unexpected_token(tokens.get_position().clone(), "primary expression")),
         };
 
         lhs = Node::MemberExpression(Box::new(lhs), Box::new(rhs));
@@ -734,28 +722,25 @@ fn parse_member_expression(tokens: &mut TokenIter) -> Result<Option<Node>, Strin
     Ok(Some(lhs))
 }
 
-fn parse_primary_expression(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
-    let current = tokens.current;
-
-    if let Ok(Some(node)) = parse_struct_literal(tokens) {
+fn parse_primary_expression(tokens: &mut TokenIterator) -> Result<Option<Node>, Error> {
+    if let Ok(Some(node)) = tokens.try_or_rollback(parse_struct_literal) {
         return Ok(Some(node));
     }
-    tokens.set_current(current);
 
-    match tokens.peek() {
-        Some(Token::Punctuator(PunctuatorKind::LeftParen)) => {
+    match tokens.peek()? {
+        Some(TokenKind::Punctuation(PunctuationKind::LeftParen)) => {
             tokens.next();
 
             let expression = parse_expression(tokens)?;
 
-            if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::RightParen))) {
-                return Err("Expected ')'".to_string());
+            if !matches!(tokens.peek()?, Some(TokenKind::Punctuation(PunctuationKind::RightParen))) {
+                return Err(Error::unexpected_token(tokens.get_position().clone(), "\")\""));
             }
             tokens.next();
 
             Ok(expression)
         }
-        Some(Token::Identifier(identifier)) => {
+        Some(TokenKind::Identifier(identifier)) => {
             let identifier = identifier.clone();
             tokens.next();
 
@@ -764,19 +749,15 @@ fn parse_primary_expression(tokens: &mut TokenIter) -> Result<Option<Node>, Stri
                 _ => Ok(Some(Node::Identifier(identifier)))
             }
         }
-        Some(Token::Number(value)) => {
-            let value = *value;
-
+        Some(TokenKind::Number(value)) => {
             tokens.next();
             Ok(Some(Node::Number(value)))
         }
-        Some(Token::Bool(value)) => {
-            let value = *value;
-
+        Some(TokenKind::Bool(value)) => {
             tokens.next();
             Ok(Some(Node::Bool(value)))
         }
-        Some(Token::String(value)) => {
+        Some(TokenKind::String(value)) => {
             let value = value.clone();
             tokens.next();
             Ok(Some(Node::String(value)))
@@ -785,131 +766,138 @@ fn parse_primary_expression(tokens: &mut TokenIter) -> Result<Option<Node>, Stri
     }
 }
 
-fn parse_struct_literal(tokens: &mut TokenIter) -> Result<Option<Node>, String> {
+fn parse_struct_literal(tokens: &mut TokenIterator) -> Result<Option<Node>, Error> {
     let type_ = match parse_type_expression(tokens)? {
         Some(node) => node,
         None => return Ok(None),
     };
 
-    if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::LeftBrace))) {
-        return Ok(None);
+    if !matches!(tokens.peek()?, Some(TokenKind::Punctuation(PunctuationKind::LeftBrace))) {
+        return Err(Error::unexpected_token(tokens.get_position().clone(), "\"{\""));
     }
     tokens.next();
 
     let mut definitions = Vec::new();
 
-    while !tokens.is_empty() {
+    while tokens.peek()?.is_some() {
         match parse_struct_property_initializer(tokens)? {
             Some(definition) => definitions.push(definition),
             None => break
         }
 
-        if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::Comma))) {
+        if !matches!(tokens.peek()?, Some(TokenKind::Punctuation(PunctuationKind::Comma))) {
             break;
         }
         tokens.next();
     }
 
-    if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::RightBrace))) {
-        return Err("Expected '}'".to_string());
+    if !matches!(tokens.peek()?, Some(TokenKind::Punctuation(PunctuationKind::RightBrace))) {
+        return Err(Error::unexpected_token(tokens.get_position().clone(), "\"}\""));
     }
     tokens.next();
 
     Ok(Some(Node::Struct(type_, definitions)))
 }
 
-fn parse_struct_property_initializer(tokens: &mut TokenIter) -> Result<Option<StructPropertyInitializer>, String> {
-    let name = match tokens.peek() {
-        Some(Token::Identifier(name)) => name.clone(),
+fn parse_struct_property_initializer(tokens: &mut TokenIterator) -> Result<Option<StructPropertyInitializer>, Error> {
+    let name = match tokens.peek()? {
+        Some(TokenKind::Identifier(name)) => name.clone(),
         _ => return Ok(None),
     };
     tokens.next();
 
-    if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::Colon))) {
+    if !matches!(tokens.peek()?, Some(TokenKind::Punctuation(PunctuationKind::Colon))) {
         return Ok(None);
     }
     tokens.next();
 
     let value = match parse_expression(tokens)? {
         Some(node) => node,
-        None => return Err("Expected expression".to_string()),
+        None => return Err(Error::unexpected_token(tokens.get_position().clone(), "expression")),
     };
 
     Ok(Some(StructPropertyInitializer { name, value: Box::new(value) }))
 }
 
-fn parse_function(tokens: &mut TokenIter, is_declaration: bool) -> Result<Option<Node>, String> {
-    if !matches!(tokens.peek(), Some(Token::Identifier(ref name)) if name == "function") {
+fn parse_function(tokens: &mut TokenIterator, is_declaration: bool) -> Result<Option<Node>, Error> {
+    if !matches!(tokens.peek()?, Some(TokenKind::Identifier(ref name)) if name == "function") {
         return Ok(None);
     }
     tokens.next();
 
-    let name = match tokens.peek() {
-        Some(Token::Identifier(name)) => {
-            if is_reserved_words(name) {
-                return Err(format!("SyntaxError: \"{}\" is a reserved word", name));
+    let name = match tokens.peek()? {
+        Some(TokenKind::Identifier(name)) => {
+            if is_reserved_words(&name) {
+                return Err(Error::reserved_word(tokens.get_position().clone(), name));
             }
 
             let name = name.clone();
             tokens.next();
             name
         }
-        _ => "(anonymous)".to_string(),
+        Some(TokenKind::Punctuation(PunctuationKind::LeftParen)) => "(anonymous)".to_string(),
+        _ => return Err(Error::unexpected_token(tokens.get_position().clone(), "identifier")),
     };
 
-    if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::LeftParen))) {
-        return Err("Expected '('".to_string());
+    if !matches!(tokens.peek()?, Some(TokenKind::Punctuation(PunctuationKind::LeftParen))) {
+        return Err(Error::unexpected_token(tokens.get_position().clone(), "\"(\""));
     }
     tokens.next();
 
     let mut parameters = Vec::new();
-    while let Some(Token::Identifier(identifier)) = tokens.peek() {
-        if is_reserved_words(identifier) {
-            return Err(format!("SyntaxError: \"{}\" is a reserved word", identifier));
+    loop {
+        match tokens.peek()? {
+            Some(TokenKind::Punctuation(PunctuationKind::RightParen)) => break,
+            Some(TokenKind::Identifier(identifier)) => {
+                if is_reserved_words(&identifier) {
+                    return Err(Error::reserved_word(tokens.get_position().clone(), identifier));
+                }
+
+                let identifier = identifier.clone();
+                tokens.next();
+
+                if !matches!(tokens.peek()?, Some(TokenKind::Punctuation(PunctuationKind::Colon))) {
+                    return Err(Error::unexpected_token(tokens.get_position().clone(), "\":\""));
+                }
+                tokens.next();
+
+                let type_ = match parse_type_expression(tokens)? {
+                    Some(node) => node,
+                    None => return Err(Error::unexpected_token(tokens.get_position().clone(), "type annotation")),
+                };
+
+                parameters.push(FunctionParameterDeclaration {
+                    name: identifier,
+                    type_,
+                });
+
+                if !matches!(tokens.peek()?, Some(TokenKind::Punctuation(PunctuationKind::Comma))) {
+                    break;
+                }
+                tokens.next();
+            }
+            _ => return Err(Error::unexpected_token(tokens.get_position().clone(), "identifier")),
         }
-
-        let identifier = identifier.clone();
-        tokens.next();
-
-        if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::Colon))) {
-            return Err("Expected ':'".to_string());
-        }
-        tokens.next();
-
-        let type_ = match parse_type_expression(tokens)? {
-            Some(node) => node,
-            None => return Err("Expected type annotation".to_string()),
-        };
-
-        parameters.push(FunctionParameterDeclaration {
-            name: identifier,
-            type_,
-        });
-
-        if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::Comma))) {
-            break;
-        }
-        tokens.next();
     }
 
-    if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::RightParen))) {
-        return Err("Expected ')'".to_string());
+    if !matches!(tokens.peek()?, Some(TokenKind::Punctuation(PunctuationKind::RightParen))) {
+        return Err(Error::unexpected_token(tokens.get_position().clone(), "\")\""));
     }
     tokens.next();
 
-    if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::Colon))) {
-        return Err("Expected ':'".to_string());
+    if !matches!(tokens.peek()?, Some(TokenKind::Punctuation(PunctuationKind::Colon))) {
+        return Err(Error::unexpected_token(tokens.get_position().clone(), "\":\""));
     }
     tokens.next();
 
     let return_type = match parse_type_expression(tokens)? {
         Some(node) => node,
-        None => return Err("Expected type expression".to_string()),
+        None => return Err(Error::unexpected_token(tokens.get_position().clone(), "type annotation")),
     };
 
     let block = match parse_block_statement(tokens)? {
         Some(node) => node,
-        None => return Err("Expected block statement".to_string()),
+        None => return Err(Error::unexpected_token(tokens.get_position().clone(), "block statement")),
     };
 
     if is_declaration {
@@ -935,23 +923,23 @@ fn is_reserved_words(word: &str) -> bool {
 
 // Type
 
-fn parse_type_expression(tokens: &mut TokenIter) -> Result<Option<TypeExpression>, String> {
+fn parse_type_expression(tokens: &mut TokenIterator) -> Result<Option<TypeExpression>, Error> {
     parse_union_type(tokens)
 }
 
-fn parse_union_type(tokens: &mut TokenIter) -> Result<Option<TypeExpression>, String> {
+fn parse_union_type(tokens: &mut TokenIterator) -> Result<Option<TypeExpression>, Error> {
     let mut types = vec![];
     match parse_optional_type(tokens)? {
         Some(type_) => types.push(type_),
         None => return Ok(None),
     };
 
-    while let Some(Token::Punctuator(PunctuatorKind::BitwiseOr)) = tokens.peek() {
+    while let Some(TokenKind::Punctuation(PunctuationKind::VerticalLine)) = tokens.peek()? {
         tokens.next();
 
         match parse_optional_type(tokens)? {
             Some(type_) => types.push(type_),
-            None => return Err("Expected type expression".to_string()),
+            None => return Err(Error::unexpected_token(tokens.get_position().clone(), "type expression")),
         }
     }
 
@@ -962,13 +950,13 @@ fn parse_union_type(tokens: &mut TokenIter) -> Result<Option<TypeExpression>, St
     }
 }
 
-fn parse_optional_type(tokens: &mut TokenIter) -> Result<Option<TypeExpression>, String> {
+fn parse_optional_type(tokens: &mut TokenIterator) -> Result<Option<TypeExpression>, Error> {
     let type_ = match parse_primary_type(tokens)? {
         Some(type_) => type_,
         None => return Ok(None),
     };
 
-    if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::Question))) {
+    if !matches!(tokens.peek()?, Some(TokenKind::Punctuation(PunctuationKind::Question))) {
         return Ok(Some(type_));
     }
     tokens.next();
@@ -976,24 +964,24 @@ fn parse_optional_type(tokens: &mut TokenIter) -> Result<Option<TypeExpression>,
     Ok(Some(TypeExpression::Optional(Box::new(type_))))
 }
 
-fn parse_primary_type(tokens: &mut TokenIter) -> Result<Option<TypeExpression>, String> {
-    match tokens.peek() {
-        Some(Token::Punctuator(PunctuatorKind::LeftParen)) => {
+fn parse_primary_type(tokens: &mut TokenIterator) -> Result<Option<TypeExpression>, Error> {
+    match tokens.peek()? {
+        Some(TokenKind::Punctuation(PunctuationKind::LeftParen)) => {
             tokens.next();
 
             let type_ = match parse_type_expression(tokens)? {
                 Some(node) => node,
-                None => return Err("Expected type expression".to_string()),
+                None => return Err(Error::unexpected_token(tokens.get_position().clone(), "type expression")),
             };
 
-            if !matches!(tokens.peek(), Some(Token::Punctuator(PunctuatorKind::RightParen))) {
-                return Err("Expected ')'".to_string());
+            if !matches!(tokens.peek()?, Some(TokenKind::Punctuation(PunctuationKind::RightParen))) {
+                return Err(Error::unexpected_token(tokens.get_position().clone(), "\")\""));
             }
             tokens.next();
 
             Ok(Some(type_))
         }
-        Some(Token::Identifier(identifier)) => {
+        Some(TokenKind::Identifier(identifier)) => {
             let identifier = identifier.clone();
             tokens.next();
 
@@ -1060,7 +1048,7 @@ mod tests {
         mod block_statement {
             use crate::node::Node;
             use crate::parser::parse;
-            use crate::punctuator_kind::PunctuatorKind;
+            use crate::punctuation_kind::PunctuationKind;
 
             #[test]
             fn block() {
@@ -1084,7 +1072,7 @@ mod tests {
                             Node::BlockExpression(vec![
                                 Node::BinaryExpression(
                                     Box::new(Node::Number(1f64)),
-                                    PunctuatorKind::Plus,
+                                    PunctuationKind::Plus,
                                     Box::new(Node::Number(2f64)),
                                 ),
                             ]),
@@ -1134,8 +1122,10 @@ mod tests {
         }
 
         mod for_statement {
+            use crate::error::Error;
             use crate::node::Node;
             use crate::parser::parse;
+            use crate::token::Position;
 
             #[test]
             fn for_statement() {
@@ -1155,7 +1145,7 @@ mod tests {
             fn no_left_paren() {
                 assert_eq!(
                     parse("for i in range) 1"),
-                    Err("Expected '('".to_string())
+                    Err(Error::unexpected_token(Position::new(0, 4), "\"(\""))
                 );
             }
 
@@ -1163,7 +1153,7 @@ mod tests {
             fn no_in() {
                 assert_eq!(
                     parse("for (i range) 1"),
-                    Err("Expected 'in'".to_string())
+                    Err(Error::unexpected_token(Position::new(0, 7), "\"in\""))
                 );
             }
 
@@ -1171,7 +1161,7 @@ mod tests {
             fn no_iterator() {
                 assert_eq!(
                     parse("for (i in) 1"),
-                    Err("Expected expression".to_string())
+                    Err(Error::unexpected_token(Position::new(0, 9), "expression"))
                 );
             }
 
@@ -1179,7 +1169,7 @@ mod tests {
             fn no_right_paren() {
                 assert_eq!(
                     parse("for (i in range 1"),
-                    Err("Expected ')'".to_string())
+                    Err(Error::unexpected_token(Position::new(0, 16), "\")\""))
                 );
             }
 
@@ -1187,7 +1177,7 @@ mod tests {
             fn no_body() {
                 assert_eq!(
                     parse("for (i in range)"),
-                    Err("Expected statement".to_string())
+                    Err(Error::unexpected_token(Position::new(0, 16), "statement"))
                 );
             }
 
@@ -1209,8 +1199,10 @@ mod tests {
         }
 
         mod struct_declaration {
+            use crate::error::Error;
             use crate::node::{Node, StructPropertyDeclaration, TypeExpression};
             use crate::parser::parse;
+            use crate::token::Position;
 
             #[test]
             fn struct_declaration() {
@@ -1251,7 +1243,7 @@ mod tests {
             fn struct_declaration_without_name() {
                 assert_eq!(
                     parse("struct {}"),
-                    Err("Expected identifier".to_string())
+                    Err(Error::unexpected_token(Position::new(0, 7), "identifier"))
                 );
             }
         }
@@ -1259,9 +1251,11 @@ mod tests {
 
     mod expression {
         mod if_expression {
+            use crate::error::Error;
             use crate::node::Node;
             use crate::parser::parse;
-            use crate::punctuator_kind::PunctuatorKind;
+            use crate::punctuation_kind::PunctuationKind;
+            use crate::token::Position;
 
             #[test]
             fn if_expression() {
@@ -1270,7 +1264,7 @@ mod tests {
                     Ok(Node::Program(vec![
                         Node::BinaryExpression(
                             Box::new(Node::Number(1f64)),
-                            PunctuatorKind::Plus,
+                            PunctuationKind::Plus,
                             Box::new(Node::IfExpression(
                                 Box::new(Node::Number(1f64)),
                                 Box::new(Node::Number(2f64)),
@@ -1285,7 +1279,7 @@ mod tests {
             fn if_expression_requires_false_branch() {
                 assert_eq!(
                     parse("1 + if (1) 2"),
-                    Err("Expected 'else'".to_string())
+                    Err(Error::unexpected_token(Position::new(0, 12), "\"else\""))
                 );
             }
 
@@ -1296,7 +1290,7 @@ mod tests {
                     Ok(Node::Program(vec![
                         Node::BinaryExpression(
                             Box::new(Node::Number(1f64)),
-                            PunctuatorKind::Plus,
+                            PunctuationKind::Plus,
                             Box::new(Node::IfExpression(
                                 Box::new(Node::Number(2f64)),
                                 Box::new(Node::Number(3f64)),
@@ -1313,6 +1307,7 @@ mod tests {
         }
 
         mod assignment_expression {
+            use crate::error::Error;
             use crate::node::Node;
             use crate::parser::parse;
 
@@ -1333,7 +1328,7 @@ mod tests {
             fn no_value() {
                 assert_eq!(
                     parse("x ="),
-                    Err("Expected expression".to_string())
+                    Err(Error::unexpected_token(crate::token::Position::new(0, 3), "expression"))
                 );
             }
         }
@@ -1341,7 +1336,7 @@ mod tests {
         mod logical_or_expression {
             use crate::node::Node;
             use crate::parser::parse;
-            use crate::punctuator_kind::PunctuatorKind;
+            use crate::punctuation_kind::PunctuationKind;
 
             #[test]
             fn logical_or() {
@@ -1350,7 +1345,7 @@ mod tests {
                     Ok(Node::Program(vec![
                         Node::BinaryExpression(
                             Box::new(Node::Bool(true)),
-                            PunctuatorKind::LogicalOr,
+                            PunctuationKind::VerticalLineVerticalLine,
                             Box::new(Node::Bool(false)),
                         )
                     ]))
@@ -1364,10 +1359,10 @@ mod tests {
                     Ok(Node::Program(vec![
                         Node::BinaryExpression(
                             Box::new(Node::Bool(true)),
-                            PunctuatorKind::LogicalOr,
+                            PunctuationKind::VerticalLineVerticalLine,
                             Box::new(Node::BinaryExpression(
                                 Box::new(Node::Bool(false)),
-                                PunctuatorKind::LogicalAnd,
+                                PunctuationKind::AndAnd,
                                 Box::new(Node::Bool(true)),
                             )),
                         )
@@ -1379,7 +1374,7 @@ mod tests {
         mod logical_and_expression {
             use crate::node::Node;
             use crate::parser::parse;
-            use crate::punctuator_kind::PunctuatorKind;
+            use crate::punctuation_kind::PunctuationKind;
 
             #[test]
             fn logical_and() {
@@ -1388,7 +1383,7 @@ mod tests {
                     Ok(Node::Program(vec![
                         Node::BinaryExpression(
                             Box::new(Node::Bool(true)),
-                            PunctuatorKind::LogicalAnd,
+                            PunctuationKind::AndAnd,
                             Box::new(Node::Bool(false)),
                         )
                     ]))
@@ -1402,10 +1397,10 @@ mod tests {
                     Ok(Node::Program(vec![
                         Node::BinaryExpression(
                             Box::new(Node::Bool(true)),
-                            PunctuatorKind::LogicalAnd,
+                            PunctuationKind::AndAnd,
                             Box::new(Node::BinaryExpression(
                                 Box::new(Node::Bool(false)),
-                                PunctuatorKind::Plus,
+                                PunctuationKind::Plus,
                                 Box::new(Node::Number(1f64)),
                             )),
                         )
@@ -1417,7 +1412,7 @@ mod tests {
         mod equality_expression {
             use crate::node::Node;
             use crate::parser::parse;
-            use crate::punctuator_kind::PunctuatorKind;
+            use crate::punctuation_kind::PunctuationKind;
 
             #[test]
             fn equal() {
@@ -1426,7 +1421,7 @@ mod tests {
                     Ok(Node::Program(vec![
                         Node::BinaryExpression(
                             Box::new(Node::Number(1f64)),
-                            PunctuatorKind::Equal,
+                            PunctuationKind::EqualEqual,
                             Box::new(Node::Number(2f64)),
                         )
                     ]))
@@ -1440,7 +1435,7 @@ mod tests {
                     Ok(Node::Program(vec![
                         Node::BinaryExpression(
                             Box::new(Node::Number(1f64)),
-                            PunctuatorKind::NotEqual,
+                            PunctuationKind::ExclamationEqual,
                             Box::new(Node::Number(2f64)),
                         )
                     ]))
@@ -1455,10 +1450,10 @@ mod tests {
                         Node::BinaryExpression(
                             Box::new(Node::BinaryExpression(
                                 Box::new(Node::Number(1f64)),
-                                PunctuatorKind::NotEqual,
+                                PunctuationKind::ExclamationEqual,
                                 Box::new(Node::Number(2f64)),
                             )),
-                            PunctuatorKind::Equal,
+                            PunctuationKind::EqualEqual,
                             Box::new(Node::Number(3f64)),
                         )
                     ]))
@@ -1473,13 +1468,13 @@ mod tests {
                         Node::BinaryExpression(
                             Box::new(Node::BinaryExpression(
                                 Box::new(Node::Number(1f64)),
-                                PunctuatorKind::GreaterThan,
+                                PunctuationKind::RightBracket,
                                 Box::new(Node::Number(2f64)),
                             )),
-                            PunctuatorKind::Equal,
+                            PunctuationKind::EqualEqual,
                             Box::new(Node::BinaryExpression(
                                 Box::new(Node::Number(3f64)),
-                                PunctuatorKind::GreaterThan,
+                                PunctuationKind::RightBracket,
                                 Box::new(Node::Number(4f64)),
                             )),
                         )
@@ -1491,7 +1486,7 @@ mod tests {
         mod relational_expression {
             use crate::node::Node;
             use crate::parser::parse;
-            use crate::punctuator_kind::PunctuatorKind;
+            use crate::punctuation_kind::PunctuationKind;
 
             #[test]
             fn greater_than() {
@@ -1500,7 +1495,7 @@ mod tests {
                     Ok(Node::Program(vec![
                         Node::BinaryExpression(
                             Box::new(Node::Number(1f64)),
-                            PunctuatorKind::GreaterThan,
+                            PunctuationKind::RightBracket,
                             Box::new(Node::Number(2f64)),
                         )
                     ]))
@@ -1514,7 +1509,7 @@ mod tests {
                     Ok(Node::Program(vec![
                         Node::BinaryExpression(
                             Box::new(Node::Number(1f64)),
-                            PunctuatorKind::GreaterThanOrEqual,
+                            PunctuationKind::RightBracketEqual,
                             Box::new(Node::Number(2f64)),
                         )
                     ]))
@@ -1528,7 +1523,7 @@ mod tests {
                     Ok(Node::Program(vec![
                         Node::BinaryExpression(
                             Box::new(Node::Number(1f64)),
-                            PunctuatorKind::LessThan,
+                            PunctuationKind::LeftBracket,
                             Box::new(Node::Number(2f64)),
                         )
                     ]))
@@ -1542,7 +1537,7 @@ mod tests {
                     Ok(Node::Program(vec![
                         Node::BinaryExpression(
                             Box::new(Node::Number(1f64)),
-                            PunctuatorKind::LessThanOrEqual,
+                            PunctuationKind::LeftBracketEqual,
                             Box::new(Node::Number(2f64)),
                         )
                     ]))
@@ -1557,10 +1552,10 @@ mod tests {
                         Node::BinaryExpression(
                             Box::new(Node::BinaryExpression(
                                 Box::new(Node::Number(1f64)),
-                                PunctuatorKind::GreaterThan,
+                                PunctuationKind::RightBracket,
                                 Box::new(Node::Number(2f64)),
                             )),
-                            PunctuatorKind::GreaterThan,
+                            PunctuationKind::RightBracket,
                             Box::new(Node::Number(3f64)),
                         )
                     ]))
@@ -1575,13 +1570,13 @@ mod tests {
                         Node::BinaryExpression(
                             Box::new(Node::BinaryExpression(
                                 Box::new(Node::Number(1f64)),
-                                PunctuatorKind::Plus,
+                                PunctuationKind::Plus,
                                 Box::new(Node::Number(2f64)),
                             )),
-                            PunctuatorKind::GreaterThan,
+                            PunctuationKind::RightBracket,
                             Box::new(Node::BinaryExpression(
                                 Box::new(Node::Number(3f64)),
-                                PunctuatorKind::Plus,
+                                PunctuationKind::Plus,
                                 Box::new(Node::Number(4f64)),
                             )),
                         )
@@ -1593,7 +1588,7 @@ mod tests {
         mod additive_expression {
             use crate::node::Node;
             use crate::parser::parse;
-            use crate::punctuator_kind::PunctuatorKind;
+            use crate::punctuation_kind::PunctuationKind;
 
             #[test]
             fn add() {
@@ -1602,7 +1597,7 @@ mod tests {
                     Ok(Node::Program(vec![
                         Node::BinaryExpression(
                             Box::new(Node::Number(1f64)),
-                            PunctuatorKind::Plus,
+                            PunctuationKind::Plus,
                             Box::new(Node::Number(2f64)),
                         )
                     ]))
@@ -1616,7 +1611,7 @@ mod tests {
                     Ok(Node::Program(vec![
                         Node::BinaryExpression(
                             Box::new(Node::Number(1f64)),
-                            PunctuatorKind::Minus,
+                            PunctuationKind::Minus,
                             Box::new(Node::Number(2f64)),
                         )
                     ]))
@@ -1631,10 +1626,10 @@ mod tests {
                         Node::BinaryExpression(
                             Box::new(Node::BinaryExpression(
                                 Box::new(Node::Number(1f64)),
-                                PunctuatorKind::Plus,
+                                PunctuationKind::Plus,
                                 Box::new(Node::Number(2f64)),
                             )),
-                            PunctuatorKind::Minus,
+                            PunctuationKind::Minus,
                             Box::new(Node::Number(3f64)),
                         )
                     ]))
@@ -1648,7 +1643,7 @@ mod tests {
                     Ok(Node::Program(vec![
                         Node::BinaryExpression(
                             Box::new(Node::Number(1f64)),
-                            PunctuatorKind::Plus,
+                            PunctuationKind::Plus,
                             Box::new(Node::Number(2f64)),
                         )
                     ]))
@@ -1659,7 +1654,7 @@ mod tests {
         mod multiplicative_expression {
             use crate::node::Node;
             use crate::parser::parse;
-            use crate::punctuator_kind::PunctuatorKind;
+            use crate::punctuation_kind::PunctuationKind;
 
             #[test]
             fn multiply() {
@@ -1668,7 +1663,7 @@ mod tests {
                     Ok(Node::Program(vec![
                         Node::BinaryExpression(
                             Box::new(Node::Number(1f64)),
-                            PunctuatorKind::Multiply,
+                            PunctuationKind::Asterisk,
                             Box::new(Node::Number(2f64)),
                         )
                     ]))
@@ -1682,7 +1677,7 @@ mod tests {
                     Ok(Node::Program(vec![
                         Node::BinaryExpression(
                             Box::new(Node::Number(1f64)),
-                            PunctuatorKind::Divide,
+                            PunctuationKind::Slash,
                             Box::new(Node::Number(2f64)),
                         )
                     ]))
@@ -1697,10 +1692,10 @@ mod tests {
                         Node::BinaryExpression(
                             Box::new(Node::BinaryExpression(
                                 Box::new(Node::Number(1f64)),
-                                PunctuatorKind::Multiply,
+                                PunctuationKind::Asterisk,
                                 Box::new(Node::Number(2f64)),
                             )),
-                            PunctuatorKind::Divide,
+                            PunctuationKind::Slash,
                             Box::new(Node::Number(3f64)),
                         )
                     ]))
@@ -1714,10 +1709,10 @@ mod tests {
                     Ok(Node::Program(vec![
                         Node::BinaryExpression(
                             Box::new(Node::Number(1f64)),
-                            PunctuatorKind::Plus,
+                            PunctuationKind::Plus,
                             Box::new(Node::BinaryExpression(
                                 Box::new(Node::Number(2f64)),
-                                PunctuatorKind::Multiply,
+                                PunctuationKind::Asterisk,
                                 Box::new(Node::Number(3f64)),
                             )),
                         )
@@ -1733,10 +1728,10 @@ mod tests {
                         Node::BinaryExpression(
                             Box::new(Node::BinaryExpression(
                                 Box::new(Node::Number(1f64)),
-                                PunctuatorKind::Multiply,
+                                PunctuationKind::Asterisk,
                                 Box::new(Node::Number(2f64)),
                             )),
-                            PunctuatorKind::Plus,
+                            PunctuationKind::Plus,
                             Box::new(Node::Number(3f64)),
                         )
                     ]))
@@ -1751,13 +1746,13 @@ mod tests {
                         Node::BinaryExpression(
                             Box::new(Node::BinaryExpression(
                                 Box::new(Node::Number(1f64)),
-                                PunctuatorKind::Multiply,
+                                PunctuationKind::Asterisk,
                                 Box::new(Node::Number(2f64)),
                             )),
-                            PunctuatorKind::Plus,
+                            PunctuationKind::Plus,
                             Box::new(Node::BinaryExpression(
                                 Box::new(Node::Number(3f64)),
-                                PunctuatorKind::Divide,
+                                PunctuationKind::Slash,
                                 Box::new(Node::Number(4f64)),
                             )),
                         )
@@ -1767,9 +1762,11 @@ mod tests {
         }
 
         mod unary_expression {
+            use crate::error::Error;
             use crate::node::Node;
             use crate::parser::parse;
-            use crate::punctuator_kind::PunctuatorKind;
+            use crate::punctuation_kind::PunctuationKind;
+            use crate::token::Position;
 
             #[test]
             fn plus() {
@@ -1777,7 +1774,7 @@ mod tests {
                     parse("+1"),
                     Ok(Node::Program(vec![
                         Node::UnaryExpression(
-                            PunctuatorKind::Plus,
+                            PunctuationKind::Plus,
                             Box::new(Node::Number(1f64)),
                         )
                     ]))
@@ -1790,7 +1787,7 @@ mod tests {
                     parse("-1"),
                     Ok(Node::Program(vec![
                         Node::UnaryExpression(
-                            PunctuatorKind::Minus,
+                            PunctuationKind::Minus,
                             Box::new(Node::Number(1f64)),
                         )
                     ]))
@@ -1801,7 +1798,7 @@ mod tests {
             fn disallow_multiple_unary_operator() {
                 assert_eq!(
                     parse("--1"),
-                    Err("Expected expression".to_string()),
+                    Err(Error::unexpected_token(Position::new(0, 1), "expression"))
                 );
             }
 
@@ -1812,9 +1809,9 @@ mod tests {
                     Ok(Node::Program(vec![
                         Node::BinaryExpression(
                             Box::new(Node::Number(1f64)),
-                            PunctuatorKind::Plus,
+                            PunctuationKind::Plus,
                             Box::new(Node::UnaryExpression(
-                                PunctuatorKind::Plus,
+                                PunctuationKind::Plus,
                                 Box::new(Node::Number(1f64)),
                             )),
                         ),
@@ -1826,7 +1823,7 @@ mod tests {
         mod call_expression {
             use crate::node::Node;
             use crate::parser::parse;
-            use crate::punctuator_kind::PunctuatorKind;
+            use crate::punctuation_kind::PunctuationKind;
 
             #[test]
             fn without_arguments() {
@@ -1869,10 +1866,10 @@ mod tests {
                                 Node::Number(1f64),
                                 Node::BinaryExpression(
                                     Box::new(Node::Number(2f64)),
-                                    PunctuatorKind::Multiply,
+                                    PunctuationKind::Asterisk,
                                     Box::new(Node::BinaryExpression(
                                         Box::new(Node::Number(3f64)),
-                                        PunctuatorKind::Plus,
+                                        PunctuationKind::Plus,
                                         Box::new(Node::Number(4f64)),
                                     )),
                                 ),
@@ -1908,7 +1905,7 @@ mod tests {
         mod member_expression {
             use crate::node::Node;
             use crate::parser::parse;
-            use crate::punctuator_kind::PunctuatorKind;
+            use crate::punctuation_kind::PunctuationKind;
 
             #[test]
             fn member_expression() {
@@ -1948,7 +1945,7 @@ mod tests {
                     parse("-x.y"),
                     Ok(Node::Program(vec![
                         Node::UnaryExpression(
-                            PunctuatorKind::Minus,
+                            PunctuationKind::Minus,
                             Box::new(Node::MemberExpression(
                                 Box::new(Node::Identifier("x".to_string())),
                                 Box::new(Node::Identifier("y".to_string())),
@@ -1960,9 +1957,11 @@ mod tests {
         }
 
         mod primary_expression {
+            use crate::error::Error;
             use crate::node::Node;
             use crate::parser::parse;
-            use crate::punctuator_kind::PunctuatorKind;
+            use crate::punctuation_kind::PunctuationKind;
+            use crate::token::Position;
 
             #[test]
             fn number() {
@@ -2001,10 +2000,10 @@ mod tests {
                     Ok(Node::Program(vec![
                         Node::BinaryExpression(
                             Box::new(Node::UnaryExpression(
-                                PunctuatorKind::Minus,
+                                PunctuationKind::Minus,
                                 Box::new(Node::Bool(true)),
                             )),
-                            PunctuatorKind::Plus,
+                            PunctuationKind::Plus,
                             Box::new(Node::Bool(false)),
                         ),
                     ]))
@@ -2053,13 +2052,13 @@ mod tests {
                         Node::BinaryExpression(
                             Box::new(Node::BinaryExpression(
                                 Box::new(Node::Number(1f64)),
-                                PunctuatorKind::Plus,
+                                PunctuationKind::Plus,
                                 Box::new(Node::Number(2f64)),
                             )),
-                            PunctuatorKind::Multiply,
+                            PunctuationKind::Asterisk,
                             Box::new(Node::BinaryExpression(
                                 Box::new(Node::Number(3f64)),
-                                PunctuatorKind::Plus,
+                                PunctuationKind::Plus,
                                 Box::new(Node::Number(4f64)),
                             )),
                         )
@@ -2074,7 +2073,7 @@ mod tests {
                     Ok(Node::Program(vec![
                         Node::BinaryExpression(
                             Box::new(Node::Number(1f64)),
-                            PunctuatorKind::Plus,
+                            PunctuationKind::Plus,
                             Box::new(Node::Number(2f64)),
                         ),
                     ]))
@@ -2085,7 +2084,7 @@ mod tests {
             fn unpaired_paren() {
                 assert_eq!(
                     parse("(1+2"),
-                    Err("Expected ')'".to_string())
+                    Err(Error::unexpected_token(Position::new(0, 4), "\")\""))
                 );
             }
         }
@@ -2093,7 +2092,7 @@ mod tests {
         mod range_iterator {
             use crate::node::Node;
             use crate::parser::parse;
-            use crate::punctuator_kind::PunctuatorKind;
+            use crate::punctuation_kind::PunctuationKind;
 
             #[test]
             fn range_iterator() {
@@ -2123,7 +2122,7 @@ mod tests {
                                 Box::new(Node::Identifier("y".to_string())),
                                 Box::new(Node::BinaryExpression(
                                     Box::new(Node::Number(1f64)),
-                                    PunctuatorKind::Plus,
+                                    PunctuationKind::Plus,
                                     Box::new(Node::Number(2f64)),
                                 )),
                             )),
