@@ -1,26 +1,30 @@
 use std::collections::VecDeque;
 
 #[derive(Debug)]
-pub struct MultiPeek<'a, Iter>
-where 
-    Iter: Iterator,
+pub struct MultiPeek<I>
+where
+    I: Iterator,
 {
-    iter: &'a mut Iter,
-    peeked: VecDeque<Iter::Item>,
+    iter: I,
+    peeked: VecDeque<I::Item>,
 }
 
-impl<'a, Iter> MultiPeek<'a, Iter>
+impl<I> MultiPeek<I>
 where
-    Iter: Iterator,
+    I: Iterator,
 {
-    pub fn new(iter: &'a mut Iter) -> Self {
+    pub fn new(iter: I) -> Self {
         Self {
             iter,
             peeked: VecDeque::new(),
         }
     }
 
-    pub fn peek(&mut self, offset: usize) -> Option<&Iter::Item> {
+    pub fn get_iter(&self) -> &I {
+        &self.iter
+    }
+
+    pub fn peek(&mut self, offset: usize) -> Option<&I::Item> {
         while self.peeked.len() <= offset {
             if let Some(next) = self.iter.next() {
                 self.peeked.push_back(next);
@@ -31,7 +35,7 @@ where
         self.peeked.get(offset)
     }
 
-    pub fn next(&mut self) -> Option<Iter::Item> {
+    pub fn next(&mut self) -> Option<I::Item> {
         self.peeked.pop_front().or_else(|| self.iter.next())
     }
 }

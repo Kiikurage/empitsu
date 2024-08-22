@@ -23,14 +23,14 @@ pub enum Node {
     BinaryExpression(Box<Node>, PunctuationKind, Box<Node>),
     UnaryExpression(PunctuationKind, Box<Node>),
     CallExpression(Box<Node>, Vec<Node>),
-    MemberExpression(Box<Node>, Box<Node>),
+    MemberExpression(Box<Node>, String),
     Identifier(String),
 
     // Literal
     Number(f64),
     Bool(bool),
     String(String),
-    Struct(TypeExpression, Vec<StructPropertyInitializer>),
+    Struct(String, Vec<StructPropertyInitializer>),
     Null,
 }
 

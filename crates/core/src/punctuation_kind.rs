@@ -19,9 +19,40 @@ pub enum PunctuationKind {
     Colon,
     EqualEqual,
     ExclamationEqual,
-    LeftBracket,
-    LeftBracketEqual,
-    RightBracket,
-    RightBracketEqual,
+    LeftChevron,
+    LeftChevronEqual,
+    RightChevron,
+    RightChevronEqual,
     Question,
+}
+
+impl PunctuationKind {
+    pub fn get_text(&self) -> &str {
+        match self {
+            PunctuationKind::Plus => "+",
+            PunctuationKind::Minus => "-",
+            PunctuationKind::Asterisk => "*",
+            PunctuationKind::Slash => "/",
+            PunctuationKind::LeftParen => "(",
+            PunctuationKind::RightParen => ")",
+            PunctuationKind::LeftBrace => "{",
+            PunctuationKind::RightBrace => "}",
+            PunctuationKind::SemiColon => ";",
+            PunctuationKind::Comma => ",",
+            PunctuationKind::Equal => "=",
+            PunctuationKind::Exclamation => "!",
+            PunctuationKind::AndAnd => "&&",
+            PunctuationKind::VerticalLineVerticalLine => "||",
+            PunctuationKind::VerticalLine => "|",
+            PunctuationKind::Dot => ".",
+            PunctuationKind::Colon => ":",
+            PunctuationKind::EqualEqual => "==",
+            PunctuationKind::ExclamationEqual => "!=",
+            PunctuationKind::LeftChevron => "<",
+            PunctuationKind::LeftChevronEqual => "<=",
+            PunctuationKind::RightChevron => ">",
+            PunctuationKind::RightChevronEqual => ">=",
+            PunctuationKind::Question => "?",
+        }
+    }
 }

@@ -163,9 +163,11 @@ impl VM {
     }
 
     pub fn eval(&mut self, input: &str) -> Value {
-        let ast = match parse(input) {
-            Ok(ast) => ast,
-            Err(error) => return Value::String(error.get_message()),
+        let result = parse(input);
+        let ast = if result.errors.is_empty() {
+            result.node
+        } else {
+            return Value::String(result.errors.first().unwrap().get_message());
         };
 
         if let Err(message) = TypeChecker::new().check_node(&ast) {
@@ -343,11 +345,6 @@ impl VM {
                 match lhs.as_ref() {
                     Node::Identifier(name) => self.set_variable(name, &value)?,
                     Node::MemberExpression(object, property) => {
-                        let property = match property.deref() {
-                            Node::Identifier(name) => name,
-                            _ => return ControlFlow::Break(BreakResult::Error(Value::String("Expected identifier".to_string()))),
-                        };
-
                         let mut struct_value = match self.eval_node(object)? {
                             Value::Ref(address) => {
                                 match self.structs.get(&address) {
@@ -377,10 +374,10 @@ impl VM {
                     PunctuationKind::AndAnd => ControlFlow::Continue(Value::Bool(left.as_bool().into_control_flow()? && right.as_bool().into_control_flow()?)),
                     PunctuationKind::EqualEqual => ControlFlow::Continue(Value::Bool(left == right)),  // TODO: 演算子オーバーロード
                     PunctuationKind::ExclamationEqual => ControlFlow::Continue(Value::Bool(left != right)),  // TODO: 演算子オーバーロード
-                    PunctuationKind::LeftBracket => ControlFlow::Continue(Value::Bool(left.as_number().into_control_flow()? < right.as_number().into_control_flow()?)),
-                    PunctuationKind::LeftBracketEqual => ControlFlow::Continue(Value::Bool(left.as_number().into_control_flow()? <= right.as_number().into_control_flow()?)),
-                    PunctuationKind::RightBracket => ControlFlow::Continue(Value::Bool(left.as_number().into_control_flow()? > right.as_number().into_control_flow()?)),
-                    PunctuationKind::RightBracketEqual => ControlFlow::Continue(Value::Bool(left.as_number().into_control_flow()? >= right.as_number().into_control_flow()?)),
+                    PunctuationKind::LeftChevron => ControlFlow::Continue(Value::Bool(left.as_number().into_control_flow()? < right.as_number().into_control_flow()?)),
+                    PunctuationKind::LeftChevronEqual => ControlFlow::Continue(Value::Bool(left.as_number().into_control_flow()? <= right.as_number().into_control_flow()?)),
+                    PunctuationKind::RightChevron => ControlFlow::Continue(Value::Bool(left.as_number().into_control_flow()? > right.as_number().into_control_flow()?)),
+                    PunctuationKind::RightChevronEqual => ControlFlow::Continue(Value::Bool(left.as_number().into_control_flow()? >= right.as_number().into_control_flow()?)),
                     _ => ControlFlow::Break(BreakResult::Error(Value::String(format!("Unexpected operator: {:?}", operator)))),
                 }
             }
@@ -454,11 +451,6 @@ impl VM {
             }
             Node::BreakExpression => ControlFlow::Break(BreakResult::Break(Value::Number(0.0))),
             Node::MemberExpression(object, property) => {
-                let property = match property.deref() {
-                    Node::Identifier(name) => name,
-                    _ => return ControlFlow::Break(BreakResult::Error(Value::String("Expected identifier".to_string()))),
-                };
-
                 let struct_value = match self.eval_node(object)? {
                     Value::Ref(address) => {
                         match self.structs.get(&address) {
@@ -573,41 +565,41 @@ mod tests {
 
     #[test]
     fn reserved_words_in_variable_declaration() {
-        assert_eq!(VM::new().eval("let if"), Value::String("Syntax error: (1, 5) \"if\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("let let"), Value::String("Syntax error: (1, 5) \"let\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("let for"), Value::String("Syntax error: (1, 5) \"for\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("let function"), Value::String("Syntax error: (1, 5) \"function\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("let true"), Value::String("Syntax error: (1, 5) Expected identifier".to_string()));
-        assert_eq!(VM::new().eval("let false"), Value::String("Syntax error: (1, 5) Expected identifier".to_string()));
-        assert_eq!(VM::new().eval("let else"), Value::String("Syntax error: (1, 5) \"else\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("let return"), Value::String("Syntax error: (1, 5) \"return\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("let null"), Value::String("Syntax error: (1, 5) \"null\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("let if"), Value::String("Syntax error: (1:5) \"if\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("let let"), Value::String("Syntax error: (1:5) \"let\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("let for"), Value::String("Syntax error: (1:5) \"for\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("let function"), Value::String("Syntax error: (1:5) \"function\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("let true"), Value::String("Syntax error: (1:5) Expected identifier".to_string()));
+        assert_eq!(VM::new().eval("let false"), Value::String("Syntax error: (1:5) Expected identifier".to_string()));
+        assert_eq!(VM::new().eval("let else"), Value::String("Syntax error: (1:5) \"else\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("let return"), Value::String("Syntax error: (1:5) \"return\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("let null"), Value::String("Syntax error: (1:5) \"null\" is a reserved word".to_string()));
     }
 
     #[test]
     fn reserved_words_in_function_name() {
-        assert_eq!(VM::new().eval("function if() {}"), Value::String("Syntax error: (1, 10) \"if\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("function let() {}"), Value::String("Syntax error: (1, 10) \"let\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("function for() {}"), Value::String("Syntax error: (1, 10) \"for\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("function function() {}"), Value::String("Syntax error: (1, 10) \"function\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("function true() {}"), Value::String("Syntax error: (1, 10) Expected identifier".to_string()));
-        assert_eq!(VM::new().eval("function false() {}"), Value::String("Syntax error: (1, 10) Expected identifier".to_string()));
-        assert_eq!(VM::new().eval("function else() {}"), Value::String("Syntax error: (1, 10) \"else\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("function return() {}"), Value::String("Syntax error: (1, 10) \"return\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("function null() {}"), Value::String("Syntax error: (1, 10) \"null\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("function if() {}"), Value::String("Syntax error: (1:10) \"if\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("function let() {}"), Value::String("Syntax error: (1:10) \"let\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("function for() {}"), Value::String("Syntax error: (1:10) \"for\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("function function() {}"), Value::String("Syntax error: (1:10) \"function\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("function true() {}"), Value::String("Syntax error: (1:10) Expected identifier".to_string()));
+        assert_eq!(VM::new().eval("function false() {}"), Value::String("Syntax error: (1:10) Expected identifier".to_string()));
+        assert_eq!(VM::new().eval("function else() {}"), Value::String("Syntax error: (1:10) \"else\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("function return() {}"), Value::String("Syntax error: (1:10) \"return\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("function null() {}"), Value::String("Syntax error: (1:10) \"null\" is a reserved word".to_string()));
     }
 
     #[test]
     fn reserved_words_in_function_parameter() {
-        assert_eq!(VM::new().eval("function f(if): null {}"), Value::String("Syntax error: (1, 12) \"if\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("function f(let): null {}"), Value::String("Syntax error: (1, 12) \"let\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("function f(for): null {}"), Value::String("Syntax error: (1, 12) \"for\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("function f(function): null {}"), Value::String("Syntax error: (1, 12) \"function\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("function f(true): null {}"), Value::String("Syntax error: (1, 12) Expected identifier".to_string()));
-        assert_eq!(VM::new().eval("function f(false): null {}"), Value::String("Syntax error: (1, 12) Expected identifier".to_string()));
-        assert_eq!(VM::new().eval("function f(else): null {}"), Value::String("Syntax error: (1, 12) \"else\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("function f(return): null {}"), Value::String("Syntax error: (1, 12) \"return\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("function f(null): null {}"), Value::String("Syntax error: (1, 12) \"null\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("function f(if): null {}"), Value::String("Syntax error: (1:12) \"if\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("function f(let): null {}"), Value::String("Syntax error: (1:12) \"let\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("function f(for): null {}"), Value::String("Syntax error: (1:12) \"for\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("function f(function): null {}"), Value::String("Syntax error: (1:12) \"function\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("function f(true): null {}"), Value::String("Syntax error: (1:12) Expected identifier".to_string()));
+        assert_eq!(VM::new().eval("function f(false): null {}"), Value::String("Syntax error: (1:12) Expected identifier".to_string()));
+        assert_eq!(VM::new().eval("function f(else): null {}"), Value::String("Syntax error: (1:12) \"else\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("function f(return): null {}"), Value::String("Syntax error: (1:12) \"return\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("function f(null): null {}"), Value::String("Syntax error: (1:12) \"null\" is a reserved word".to_string()));
     }
 
     #[test]
@@ -639,7 +631,7 @@ mod tests {
         // assert_eq!(VM::new().eval("false || false"), Value::Bool(false));
         // assert_eq!(VM::new().eval("false + 1"), Value::String("TypeError: Expected type Number, but actual type is Bool".to_string()));
         // assert_eq!(VM::new().eval("\"hello\" + 1"), Value::String("TypeError: Expected type Number, but actual type is String".to_string()));
-        // 
+        //
         // assert_eq!(VM::new().eval("
         // let x = 0
         // for (i in 0 to 10) {
@@ -735,7 +727,7 @@ mod tests {
     #[test]
     fn function_object() {
         assert_eq!(VM::new().eval("
-            let double = function double_fn_expression(x: number):number {
+            let double = function (x: number):number {
                 x * 2
             }
 
@@ -752,16 +744,6 @@ mod tests {
 
             double(3)
         "), Value::Number(6.0));
-    }
-
-    #[test]
-    fn function_object_cannot_be_referred_by_name() {
-        assert_eq!(VM::new().eval("
-            function f(x: number):number { x * 10 }
-            let double = function f(x: number):number { x * 2 }
-
-            f(3)
-        "), Value::Number(30.0));
     }
 
     #[test]

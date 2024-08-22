@@ -1,107 +1,169 @@
 use crate::error::Error;
-use crate::token::{Position, Token, TokenKind};
+use crate::lexer::scan;
+use crate::position::Position;
+use crate::token::{Token, TokenKind};
 
-#[derive(Debug)]
-pub struct TokenIterator<'a> {
-    tokens: &'a [Result<Token, Error>],
-    current: usize,
+pub struct TokenIterator {
+    tokens: Vec<Result<Token, Error>>,
+    pub raw_offset: usize,
+    pub last_position: Position,
 }
 
-impl<'a> TokenIterator<'a> {
-    pub fn new(tokens: &'a [Result<Token, Error>]) -> Self {
-        Self { tokens, current: 0, }
-    }
-
-    pub fn peek(&mut self) -> Result<Option<TokenKind>, Error> {
-        self.peek_at(0)
-    }
-
-    fn peek_at(&mut self, offset: usize) -> Result<Option<TokenKind>, Error> {
-        let mut tokens_current = self.current;
-        let mut char_offset = 0;
-
-        loop {
-            match self.tokens.get(tokens_current) {
-                Some(Ok(Token { kind: TokenKind::LineTerminator, .. })) => {
-                    tokens_current += 1;
-                }
-                Some(token) => {
-                    if char_offset == offset {
-                        return match token {
-                            Ok(Token { kind, .. }) => Ok(Some(kind.clone())),
-                            Err(error) => Err(error.clone()),
-                        };
-                    }
-                    char_offset += 1;
-                    tokens_current += 1;
-                }
-                None => return Ok(None)
-            }
+impl TokenIterator {
+    pub fn new(input: &str) -> Self {
+        Self {
+            tokens: scan(input),
+            raw_offset: 0,
+            last_position: Position::new(0, 0),
         }
     }
 
-    pub fn peek_including_newline(&mut self) -> Result<Option<TokenKind>, Error> {
-        match self.tokens.get(self.current) {
-            Some(Ok(token)) => Ok(Some(token.kind.clone())),
-            Some(Err(error)) => Err(error.clone()),
-            None => Ok(None)
+    pub fn next(&mut self) -> &Result<Token, Error> {
+        while let Ok(Token { kind: TokenKind::LineTerminator, .. }) = self.raw_peek() {
+            self.raw_next();
+        }
+        self.raw_next()
+    }
+
+    pub fn raw_next(&mut self) -> &Result<Token, Error> {
+        // Safe to unwrap because EndOfInput token must be present
+        let ret = self.tokens.get(self.raw_offset).unwrap();
+        if !matches!(ret, Ok(Token { kind: TokenKind::EndOfInput, .. })) {
+            self.raw_offset += 1;
+        }
+
+        let position = match ret {
+            Ok(token) => &token.position,
+            Err(error) => &error.position,
+        };
+        self.last_position.line = position.line;
+        self.last_position.column = position.column;
+
+        ret
+    }
+
+    pub fn has_next(&mut self) -> bool {
+        !matches!(self.peek(), Ok(Token { kind: TokenKind::EndOfInput, .. }))
+    }
+
+    pub fn peek(&mut self) -> &Result<Token, Error> {
+        let mut offset = self.raw_offset;
+        while let Some(Ok(Token { kind: TokenKind::LineTerminator, .. })) = self.tokens.get(offset) {
+            offset += 1;
+        }
+
+        // Safe to unwrap because EndOfInput token must be present
+        self.tokens.get(offset).unwrap()
+    }
+
+    pub fn raw_peek(&mut self) -> &Result<Token, Error> {
+        // Safe to unwrap because EndOfInput token must be present
+        self.tokens.get(self.raw_offset).unwrap()
+    }
+    
+    pub fn get_position(&mut self) -> &Position {
+        match self.raw_peek() {
+            Ok(ref token) => &token.position,
+            Err(ref err) => &err.position
         }
     }
+}
 
-    pub fn next(&mut self) {
-        while let Some(Ok(Token { kind: TokenKind::LineTerminator, .. })) = self.tokens.get(self.current) {
-            self.current += 1;
-        }
-        if self.tokens.get(self.current).is_some() {
-            self.current += 1;
-        }
+#[cfg(test)]
+mod test {
+    use crate::position::Position;
+    use crate::token::Token;
+    use crate::token_iterator::TokenIterator;
+
+    #[test]
+    fn next() {
+        let mut iter = TokenIterator::new("a\nb\nc");
+
+        assert_eq!(iter.next(), &Ok(Token::identifier(0, 0, "a")));
+        assert_eq!(iter.next(), &Ok(Token::identifier(1, 0, "b")));
+        assert_eq!(iter.next(), &Ok(Token::identifier(2, 0, "c")));
+        assert_eq!(iter.next(), &Ok(Token::end_of_input(2, 1)));
+        assert_eq!(iter.next(), &Ok(Token::end_of_input(2, 1)));
     }
 
-    pub fn next_including_newline(&mut self) {
-        if self.tokens.get(self.current).is_some() {
-            self.current += 1;
-        }
+    #[test]
+    fn raw_next() {
+        let mut iter = TokenIterator::new("a\nb\nc");
+
+        assert_eq!(iter.raw_next(), &Ok(Token::identifier(0, 0, "a")));
+        assert_eq!(iter.raw_next(), &Ok(Token::line_terminator(0, 1)));
+        assert_eq!(iter.raw_next(), &Ok(Token::identifier(1, 0, "b")));
+        assert_eq!(iter.raw_next(), &Ok(Token::line_terminator(1, 1)));
+        assert_eq!(iter.raw_next(), &Ok(Token::identifier(2, 0, "c")));
+        assert_eq!(iter.next(), &Ok(Token::end_of_input(2, 1)));
+        assert_eq!(iter.next(), &Ok(Token::end_of_input(2, 1)));
     }
 
-    pub fn get_position(&self) -> Position {
-        match self.tokens.get(self.current) {
-            Some(Ok(Token { position, .. })) => position.clone(),
-            Some(Err(error)) => error.get_position().clone(),
-            None => {
-                let last_token = self.tokens.last();
-                match last_token {
-                    Some(Ok(Token { position, text, .. })) => Position::new(position.line, position.column + text.len()),
-                    Some(Err(error)) => error.get_position().clone(),
-                    _ => Position::new(0, 0),
-                }
-            }
-        }
+    #[test]
+    fn mix_next() {
+        let mut iter = TokenIterator::new("a\nb\nc");
+
+        assert_eq!(iter.raw_next(), &Ok(Token::identifier(0, 0, "a")));
+        assert_eq!(iter.next(), &Ok(Token::identifier(1, 0, "b")));
+        assert_eq!(iter.next(), &Ok(Token::identifier(2, 0, "c")));
+        assert_eq!(iter.raw_next(), &Ok(Token::end_of_input(2, 1)));
+        assert_eq!(iter.next(), &Ok(Token::end_of_input(2, 1)));
     }
 
-    pub fn get_current(&self) -> usize {
-        self.current
+    #[test]
+    fn next_and_last_position() {
+        let mut iter = TokenIterator::new("a\nb\nc\n\n");
+
+        assert_eq!(iter.last_position, Position::new(0, 0));
+        iter.next();
+        assert_eq!(iter.last_position, Position::new(0, 0));
+        iter.next();
+        assert_eq!(iter.last_position, Position::new(1, 0));
+        iter.next();
+        assert_eq!(iter.last_position, Position::new(2, 0));
+        iter.next();
+        assert_eq!(iter.last_position, Position::new(4, 0));
+        iter.next();
+        assert_eq!(iter.last_position, Position::new(4, 0));
     }
 
-    pub fn set_current(&mut self, current: usize) {
-        self.current = current;
+    #[test]
+    fn raw_next_and_last_position() {
+        let mut iter = TokenIterator::new("a\nb\nc\n\n");
+
+        assert_eq!(iter.last_position, Position::new(0, 0));
+        iter.raw_next();
+        assert_eq!(iter.last_position, Position::new(0, 0));
+        iter.raw_next();
+        assert_eq!(iter.last_position, Position::new(0, 1));
+        iter.raw_next();
+        assert_eq!(iter.last_position, Position::new(1, 0));
+        iter.raw_next();
+        assert_eq!(iter.last_position, Position::new(1, 1));
+        iter.raw_next();
+        assert_eq!(iter.last_position, Position::new(2, 0));
+        iter.raw_next();
+        assert_eq!(iter.last_position, Position::new(2, 1));
+        iter.raw_next();
+        assert_eq!(iter.last_position, Position::new(3, 0));
+        iter.raw_next();
+        assert_eq!(iter.last_position, Position::new(4, 0));
+        iter.raw_next();
+        assert_eq!(iter.last_position, Position::new(4, 0));
     }
 
-    pub fn try_and_rollback<T>(&mut self, predicate: impl FnOnce(&mut Self) -> T) -> T {
-        let current = self.current;
-        let result = predicate(self);
-        self.current = current;
-        result
-    }
+    #[test]
+    fn has_next() {
+        let mut iter = TokenIterator::new("a\nb\nc\n\n");
 
-    pub fn try_or_rollback<T, E>(&mut self, predicate: impl FnOnce(&mut Self) -> Result<T, E>) -> Result<T, E> {
-        let current = self.current;
-        let result = predicate(self);
-        match result {
-            Ok(value) => Ok(value),
-            Err(error) => {
-                self.current = current;
-                Err(error)
-            }
-        }
+        assert!(iter.has_next());
+        iter.next();
+        assert!(iter.has_next());
+        iter.next();
+        assert!(iter.has_next());
+        iter.next();
+        assert!(!iter.has_next());
+        iter.next();
+        assert!(!iter.has_next());
     }
 }

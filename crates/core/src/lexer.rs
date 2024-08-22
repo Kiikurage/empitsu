@@ -6,90 +6,89 @@ use crate::token::{Token, TokenKind};
 pub fn scan(input: &str) -> Vec<Result<Token, Error>> {
     let mut chars = CharIterator::new(input);
     let mut tokens = Vec::new();
-    while chars.peek().is_some() {
-        match scan_token(&mut chars) {
-            Ok(Some(token)) => tokens.push(Ok(token)),
-            Ok(None) => (),
-            Err(error) => {
-                tokens.push(Err(error))
-                // TODO: Skip until next valid token
-            }
+
+    loop {
+        let token = scan_token(&mut chars);
+        tokens.push(token);
+        if matches!(tokens.last(), Some(Ok(Token { kind: TokenKind::EndOfInput, .. }))) {
+            break;
         }
     }
+
     tokens
 }
 
-fn scan_token(chars: &mut CharIterator) -> Result<Option<Token>, Error> {
-    let position = chars.position().clone();
-    match chars.peek() {
-        Some(' ' | '\r' | '\t') => {
-            chars.next();
-            Ok(None)
-        }
+fn scan_token(chars: &mut CharIterator) -> Result<Token, Error> {
+    while matches!(chars.peek(0), Some(' ' | '\r' | '\t')) {
+        chars.next();
+    }
+    let position = chars.get_position().clone();
+
+    match chars.peek(0) {
         Some('\n') => {
             chars.next();
-            Ok(Some(Token {
+            Ok(Token {
                 kind: TokenKind::LineTerminator,
                 position,
                 text: "\n".to_string(),
-            }))
+            })
         }
         Some('?') => {
             chars.next();
-            Ok(Some(Token {
+            Ok(Token {
                 kind: TokenKind::Punctuation(PunctuationKind::Question),
                 position,
                 text: "?".to_string(),
-            }))
+            })
         }
         Some('+') => {
             chars.next();
-            Ok(Some(Token {
+            Ok(Token {
                 kind: TokenKind::Punctuation(PunctuationKind::Plus),
                 position,
                 text: "+".to_string(),
-            }))
+            })
         }
         Some('-') => {
             chars.next();
-            Ok(Some(Token {
+            Ok(Token {
                 kind: TokenKind::Punctuation(PunctuationKind::Minus),
                 position,
                 text: "-".to_string(),
-            }))
+            })
         }
         Some('*') => {
             chars.next();
-            Ok(Some(Token {
+            Ok(Token {
                 kind: TokenKind::Punctuation(PunctuationKind::Asterisk),
                 position,
                 text: "*".to_string(),
-            }))
+            })
         }
         Some('/') => {
-            match chars.peek_at(1) {
+            match chars.peek(1) {
                 Some('/') => {
                     chars.next();
                     chars.next();
 
                     let mut body = String::new();
-                    while let Some(&c) = chars.peek() {
+                    while let Some(&c) = chars.peek(0) {
                         if c == '\n' {
                             break;
                         }
                         body.push(c);
                         chars.next();
                     }
-                    // Ok(Some(Token::Comment(body)))
-                    Ok(None)
+                    // Ok(Token::Comment(body))
+                    scan_token(chars)
                 }
                 Some('*') => {
                     chars.next();
                     chars.next();
 
                     let mut body = String::new();
-                    while let Some(&c) = chars.peek() {
-                        if c == '*' && matches!(chars.peek_at(1), Some('/')) {
+                    while let Some(&c) = chars.peek(0) {
+                        if c == '*' && matches!(chars.peek(1), Some('/')) {
                             chars.next();
                             chars.next();
                             break;
@@ -97,213 +96,217 @@ fn scan_token(chars: &mut CharIterator) -> Result<Option<Token>, Error> {
                         body.push(c);
                         chars.next();
                     }
-                    // Ok(Some(Token::Comment(body)))
-                    Ok(None)
+                    // Ok(Token::Comment(body))
+                    scan_token(chars)
                 }
                 _ => {
                     chars.next();
-                    Ok(Some(Token {
+                    Ok(Token {
                         kind: TokenKind::Punctuation(PunctuationKind::Slash),
                         position,
                         text: "/".to_string(),
-                    }))
+                    })
                 }
             }
         }
         Some('(') => {
             chars.next();
-            Ok(Some(Token {
+            Ok(Token {
                 kind: TokenKind::Punctuation(PunctuationKind::LeftParen),
                 position,
                 text: "(".to_string(),
-            }))
+            })
         }
         Some(')') => {
             chars.next();
-            Ok(Some(Token {
+            Ok(Token {
                 kind: TokenKind::Punctuation(PunctuationKind::RightParen),
                 position,
                 text: ")".to_string(),
-            }))
+            })
         }
         Some('{') => {
             chars.next();
-            Ok(Some(Token {
+            Ok(Token {
                 kind: TokenKind::Punctuation(PunctuationKind::LeftBrace),
                 position,
                 text: "{".to_string(),
-            }))
+            })
         }
         Some('}') => {
             chars.next();
-            Ok(Some(Token {
+            Ok(Token {
                 kind: TokenKind::Punctuation(PunctuationKind::RightBrace),
                 position,
                 text: "}".to_string(),
-            }))
+            })
         }
         Some(';') => {
             chars.next();
-            Ok(Some(Token {
+            Ok(Token {
                 kind: TokenKind::Punctuation(PunctuationKind::SemiColon),
                 position,
                 text: ";".to_string(),
-            }))
+            })
         }
         Some(':') => {
             chars.next();
-            Ok(Some(Token {
+            Ok(Token {
                 kind: TokenKind::Punctuation(PunctuationKind::Colon),
                 position,
                 text: ":".to_string(),
-            }))
+            })
         }
         Some(',') => {
             chars.next();
-            Ok(Some(Token {
+            Ok(Token {
                 kind: TokenKind::Punctuation(PunctuationKind::Comma),
                 position,
                 text: ",".to_string(),
-            }))
+            })
         }
         Some('=') => {
-            if matches!(chars.peek_at(1), Some('=')) {
+            if matches!(chars.peek(1), Some('=')) {
                 chars.next();
                 chars.next();
-                Ok(Some(Token {
+                Ok(Token {
                     kind: TokenKind::Punctuation(PunctuationKind::EqualEqual),
                     position,
                     text: "==".to_string(),
-                }))
+                })
             } else {
                 chars.next();
-                Ok(Some(Token {
+                Ok(Token {
                     kind: TokenKind::Punctuation(PunctuationKind::Equal),
                     position,
                     text: "=".to_string(),
-                }))
+                })
             }
         }
         Some('!') => {
-            if matches!(chars.peek_at(1), Some('=')) {
+            if matches!(chars.peek(1), Some('=')) {
                 chars.next();
                 chars.next();
-                Ok(Some(Token {
+                Ok(Token {
                     kind: TokenKind::Punctuation(PunctuationKind::ExclamationEqual),
                     position,
                     text: "!=".to_string(),
-                }))
+                })
             } else {
                 chars.next();
-                Ok(Some(Token {
+                Ok(Token {
                     kind: TokenKind::Punctuation(PunctuationKind::Exclamation),
                     position,
                     text: "!".to_string(),
-                }))
+                })
             }
         }
         Some('<') => {
-            if matches!(chars.peek_at(1), Some('=')) {
+            if matches!(chars.peek(1), Some('=')) {
                 chars.next();
                 chars.next();
-                Ok(Some(Token {
-                    kind: TokenKind::Punctuation(PunctuationKind::LeftBracketEqual),
+                Ok(Token {
+                    kind: TokenKind::Punctuation(PunctuationKind::LeftChevronEqual),
                     position,
                     text: "<=".to_string(),
-                }))
+                })
             } else {
                 chars.next();
-                Ok(Some(Token {
-                    kind: TokenKind::Punctuation(PunctuationKind::LeftBracket),
+                Ok(Token {
+                    kind: TokenKind::Punctuation(PunctuationKind::LeftChevron),
                     position,
                     text: "<".to_string(),
-                }))
+                })
             }
         }
         Some('>') => {
-            if matches!(chars.peek_at(1), Some('=')) {
+            if matches!(chars.peek(1), Some('=')) {
                 chars.next();
                 chars.next();
-                Ok(Some(Token {
-                    kind: TokenKind::Punctuation(PunctuationKind::RightBracketEqual),
+                Ok(Token {
+                    kind: TokenKind::Punctuation(PunctuationKind::RightChevronEqual),
                     position,
                     text: ">=".to_string(),
-                }))
+                })
             } else {
                 chars.next();
-                Ok(Some(Token {
-                    kind: TokenKind::Punctuation(PunctuationKind::RightBracket),
+                Ok(Token {
+                    kind: TokenKind::Punctuation(PunctuationKind::RightChevron),
                     position,
                     text: ">".to_string(),
-                }))
+                })
             }
         }
         Some('&') => {
-            if matches!(chars.peek_at(1), Some('&')) {
+            if matches!(chars.peek(1), Some('&')) {
                 chars.next();
                 chars.next();
-                Ok(Some(Token {
+                Ok(Token {
                     kind: TokenKind::Punctuation(PunctuationKind::AndAnd),
                     position,
                     text: "&&".to_string(),
-                }))
+                })
             } else {
                 Err(Error::syntax_error(position, "Unexpected character"))
             }
         }
         Some('|') => {
-            if matches!(chars.peek_at(1), Some('|')) {
+            if matches!(chars.peek(1), Some('|')) {
                 chars.next();
                 chars.next();
-                Ok(Some(Token {
+                Ok(Token {
                     kind: TokenKind::Punctuation(PunctuationKind::VerticalLineVerticalLine),
                     position,
                     text: "||".to_string(),
-                }))
+                })
             } else {
                 chars.next();
-                Ok(Some(Token {
+                Ok(Token {
                     kind: TokenKind::Punctuation(PunctuationKind::VerticalLine),
                     position,
                     text: "|".to_string(),
-                }))
+                })
             }
         }
         Some('.') => {
             chars.next();
-            Ok(Some(Token {
+            Ok(Token {
                 kind: TokenKind::Punctuation(PunctuationKind::Dot),
                 position,
                 text: ".".to_string(),
-            }))
+            })
         }
         Some('0'..='9') => scan_number(chars),
         Some('"') => scan_string(chars),
         Some('a'..='z' | 'A'..='Z' | '_') => scan_identifier(chars),
         Some(other) => Err(Error::syntax_error(position, format!("Unexpected character \"{}\"", other))),
-        None => Ok(None),
+        None => Ok(Token {
+            kind: TokenKind::EndOfInput,
+            position,
+            text: "".to_string(),
+        }),
     }
 }
 
-fn scan_number(chars: &mut CharIterator) -> Result<Option<Token>, Error> {
+fn scan_number(chars: &mut CharIterator) -> Result<Token, Error> {
     let mut digits: Vec<char> = vec![];
     let mut has_dot = false;
-    let position = chars.position().clone();
+    let position = chars.get_position().clone();
 
     loop {
-        match chars.peek() {
+        match chars.peek(0) {
             Some(&d @ '0'..='9') => {
                 digits.push(d);
                 chars.next();
             }
             Some('.') => {
                 if digits.is_empty() {
-                    return Ok(None);
+                    return Err(Error::unexpected_token(chars.get_position().clone(), "."));
                 }
                 if has_dot {
                     break;
                 }
-                match chars.peek_at(1) {
+                match chars.peek(1) {
                     Some(&d @ '0'..='9') => {
                         digits.push('.');
                         has_dot = true;
@@ -319,57 +322,57 @@ fn scan_number(chars: &mut CharIterator) -> Result<Option<Token>, Error> {
     }
 
     if digits.is_empty() {
-        Ok(None)
+        Err(Error::syntax_error(position, "invalid number format"))
     } else {
-        Ok(Some(Token {
+        Ok(Token {
             kind: TokenKind::Number(digits.iter().collect::<String>().parse().unwrap()),
             position,
             text: digits.iter().collect::<String>(),
-        }))
+        })
     }
 }
 
-fn scan_string(chars: &mut CharIterator) -> Result<Option<Token>, Error> {
+fn scan_string(chars: &mut CharIterator) -> Result<Token, Error> {
     let mut string: Vec<char> = vec![];
-    let position = chars.position().clone();
+    let position = chars.get_position().clone();
 
-    if !matches!(chars.peek(), Some('"')) {
-        return Ok(None);
+    if !matches!(chars.peek(0), Some('"')) {
+        return Err(Error::unexpected_token(position, "\""));
     }
     chars.next();
 
     loop {
-        match chars.peek() {
+        match chars.peek(0) {
             Some('"') => {
                 chars.next();
-                return Ok(Some(Token {
+                return Ok(Token {
                     kind: TokenKind::String(string.iter().collect::<String>()),
                     position,
                     text: format!("\"{}\"", string.iter().collect::<String>()),
-                }));
+                });
             }
             Some(&c) => {
                 string.push(c);
                 chars.next();
             }
-            None => return Err(Error::syntax_error(chars.position().clone(), "Expect \""))
+            None => return Err(Error::unexpected_token(chars.get_position().clone(), "\"")),
         }
     }
 }
 
-fn scan_identifier(chars: &mut CharIterator) -> Result<Option<Token>, Error> {
+fn scan_identifier(chars: &mut CharIterator) -> Result<Token, Error> {
     let mut identifier_name: Vec<char> = vec![];
-    let position = chars.position().clone();
+    let position = chars.get_position().clone();
 
-    match chars.peek() {
+    match chars.peek(0) {
         Some(&c @ ('a'..='z' | 'A'..='Z' | '_')) => {
             identifier_name.push(c);
             chars.next();
         }
-        _ => return Ok(None)
+        _ => return Err(Error::syntax_error(position, "Invalid identifier name")),
     }
 
-    while let Some(&c @ ('a'..='z' | 'A'..='Z' | '0'..='9' | '_')) = chars.peek() {
+    while let Some(&c @ ('a'..='z' | 'A'..='Z' | '0'..='9' | '_')) = chars.peek(0) {
         identifier_name.push(c);
         chars.next();
     }
@@ -377,376 +380,211 @@ fn scan_identifier(chars: &mut CharIterator) -> Result<Option<Token>, Error> {
     let name = identifier_name.iter().collect::<String>();
 
     match name.as_str() {
-        "true" => Ok(Some(Token { kind: TokenKind::Bool(true), position, text: "true".to_string() })),
-        "false" => Ok(Some(Token { kind: TokenKind::Bool(false), position, text: "false".to_string() })),
-        _ => Ok(Some(Token { text: name.to_string(), kind: TokenKind::Identifier(name), position })),
+        "true" => Ok(Token { kind: TokenKind::Bool(true), position, text: "true".to_string() }),
+        "false" => Ok(Token { kind: TokenKind::Bool(false), position, text: "false".to_string() }),
+        _ => Ok(Token { text: name.to_string(), kind: TokenKind::Identifier(name), position }),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::lexer::{scan};
-    use crate::token::{Position, Token, TokenKind};
+    use crate::error::Error;
+    use crate::lexer::scan;
+    use crate::position::Position;
+    use crate::punctuation_kind::PunctuationKind;
+    use crate::token::Token;
 
-    trait UnwrapAll {
-        type Item;
-        fn unwrap_all(self) -> Vec<Self::Item>;
-    }
+    fn test(input: &str, expected: Vec<Result<Token, Error>>) {
+        let tokens = scan(input);
 
-    impl<T, E> UnwrapAll for Vec<Result<T, E>>
-    where
-        E: std::fmt::Debug,
-    {
-        type Item = T;
-        fn unwrap_all(self) -> Vec<Self::Item> {
-            self.into_iter().map(|t| t.unwrap()).collect()
-        }
+        assert_eq!(tokens, expected);
     }
 
     #[test]
-    fn test_whitespace() {
-        assert_eq!(scan(" ").unwrap_all(), vec![]);
-        assert_eq!(scan("\t").unwrap_all(), vec![]);
-        assert_eq!(scan("\r").unwrap_all(), vec![]);
-        assert_eq!(scan(" a").unwrap_all(), vec![
-            Token {
-                kind: TokenKind::Identifier("a".to_string()),
-                position: Position { line: 0, column: 1 },
-                text: "a".to_string(),
-            }
-        ]);
-        assert_eq!(scan("\ta").unwrap_all(), vec![
-            Token {
-                kind: TokenKind::Identifier("a".to_string()),
-                position: Position { line: 0, column: 1 },
-                text: "a".to_string(),
-            }
-        ]);
-        assert_eq!(scan("\ra").unwrap_all(), vec![
-            Token {
-                kind: TokenKind::Identifier("a".to_string()),
-                position: Position { line: 0, column: 1 },
-                text: "a".to_string(),
-            }
+    fn skip_whitespace() {
+        test(" ", vec![
+            Ok(Token::end_of_input(0, 1)),
         ]);
     }
 
-    mod number {
-        use crate::lexer::tests::UnwrapAll;
-        use crate::lexer::scan;
-        use crate::punctuation_kind::PunctuationKind;
-        use crate::token::{Position, Token, TokenKind};
-
-        #[test]
-        fn test_number_decimal_int() {
-            assert_eq!(scan("123").unwrap_all(), vec![
-                Token {
-                    kind: TokenKind::Number(123.0f64),
-                    position: Position { line: 0, column: 0 },
-                    text: "123".to_string(),
-                }
-            ]);
-            assert_eq!(scan("123a").unwrap_all(), vec![
-                Token {
-                    kind: TokenKind::Number(123.0f64),
-                    position: Position { line: 0, column: 0 },
-                    text: "123".to_string(),
-                },
-                Token {
-                    kind: TokenKind::Identifier("a".to_string()),
-                    position: Position { line: 0, column: 3 },
-                    text: "a".to_string(),
-                }
-            ]);
-        }
-
-        #[test]
-        fn test_number_decimal_int_starting_with_zero() {
-            assert_eq!(scan("0").unwrap_all(), vec![
-                Token {
-                    kind: TokenKind::Number(0.0f64),
-                    position: Position { line: 0, column: 0 },
-                    text: "0".to_string(),
-                }
-            ]);
-            assert_eq!(scan("0a").unwrap_all(), vec![
-                Token {
-                    kind: TokenKind::Number(0f64),
-                    position: Position { line: 0, column: 0 },
-                    text: "0".to_string(),
-                },
-                Token {
-                    kind: TokenKind::Identifier("a".to_string()),
-                    position: Position { line: 0, column: 1 },
-                    text: "a".to_string(),
-                }
-            ]);
-            assert_eq!(scan("0123").unwrap_all(), vec![
-                Token {
-                    kind: TokenKind::Number(123f64),
-                    position: Position { line: 0, column: 0 },
-                    text: "0123".to_string(),
-                }
-            ]);
-        }
-
-        #[test]
-        fn test_number_decimal_float() {
-            assert_eq!(scan("123.456").unwrap_all(), vec![
-                Token {
-                    kind: TokenKind::Number(123.456f64),
-                    position: Position { line: 0, column: 0 },
-                    text: "123.456".to_string(),
-                }
-            ]);
-            assert_eq!(scan("123.456a").unwrap_all(), vec![
-                Token {
-                    kind: TokenKind::Number(123.456f64),
-                    position: Position { line: 0, column: 0 },
-                    text: "123.456".to_string(),
-                },
-                Token {
-                    kind: TokenKind::Identifier("a".to_string()),
-                    position: Position { line: 0, column: 7 },
-                    text: "a".to_string(),
-                },
-            ]);
-        }
-
-        #[test]
-        fn test_number_decimal_float_starting_with_zero() {
-            assert_eq!(scan("0.456").unwrap_all(), vec![
-                Token {
-                    kind: TokenKind::Number(0.456f64),
-                    position: Position { line: 0, column: 0 },
-                    text: "0.456".to_string(),
-                }
-            ]);
-            assert_eq!(scan("0.456a").unwrap_all(), vec![
-                Token {
-                    kind: TokenKind::Number(0.456f64),
-                    position: Position { line: 0, column: 0 },
-                    text: "0.456".to_string(),
-                },
-                Token {
-                    kind: TokenKind::Identifier("a".to_string()),
-                    position: Position { line: 0, column: 5 },
-                    text: "a".to_string(),
-                }
-            ]);
-        }
-
-        #[test]
-        fn test_number_decimal_ending_with_dot() {
-            assert_eq!(scan("123.").unwrap_all(), vec![
-                Token {
-                    kind: TokenKind::Number(123f64),
-                    position: Position { line: 0, column: 0 },
-                    text: "123".to_string(),
-                },
-                Token {
-                    kind: TokenKind::Punctuation(PunctuationKind::Dot),
-                    position: Position { line: 0, column: 3 },
-                    text: ".".to_string(),
-                },
-            ]);
-            assert_eq!(scan("0.").unwrap_all(), vec![
-                Token {
-                    kind: TokenKind::Number(0f64),
-                    position: Position { line: 0, column: 0 },
-                    text: "0".to_string(),
-                },
-                Token {
-                    kind: TokenKind::Punctuation(PunctuationKind::Dot),
-                    position: Position { line: 0, column: 1 },
-                    text: ".".to_string(),
-                }
-            ]);
-        }
-
-        #[test]
-        fn test_number_decimal_with_multiple_dots() {
-            assert_eq!(scan("123.456.789").unwrap_all(), vec![
-                Token {
-                    kind: TokenKind::Number(123.456f64),
-                    position: Position { line: 0, column: 0 },
-                    text: "123.456".to_string(),
-                },
-                Token {
-                    kind: TokenKind::Punctuation(PunctuationKind::Dot),
-                    position: Position { line: 0, column: 7 },
-                    text: ".".to_string(),
-                },
-                Token {
-                    kind: TokenKind::Number(789f64),
-                    position: Position { line: 0, column: 8 },
-                    text: "789".to_string(),
-                }
-            ]);
-        }
+    #[test]
+    fn skip_tab() {
+        test("\t", vec![
+            Ok(Token::end_of_input(0, 1)),
+        ]);
     }
 
-    mod string {
-        use crate::error::Error;
-        use crate::lexer::tests::UnwrapAll;
-        use crate::lexer::scan;
-        use crate::token::{Position, Token, TokenKind};
-
-        #[test]
-        fn string() {
-            assert_eq!(scan("\"123\"").unwrap_all(), vec![
-                Token {
-                    kind: TokenKind::String("123".to_string()),
-                    position: Position { line: 0, column: 0 },
-                    text: "\"123\"".to_string(),
-                },
-            ]);
-            assert_eq!(scan("\"123\"a").unwrap_all(), vec![
-                Token {
-                    kind: TokenKind::String("123".to_string()),
-                    position: Position { line: 0, column: 0 },
-                    text: "\"123\"".to_string(),
-                },
-                Token {
-                    kind: TokenKind::Identifier("a".to_string()),
-                    position: Position { line: 0, column: 5 },
-                    text: "a".to_string(),
-                }
-            ]);
-        }
-
-        #[test]
-        fn empty_string() {
-            assert_eq!(scan("\"\"").unwrap_all(), vec![
-                Token {
-                    kind: TokenKind::String("".to_string()),
-                    position: Position { line: 0, column: 0 },
-                    text: "\"\"".to_string(),
-                }
-            ]);
-            assert_eq!(scan("\"\"a").unwrap_all(), vec![
-                Token {
-                    kind: TokenKind::String("".to_string()),
-                    position: Position { line: 0, column: 0 },
-                    text: "\"\"".to_string(),
-                },
-                Token {
-                    kind: TokenKind::Identifier("a".to_string()),
-                    position: Position { line: 0, column: 2 },
-                    text: "a".to_string(),
-                }
-            ]);
-        }
-
-        #[test]
-        fn unterminated_string() {
-            assert_eq!(
-                scan("\"abc"),
-                vec![
-                    Err(Error::syntax_error(Position { line: 0, column: 4 }, "Expect \""))
-                ]
-            );
-        }
+    #[test]
+    fn skip_carriage_return() {
+        test("\r", vec![
+            Ok(Token::end_of_input(0, 1)),
+        ]);
     }
 
-    #[allow(non_snake_case)]
-    mod punctuation {
-        use crate::lexer::tests::UnwrapAll;
-        use crate::lexer::{scan, PunctuationKind};
-        use crate::token::{Position, Token, TokenKind};
-
-        macro_rules! punctuation_test {
-            ($kind: ident, $punctuation: literal) => {
-                #[test]
-                fn $kind() {
-                    assert_eq!(scan($punctuation).unwrap_all(), vec![
-                        Token {
-                            kind: TokenKind::Punctuation(PunctuationKind::$kind),
-                            position: Position { line: 0, column: 0 },
-                            text: $punctuation.to_string(),
-                        },
-                    ]);
-                    assert_eq!(scan(format!("{}{}", $punctuation, "a").as_str()).unwrap_all(), vec![
-                        Token {
-                            kind: TokenKind::Punctuation(PunctuationKind::$kind),
-                            position: Position { line: 0, column: 0 },
-                            text: $punctuation.to_string(),
-                        },
-                        Token {
-                            kind: TokenKind::Identifier("a".to_string()),
-                            position: Position { line: 0, column: $punctuation.len() },
-                            text: "a".to_string(),
-                        },
-                    ]);
-                }
-            }
-        }
-
-        punctuation_test!(Plus, "+");
-        punctuation_test!(Minus, "-");
-        punctuation_test!(Asterisk, "*");
-        punctuation_test!(Slash, "/");
-        punctuation_test!(LeftParen, "(");
-        punctuation_test!(RightParen, ")");
-        punctuation_test!(LeftBrace, "{");
-        punctuation_test!(RightBrace, "}");
-        punctuation_test!(SemiColon, ";");
-        punctuation_test!(Comma, ",");
-        punctuation_test!(Equal, "=");
-        punctuation_test!(Exclamation, "!");
-        punctuation_test!(AndAnd, "&&");
-        punctuation_test!(VerticalLineVerticalLine, "||");
-        punctuation_test!(VerticalLine, "|");
-        punctuation_test!(Dot, ".");
-        punctuation_test!(Colon, ":");
-        punctuation_test!(EqualEqual, "==");
-        punctuation_test!(ExclamationEqual, "!=");
-        punctuation_test!(LeftBracket, "<");
-        punctuation_test!(LeftBracketEqual, "<=");
-        punctuation_test!(RightBracket, ">");
-        punctuation_test!(RightBracketEqual, ">=");
-        punctuation_test!(Question, "?");
+    #[test]
+    fn identifier() {
+        test("a", vec![
+            Ok(Token::identifier(0, 0, "a")),
+            Ok(Token::end_of_input(0, 1)),
+        ]);
     }
 
-    mod identifier {
-        use crate::lexer::scan;
-        use crate::lexer::tests::UnwrapAll;
-        use crate::token::{Position, Token, TokenKind};
+    #[test]
+    fn identifier_after_whitespace() {
+        test(" a", vec![
+            Ok(Token::identifier(0, 1, "a")),
+            Ok(Token::end_of_input(0, 2)),
+        ]);
+    }
 
-        #[test]
-        fn bool_true() {
-            assert_eq!(scan("true").unwrap_all(), vec![
-                Token {
-                    kind: TokenKind::Bool(true),
-                    position: Position { line: 0, column: 0 },
-                    text: "true".to_string(),
-                }
-            ]);
-            assert_eq!(scan("truea").unwrap_all(), vec![
-                Token {
-                    kind: TokenKind::Identifier("truea".to_string()),
-                    position: Position { line: 0, column: 0 },
-                    text: "truea".to_string(),
-                }
-            ]);
-        }
+    #[test]
+    fn multiple_identifiers() {
+        test("a b", vec![
+            Ok(Token::identifier(0, 0, "a")),
+            Ok(Token::identifier(0, 2, "b")),
+            Ok(Token::end_of_input(0, 3)),
+        ]);
+    }
 
-        #[test]
-        fn bool_false() {
-            assert_eq!(scan("false").unwrap_all(), vec![
-                Token {
-                    kind: TokenKind::Bool(false),
-                    position: Position { line: 0, column: 0 },
-                    text: "false".to_string(),
-                }
-            ]);
-            assert_eq!(scan("falsea").unwrap_all(), vec![
-                Token {
-                    kind: TokenKind::Identifier("falsea".to_string()),
-                    position: Position { line: 0, column: 0 },
-                    text: "falsea".to_string(),
-                }
-            ]);
-        }
+    #[test]
+    fn integer() {
+        test("123", vec![
+            Ok(Token::number(0, 0, 123f64, "123")),
+            Ok(Token::end_of_input(0, 3)),
+        ]);
+    }
+
+    #[test]
+    fn zero() {
+        test("0", vec![
+            Ok(Token::number(0, 0, 0f64, "0")),
+            Ok(Token::end_of_input(0, 1)),
+        ]);
+    }
+
+    #[test]
+    fn integer_with_leading_zero() {
+        test("0123", vec![
+            Ok(Token::number(0, 0, 123f64, "0123")),
+            Ok(Token::end_of_input(0, 4)),
+        ]);
+    }
+
+    #[test]
+    fn integer_with_trailing_dot() {
+        test("123.", vec![
+            Ok(Token::number(0, 0, 123f64, "123")),
+            Ok(Token::punctuation(0, 3, PunctuationKind::Dot, ".")),
+            Ok(Token::end_of_input(0, 4)),
+        ]);
+    }
+
+    #[test]
+    fn integer_with_plus() {
+        test("+123", vec![
+            Ok(Token::punctuation(0, 0, PunctuationKind::Plus, "+")),
+            Ok(Token::number(0, 1, 123f64, "123")),
+            Ok(Token::end_of_input(0, 4)),
+        ]);
+    }
+
+    #[test]
+    fn integer_with_minus() {
+        test("-123", vec![
+            Ok(Token::punctuation(0, 0, PunctuationKind::Minus, "-")),
+            Ok(Token::number(0, 1, 123f64, "123")),
+            Ok(Token::end_of_input(0, 4)),
+        ]);
+    }
+
+    #[test]
+    fn float() {
+        test("123.456", vec![
+            Ok(Token::number(0, 0, 123.456f64, "123.456")),
+            Ok(Token::end_of_input(0, 7)),
+        ]);
+    }
+
+    #[test]
+    fn float_less_than_1() {
+        test("0.456", vec![
+            Ok(Token::number(0, 0, 0.456f64, "0.456")),
+            Ok(Token::end_of_input(0, 5)),
+        ]);
+    }
+
+    #[test]
+    fn float_starting_with_dot() {
+        test(".456", vec![
+            Ok(Token::punctuation(0, 0, PunctuationKind::Dot, ".")),
+            Ok(Token::number(0, 1, 456f64, "456")),
+            Ok(Token::end_of_input(0, 4)),
+        ]);
+    }
+
+    #[test]
+    fn float_with_multiple_dots() {
+        test("123.456.789", vec![
+            Ok(Token::number(0, 0, 123.456f64, "123.456")),
+            Ok(Token::punctuation(0, 7, PunctuationKind::Dot, ".")),
+            Ok(Token::number(0, 8, 789f64, "789")),
+            Ok(Token::end_of_input(0, 11)),
+        ]);
+    }
+
+    #[test]
+    fn string() {
+        test("\"ABC\"", vec![
+            Ok(Token::string(0, 0, "ABC", "\"ABC\"")),
+            Ok(Token::end_of_input(0, 5)),
+        ]);
+    }
+
+    #[test]
+    fn empty_string() {
+        test("\"\"", vec![
+            Ok(Token::string(0, 0, "", "\"\"")),
+            Ok(Token::end_of_input(0, 2)),
+        ]);
+    }
+
+    #[test]
+    fn unterminated_string() {
+        test("\"ABC", vec![
+            Err(Error::unexpected_token(Position::new(0, 4), "\"")),
+            Ok(Token::end_of_input(0, 4)),
+        ]);
+    }
+
+    #[test]
+    fn bool_true() {
+        test("true", vec![
+            Ok(Token::bool(0, 0, true, "true")),
+            Ok(Token::end_of_input(0, 4)),
+        ]);
+    }
+
+    #[test]
+    fn identifier_with_prefix_true() {
+        test("trueabc", vec![
+            Ok(Token::identifier(0, 0, "trueabc")),
+            Ok(Token::end_of_input(0, 7)),
+        ]);
+    }
+
+    #[test]
+    fn bool_false() {
+        test("false", vec![
+            Ok(Token::bool(0, 0, false, "false")),
+            Ok(Token::end_of_input(0, 5)),
+        ]);
+    }
+
+    #[test]
+    fn identifier_with_prefix_false() {
+        test("falseabc", vec![
+            Ok(Token::identifier(0, 0, "falseabc")),
+            Ok(Token::end_of_input(0, 8)),
+        ]);
     }
 }

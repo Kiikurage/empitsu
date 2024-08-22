@@ -191,10 +191,10 @@ impl TypeChecker {
                     PunctuationKind::VerticalLineVerticalLine => Ok(Type::Bool),
                     PunctuationKind::EqualEqual => Ok(Type::Bool),
                     PunctuationKind::ExclamationEqual => Ok(Type::Bool),
-                    PunctuationKind::LeftBracket => Ok(Type::Bool),
-                    PunctuationKind::LeftBracketEqual => Ok(Type::Bool),
-                    PunctuationKind::RightBracket => Ok(Type::Bool),
-                    PunctuationKind::RightBracketEqual => Ok(Type::Bool),
+                    PunctuationKind::LeftChevron => Ok(Type::Bool),
+                    PunctuationKind::LeftChevronEqual => Ok(Type::Bool),
+                    PunctuationKind::RightChevron => Ok(Type::Bool),
+                    PunctuationKind::RightChevronEqual => Ok(Type::Bool),
                     _ => Err(format!("Unexpected operator: {:?}", operator)),
                 }
             }
@@ -216,15 +216,11 @@ impl TypeChecker {
             }
             Node::MemberExpression(struct_, property) => {
                 let struct_type = self.eval_node_type(struct_)?;
-                let property_name = match property.deref() {
-                    Node::Identifier(name) => name,
-                    _ => return Err(format!("Expected identifier, but got {:?}", property)),
-                };
                 match struct_type {
                     Type::Struct(struct_type) => {
-                        match struct_type.get_property_type(property_name) {
+                        match struct_type.get_property_type(property) {
                             Some(property_type) => Ok(property_type.clone()),
-                            None => Err(format!("Undefined property: {}", property_name)),
+                            None => Err(format!("Undefined property: {}", property)),
                         }
                     }
                     _ => Err(format!("Expected struct type, but got {:?}", struct_type)),
@@ -234,9 +230,11 @@ impl TypeChecker {
             Node::Bool(_value) => Ok(Type::Bool),
             Node::String(_value) => Ok(Type::String),
             Node::Null => Ok(Type::Null),
-            Node::Struct(type_, _property_initializers) => {
-                let type_ = self.eval_type_expression(type_);
-                Ok(type_)
+            Node::Struct(type_name, _property_initializers) => {
+                match self.get_symbol_type(type_name) {
+                    Some(Type::Struct(struct_type)) => Ok(Type::Struct(struct_type)),
+                    _ => Err(format!("Undefined struct: {}", type_name)),
+                }
             }
             Node::Identifier(name) => {
                 match self.get_symbol_type(name) {
@@ -251,9 +249,11 @@ impl TypeChecker {
     }
 
     pub fn check(&mut self, input: &str) -> Result<(), String> {
-        match parse(input) {
-            Ok(ast) => self.check_node(&ast),
-            Err(error) => Err(error.get_message()),
+        let result = parse(input);
+        if result.errors.is_empty() {
+            self.check_node(&result.node)
+        } else {
+            Err(result.errors.first().unwrap().get_message())
         }
     }
 
@@ -450,10 +450,10 @@ impl TypeChecker {
                     PunctuationKind::Minus |
                     PunctuationKind::Asterisk |
                     PunctuationKind::Slash |
-                    PunctuationKind::LeftBracket |
-                    PunctuationKind::LeftBracketEqual |
-                    PunctuationKind::RightBracket |
-                    PunctuationKind::RightBracketEqual => {
+                    PunctuationKind::LeftChevron |
+                    PunctuationKind::LeftChevronEqual |
+                    PunctuationKind::RightChevron |
+                    PunctuationKind::RightChevronEqual => {
                         if !lhs_type.is_assignable(&Type::Number) {
                             return Err(format!("TypeError: Expected type {:?}, but actual type is {:?}", Type::Number, lhs_type));
                         }
@@ -521,19 +521,14 @@ impl TypeChecker {
             }
             Node::MemberExpression(struct_, property) => {
                 self.check_node(struct_)?;
-
-                let property_name = match property.deref() {
-                    Node::Identifier(name) => name,
-                    _ => return Err(format!("Expected identifier, but got {:?}", property)),
-                };
-
+                
                 let struct_type = match self.eval_node_type(struct_)? {
                     Type::Struct(struct_type) => struct_type,
                     other => return Err(format!("Expected struct type, but got {:?}", other)),
                 };
 
-                if struct_type.get_property_type(property_name).is_none() {
-                    return Err(format!("Undefined property: {}", property_name));
+                if struct_type.get_property_type(property).is_none() {
+                    return Err(format!("Undefined property: {}", property));
                 }
 
                 Ok(())
@@ -542,9 +537,9 @@ impl TypeChecker {
             Node::Bool(_value) => Ok(()),
             Node::String(_value) => Ok(()),
             Node::Null => Ok(()),
-            Node::Struct(type_, property_initializers) => {
-                let struct_type = match self.eval_type_expression(type_) {
-                    Type::Struct(struct_type) => struct_type,
+            Node::Struct(type_name, property_initializers) => {
+                let struct_type = match self.get_symbol_type(type_name) {
+                    Some(Type::Struct(struct_type)) => struct_type,
                     other => return Err(format!("Expected struct type, actual type is {:?}", other)),
                 };
 
