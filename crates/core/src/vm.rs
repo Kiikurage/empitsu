@@ -4,7 +4,7 @@ use std::fmt::Debug;
 use std::ops::{ControlFlow, Deref};
 use std::rc::Rc;
 
-use crate::node::{Node, StructPropertyInitializer};
+use crate::node::Node;
 use crate::parser::parse;
 use crate::punctuation_kind::PunctuationKind;
 use crate::type_::Type;
@@ -391,20 +391,20 @@ impl VM {
                     _ => ControlFlow::Break(BreakResult::Error(Value::String(format!("Unexpected operator: {:?}", operator)))),
                 }
             }
-            Node::CallExpression(function, arguments) => {
-                let function = self.eval_node(function)?;
-                match function {
+            Node::CallExpression(function, parameters) => {
+                let callee = self.eval_node(function)?;
+                match callee {
                     Value::Function(function) => {
-                        let mut evaluated_arguments = vec![];
-                        for argument in arguments {
-                            evaluated_arguments.push(self.eval_node(argument)?);
+                        let mut evaluated_parameters = vec![];
+                        for parameter in parameters {
+                            evaluated_parameters.push(self.eval_node(parameter.value.deref())?);
                         }
 
                         let mut environment = Environment::new();
                         environment.parent = Some(function.closure);
                         self.environments.push(Rc::new(RefCell::new(environment)));
 
-                        for (argument, parameter_name) in evaluated_arguments.iter().zip(function.parameters.iter()) {
+                        for (argument, parameter_name) in evaluated_parameters.iter().zip(function.parameters.iter()) {
                             self.declare_variable(parameter_name, argument);
                         }
                         let ret = match self.eval_node(function.body.deref()) {
@@ -417,27 +417,38 @@ impl VM {
                         ControlFlow::Continue(ret)
                     }
                     Value::NativeFunction(function) => {
-                        let mut evaluated_arguments = vec![];
-                        for argument in arguments {
-                            evaluated_arguments.push(self.eval_node(argument)?);
+                        let mut evaluated_parameters = vec![];
+                        for parameter in parameters {
+                            evaluated_parameters.push(self.eval_node(parameter.value.deref())?);
                         }
 
                         let mut environment = Environment::new();
                         environment.parent = self.environments.first().map(Rc::clone);
                         self.environments.push(Rc::new(RefCell::new(environment)));
 
-                        let ret = (function.body)(&evaluated_arguments, self);
+                        let ret = (function.body)(&evaluated_parameters, self);
 
                         self.environments.pop();
                         ret
                     }
+                    // TODO: struct instantiation
+                    // Node::Struct(_type, property_initializers) => {
+                    //     let mut properties = HashMap::new();
+                    //     for StructPropertyInitializer { name, value } in property_initializers.iter() {
+                    //         properties.insert(name.clone(), self.eval_node(value)?);
+                    //     }
+                    //
+                    //     let address = self.allocate_object();
+                    //     self.structs.insert(address, RefCell::new(StructValue { properties }));
+                    //
+                    //     ControlFlow::Continue(Value::Ref(address))
+                    // }
                     _ => ControlFlow::Break(BreakResult::Error(Value::String(format!("{:?} is not a function", function)))),
                 }
             }
             Node::Number(value) => ControlFlow::Continue(Value::Number(*value)),
             Node::Bool(value) => ControlFlow::Continue(Value::Bool(*value)),
             Node::String(value) => ControlFlow::Continue(Value::String(value.clone())),
-            Node::Null => ControlFlow::Continue(Value::Null),
             Node::Identifier(name) => {
                 ControlFlow::Continue(self.get_variable(name)?.value)
             }
@@ -465,17 +476,6 @@ impl VM {
                     Some(value) => ControlFlow::Continue(value.clone()),
                     None => ControlFlow::Break(BreakResult::Error(Value::String(format!("Undefined property: {}", property))))
                 }
-            }
-            Node::Struct(_type, property_initializers) => {
-                let mut properties = HashMap::new();
-                for StructPropertyInitializer { name, value } in property_initializers.iter() {
-                    properties.insert(name.clone(), self.eval_node(value)?);
-                }
-
-                let address = self.allocate_object();
-                self.structs.insert(address, RefCell::new(StructValue { properties }));
-
-                ControlFlow::Continue(Value::Ref(address))
             }
 
             // tmp
@@ -957,9 +957,9 @@ mod tests {
         fn set_and_get_object() {
             let mut vm = VM::new();
             assert_eq!(vm.eval("
-                struct User { id: number, name: string }
+                struct User(id: number, name: string)
 
-                let user = User { id: 1, name: \"Alice\" }
+                let user = User(id=1, name=\"Alice\")
                 user
             "), Value::Ref(0));
 
@@ -973,10 +973,10 @@ mod tests {
         fn create_nested_object() {
             let mut vm = VM::new();
             assert_eq!(vm.eval("
-                struct User { id: number, name: string }
-                struct UserRef { user: User }
+                struct User(id: number, name: string)
+                struct UserRef(user: User)
 
-                let userRef = UserRef { user: User { id: 1, name: \"Alice\" } }
+                let userRef = UserRef(user=User(id=1, name=\"Alice\"))
                 userRef
             "), Value::Ref(1));
 
@@ -1007,9 +1007,9 @@ mod tests {
         fn write_member_of_object() {
             let mut vm = VM::new();
             assert_eq!(vm.eval("
-                struct User { id: number, name: string }
+                struct User(id: number, name: string)
 
-                let user = User { id: 1, name: \"Alice\" }
+                let user = User(id=1, name=\"Alice\")
                 user.id = 2
                 user
             "), Value::Ref(0));
@@ -1024,11 +1024,11 @@ mod tests {
         fn assign_ref_into_another_object() {
             let mut vm = VM::new();
             assert_eq!(vm.eval("
-                struct User { id: number, name: string }
-                struct UserRef { user: User }
+                struct User(id: number, name: string)
+                struct UserRef(user: User)
 
-                let user1 = User { id: 1, name: \"Alice\" }
-                let userRef = UserRef { user: user1 }
+                let user1 = User(id=1, name=\"Alice\")
+                let userRef = UserRef(user=user1)
                 userRef
             "), Value::Ref(1));
 
@@ -1046,11 +1046,11 @@ mod tests {
         fn write_member_of_object_through_nested_ref() {
             let mut vm = VM::new();
             assert_eq!(vm.eval("
-                struct User { id: number, name: string }
-                struct UserRef { user: User }
+                struct User(id: number, name: string)
+                struct UserRef(user: User)
 
-                let user1 = User { id: 1, name: \"Alice\" }
-                let userRef = UserRef { user: user1 }
+                let user1 = User(id=1, name=\"Alice\")
+                let userRef = UserRef(user=user1)
                 userRef.user.id = 2
                 userRef
             "), Value::Ref(1));
@@ -1069,12 +1069,12 @@ mod tests {
         fn access_ref_after_ref_variable_is_overwritten() {
             let mut vm = VM::new();
             assert_eq!(vm.eval("
-                struct User { id: number, name: string }
-                struct UserRef { user: User }
+                struct User(id: number, name: string)
+                struct UserRef(user: User)
 
-                let user1 = User { id: 1, name: \"Alice\" }
-                let userRef = UserRef { user: user1 }
-                user1 = User { id: 2, name: \"Bob\" }
+                let user1 = User(id=1, name=\"Alice\")
+                let userRef = UserRef(user=user1)
+                user1 = User(id=2, name=\"Bob\")
                 userRef
             "), Value::Ref(1));
 
@@ -1156,8 +1156,8 @@ mod tests {
         fn clean_up_all_unused_refs() {
             let mut vm = VM::new();
             vm.eval("
-                struct User { name: string }
-                let alice = User { name: \"Alice\" }
+                struct User(name: string)
+                let alice = User(name=\"Alice\")
             ");
             assert_eq!(vm.structs.len(), 1);
 
@@ -1289,9 +1289,9 @@ mod tests {
         fn declare_struct() {
             let mut vm = VM::new();
             assert_eq!(vm.eval("
-                struct User { id: number, name: string }
+                struct User(id: number, name: string)
 
-                let user = User { id: 1, name: \"Alice\" }
+                let user = User(id=1, name=\"Alice\")
             "), Value::Number(0.0));
         }
     }
@@ -1354,9 +1354,9 @@ mod tests {
         #[test]
         fn assign_into_struct_property() {
             assert_eq!(VM::new().eval("
-                struct User { id: number, name: string }
+                struct User(id: number, name: string)
 
-                let user = User { id: 1, name: \"Alice\" }
+                let user = User(id=1, name=\"Alice\")
                 user.id = \"userId\"
             "), Value::String("TypeError: Type String is not assignable into Number".to_string()));
         }
@@ -1364,15 +1364,15 @@ mod tests {
         #[test]
         fn struct_initialization() {
             assert_eq!(VM::new().eval("
-                struct User {
+                struct User(
                     id: number,
                     name: string
-                }
+                )
 
-                let user = User {
+                let user = User(
                     id: \"userId\",
                     name: \"Alice\"
-                }
+                )
             "), Value::String("TypeError: Expected type Number, but actual type is String".to_string()));
         }
     }

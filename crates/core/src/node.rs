@@ -18,20 +18,18 @@ pub enum Node {
     FunctionExpression(FunctionNode), // name, parameters, body
     IfExpression(Box<Node>, Box<Node>, Box<Node>), // condition, true-branch, false-branch
     BlockExpression(Vec<Node>),
-    RangeIterator(Box<Node>, Box<Node>), // temporary
     AssignmentExpression(Box<Node>, Box<Node>),
     BinaryExpression(Box<Node>, PunctuationKind, Box<Node>),
     UnaryExpression(PunctuationKind, Box<Node>),
-    CallExpression(Box<Node>, Vec<Node>),
+    CallExpression(Box<Node>, Vec<Parameter>),
     MemberExpression(Box<Node>, String),
     Identifier(String),
-
-    // Literal
     Number(f64),
     Bool(bool),
     String(String),
-    Struct(String, Vec<StructPropertyInitializer>),
-    Null,
+
+    // temporary
+    RangeIterator(Box<Node>, Box<Node>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -62,7 +60,13 @@ pub struct StructPropertyDeclaration {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct StructPropertyInitializer {
-    pub name: String,
+pub struct Parameter {
+    pub name: Option<String>,
     pub value: Box<Node>,
+}
+
+impl Parameter {
+    pub fn new(name: Option<String>, value: Node) -> Self {
+        Self { name, value: Box::new(value) }
+    }
 }

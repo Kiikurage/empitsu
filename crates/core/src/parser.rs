@@ -1,5 +1,5 @@
 use crate::error::Error;
-use crate::node::{FunctionNode, FunctionParameterDeclaration, Node, StructPropertyDeclaration, StructPropertyInitializer, TypeExpression};
+use crate::node::{FunctionNode, FunctionParameterDeclaration, Node, Parameter, StructPropertyDeclaration, TypeExpression};
 use crate::punctuation_kind::PunctuationKind;
 use crate::token::{Token, TokenKind};
 use crate::token_iterator::TokenIterator;
@@ -268,9 +268,9 @@ fn parse_struct_declaration(tokens: &mut TokenIterator) -> Result<Node, Error> {
     assert_keyword(tokens.next(), "struct")?;
     let name = assert_non_reserved_word(tokens.next())?;
 
-    assert_punctuation!(tokens.next(), LeftBrace)?;
+    assert_punctuation!(tokens.next(), LeftParen)?;
     let mut properties = vec![];
-    while assert_punctuation!(tokens.peek(), RightBrace).is_err() {
+    while assert_punctuation!(tokens.peek(), RightParen).is_err() {
         let name = assert_non_reserved_word(tokens.next())?;
         assert_punctuation!(tokens.next(), Colon)?;
         let type_ = parse_type_expression(tokens)?;
@@ -282,7 +282,9 @@ fn parse_struct_declaration(tokens: &mut TokenIterator) -> Result<Node, Error> {
             break;
         }
     }
-    assert_punctuation!(tokens.next(), RightBrace)?;
+    assert_punctuation!(tokens.next(), RightParen)?;
+
+    parse_statement_end(tokens)?;
 
     Ok(Node::StructDeclaration(name, properties))
 }
@@ -545,9 +547,9 @@ fn parse_call_expression(tokens: &mut TokenIterator) -> Result<Node, Error> {
     } else {
         return Ok(callee);
     }
-    let mut arguments = vec![];
+    let mut parameters = vec![];
     while assert_punctuation!(tokens.peek(), RightParen).is_err() {
-        arguments.push(parse_expression(tokens)?);
+        parameters.push(parse_parameter(tokens)?);
 
         if assert_punctuation!(tokens.peek(), Comma).is_ok() {
             tokens.next();
@@ -557,7 +559,26 @@ fn parse_call_expression(tokens: &mut TokenIterator) -> Result<Node, Error> {
     }
     assert_punctuation!(tokens.next(), RightParen)?;
 
-    Ok(Node::CallExpression(Box::new(callee), arguments))
+    Ok(Node::CallExpression(Box::new(callee), parameters))
+}
+
+fn parse_parameter(tokens: &mut TokenIterator) -> Result<Parameter, Error> {
+    let current = tokens.raw_offset;
+    match parse_named_parameter(tokens) {
+        Ok(parameter) => return Ok(parameter),
+        Err(..) => tokens.raw_offset = current,
+    }
+
+    let value = parse_expression(tokens)?;
+    Ok(Parameter::new(None, value))
+}
+
+fn parse_named_parameter(tokens: &mut TokenIterator) -> Result<Parameter, Error> {
+    let name = assert_non_reserved_word(tokens.next())?;
+    assert_punctuation!(tokens.next(), Equal)?;
+    let value = parse_expression(tokens)?;
+
+    Ok(Parameter::new(Some(name), value))
 }
 
 fn parse_left_hand_side_expression(tokens: &mut TokenIterator) -> Result<Node, Error> {
@@ -579,12 +600,6 @@ fn parse_member_expression(tokens: &mut TokenIterator) -> Result<Node, Error> {
 }
 
 fn parse_primary_expression(tokens: &mut TokenIterator) -> Result<Node, Error> {
-    let current = tokens.raw_offset;
-    if let Ok(node) = parse_struct_literal(tokens) {
-        return Ok(node);
-    }
-    tokens.raw_offset = current;
-
     match tokens.next() {
         Ok(Token { kind: TokenKind::Number(value), .. }) => Ok(Node::Number(*value)),
         Ok(Token { kind: TokenKind::Bool(value), .. }) => Ok(Node::Bool(*value)),
@@ -594,11 +609,7 @@ fn parse_primary_expression(tokens: &mut TokenIterator) -> Result<Node, Error> {
                 return Err(Error::reserved_word(position.clone(), name.clone()));
             }
 
-            if name == "null" {
-                Ok(Node::Null)
-            } else {
-                Ok(Node::Identifier(name.clone()))
-            }
+            Ok(Node::Identifier(name.clone()))
         }
         Ok(Token { kind: TokenKind::Punctuation(PunctuationKind::LeftParen), .. }) => {
             let expression = parse_expression(tokens)?;
@@ -608,29 +619,6 @@ fn parse_primary_expression(tokens: &mut TokenIterator) -> Result<Node, Error> {
         Ok(other) => Err(Error::unexpected_token(other.position.clone(), "expression")),
         Err(err) => Err(err.clone()),
     }
-}
-
-fn parse_struct_literal(tokens: &mut TokenIterator) -> Result<Node, Error> {
-    let name = assert_non_reserved_word(tokens.next())?;
-
-    assert_punctuation!(tokens.next(), LeftBrace)?;
-
-    let mut properties = vec![];
-    while assert_punctuation!(tokens.peek(), RightBrace).is_err() {
-        let name = assert_non_reserved_word(tokens.next())?;
-        assert_punctuation!(tokens.next(), Colon)?;
-        let value = parse_expression(tokens)?;
-        properties.push(StructPropertyInitializer { name, value: Box::new(value) });
-
-        if assert_punctuation!(tokens.peek(), Comma).is_ok() {
-            tokens.next();
-        } else {
-            break;
-        }
-    }
-    assert_punctuation!(tokens.next(), RightBrace)?;
-
-    Ok(Node::Struct(name, properties))
 }
 
 // Type
@@ -922,7 +910,7 @@ mod tests {
             #[test]
             fn struct_declaration() {
                 assert_eq!(
-                    parse("struct User { name: string, id: number }").node,
+                    parse("struct User(name: string, id: number)").node,
                     Node::Program(vec![
                         Node::StructDeclaration(
                             "User".to_string(),
@@ -944,7 +932,7 @@ mod tests {
             #[test]
             fn struct_declaration_without_properties() {
                 assert_eq!(
-                    parse("struct User {}").node,
+                    parse("struct User()").node,
                     Node::Program(vec![
                         Node::StructDeclaration(
                             "User".to_string(),
@@ -1586,7 +1574,7 @@ mod tests {
         }
 
         mod call_expression {
-            use crate::node::Node;
+            use crate::node::{Node, Parameter};
             use crate::parser::parse;
             use crate::punctuation_kind::PunctuationKind;
 
@@ -1611,9 +1599,9 @@ mod tests {
                         Node::CallExpression(
                             Box::new(Node::Identifier("func".to_string())),
                             vec![
-                                Node::Number(1f64),
-                                Node::Number(2f64),
-                                Node::Number(3f64),
+                                Parameter::new(None, Node::Number(1f64)),
+                                Parameter::new(None, Node::Number(2f64)),
+                                Parameter::new(None, Node::Number(3f64)),
                             ],
                         )
                     ])
@@ -1628,8 +1616,8 @@ mod tests {
                         Node::CallExpression(
                             Box::new(Node::Identifier("func".to_string())),
                             vec![
-                                Node::Number(1f64),
-                                Node::BinaryExpression(
+                                Parameter::new(None, Node::Number(1f64)),
+                                Parameter::new(None, Node::BinaryExpression(
                                     Box::new(Node::Number(2f64)),
                                     PunctuationKind::Asterisk,
                                     Box::new(Node::BinaryExpression(
@@ -1637,7 +1625,7 @@ mod tests {
                                         PunctuationKind::Plus,
                                         Box::new(Node::Number(4f64)),
                                     )),
-                                ),
+                                )),
                             ],
                         )
                     ])
@@ -1652,14 +1640,18 @@ mod tests {
                         Node::CallExpression(
                             Box::new(Node::Identifier("f".to_string())),
                             vec![
-                                Node::CallExpression(
+                                Parameter::new(None, Node::CallExpression(
                                     Box::new(Node::Identifier("g".to_string())),
-                                    vec![Node::Number(1f64)],
-                                ),
-                                Node::CallExpression(
+                                    vec![
+                                        Parameter::new(None, Node::Number(1f64)),
+                                    ],
+                                )),
+                                Parameter::new(None, Node::CallExpression(
                                     Box::new(Node::Identifier("h".to_string())),
-                                    vec![Node::Number(2f64)],
-                                ),
+                                    vec![
+                                        Parameter::new(None, Node::Number(2f64)),
+                                    ],
+                                )),
                             ],
                         )
                     ])
@@ -1723,7 +1715,7 @@ mod tests {
 
         mod primary_expression {
             use crate::error::Error;
-            use crate::node::Node;
+            use crate::node::{Node, Parameter};
             use crate::parser::parse;
             use crate::position::Position;
             use crate::punctuation_kind::PunctuationKind;
@@ -1783,7 +1775,7 @@ mod tests {
                         Node::CallExpression(
                             Box::new(Node::Identifier("print".to_string())),
                             vec![
-                                Node::String("hello".to_string()),
+                                Parameter::new(None, Node::String("hello".to_string())),
                             ],
                         )
                     ])
@@ -1901,16 +1893,16 @@ mod tests {
         }
 
         mod object_literal {
-            use crate::node::{Node, StructPropertyDeclaration, StructPropertyInitializer, TypeExpression};
+            use crate::node::{Node, Parameter, StructPropertyDeclaration, TypeExpression};
             use crate::parser::parse;
 
             #[test]
             fn empty_object() {
                 assert_eq!(
-                    parse("struct Obj{} Obj {}").node,
+                    parse("struct Obj(); Obj()").node,
                     Node::Program(vec![
                         Node::StructDeclaration("Obj".to_string(), vec![]),
-                        Node::Struct("Obj".to_string(), vec![]),
+                        Node::CallExpression(Box::new(Node::Identifier("Obj".to_string())), vec![]),
                     ])
                 );
             }
@@ -1918,7 +1910,7 @@ mod tests {
             #[test]
             fn object_having_properties() {
                 assert_eq!(
-                    parse("struct Obj { x: number, y: string } Obj {x:1, y:\"hello\"}").node,
+                    parse("struct Obj(x: number, y: string); Obj(x=1, y=\"hello\")").node,
                     Node::Program(vec![
                         Node::StructDeclaration(
                             "Obj".to_string(),
@@ -1933,17 +1925,11 @@ mod tests {
                                 },
                             ],
                         ),
-                        Node::Struct(
-                            "Obj".to_string(),
+                        Node::CallExpression(
+                            Box::new(Node::Identifier("Obj".to_string())),
                             vec![
-                                StructPropertyInitializer {
-                                    name: "x".to_string(),
-                                    value: Box::new(Node::Number(1f64)),
-                                },
-                                StructPropertyInitializer {
-                                    name: "y".to_string(),
-                                    value: Box::new(Node::String("hello".to_string())),
-                                },
+                                Parameter::new(Some("x".to_string()), Node::Number(1f64)),
+                                Parameter::new(Some("y".to_string()), Node::String("hello".to_string())),
                             ],
                         ),
                     ])
@@ -1954,9 +1940,9 @@ mod tests {
             fn nested_object() {
                 assert_eq!(
                     parse("
-                        struct Obj1 { x: Obj2, z: string }
-                        struct Obj2 { y: number }
-                        Obj1 {x: Obj2 {y:1}, z:\"hello\"}\
+                        struct Obj1(x: Obj2, z: string)
+                        struct Obj2(y: number)
+                        Obj1(x=Obj2(y=1), z=\"hello\")
                     ").node,
                     Node::Program(vec![
                         Node::StructDeclaration(
@@ -1981,27 +1967,25 @@ mod tests {
                                 },
                             ],
                         ),
-                        Node::Struct(
-                            "Obj1".to_string(),
+                        Node::CallExpression(
+                            Box::new(Node::Identifier("Obj1".to_string())),
                             vec![
-                                StructPropertyInitializer {
-                                    name: "x".to_string(),
-                                    value: Box::new(
-                                        Node::Struct(
-                                            "Obj2".to_string(),
-                                            vec![
-                                                StructPropertyInitializer {
-                                                    name: "y".to_string(),
-                                                    value: Box::new(Node::Number(1f64)),
-                                                }
-                                            ]
-                                        )
+                                Parameter::new(
+                                    Some("x".to_string()),
+                                    Node::CallExpression(
+                                        Box::new(Node::Identifier("Obj2".to_string())),
+                                        vec![
+                                            Parameter::new(
+                                                Some("y".to_string()),
+                                                Node::Number(1f64)
+                                            ),
+                                        ],
                                     ),
-                                },
-                                StructPropertyInitializer {
-                                    name: "z".to_string(),
-                                    value: Box::new(Node::String("hello".to_string())),
-                                },
+                                ),
+                                Parameter::new(
+                                    Some("z".to_string()),
+                                    Node::String("hello".to_string()),
+                                ),
                             ]
                         ),
                     ])
@@ -2011,7 +1995,7 @@ mod tests {
             #[test]
             fn assign_object_into_variable() {
                 assert_eq!(
-                    parse("struct Obj {y: number} x = Obj {y:1}").node,
+                    parse("struct Obj(y: number); x = Obj(y=1)").node,
                     Node::Program(vec![
                         Node::StructDeclaration(
                             "Obj".to_string(),
@@ -2024,13 +2008,13 @@ mod tests {
                         ),
                         Node::AssignmentExpression(
                             Box::new(Node::Identifier("x".to_string())),
-                            Box::new(Node::Struct(
-                                "Obj".to_string(),
+                            Box::new(Node::CallExpression(
+                                Box::new(Node::Identifier("Obj".to_string())),
                                 vec![
-                                    StructPropertyInitializer {
-                                        name: "y".to_string(),
-                                        value: Box::new(Node::Number(1f64)),
-                                    },
+                                    Parameter::new(
+                                        Some("y".to_string()),
+                                        Node::Number(1f64),
+                                    ),
                                 ]
                             )),
                         ),

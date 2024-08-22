@@ -209,6 +209,13 @@ impl TypeChecker {
             Node::CallExpression(function, _argument) => {
                 let function_type = match self.eval_node_type(function)? {
                     Type::Function(function_type) => function_type,
+                    // TODO: Struct instantiation
+                    // Node::Struct(type_name, _property_initializers) => {
+                    //     match self.get_symbol_type(type_name) {
+                    //         Some(Type::Struct(struct_type)) => Ok(Type::Struct(struct_type)),
+                    //         _ => Err(format!("Undefined struct: {}", type_name)),
+                    //     }
+                    // }
                     _ => return Err(format!("{:?} is not a function", function)),
                 };
 
@@ -229,13 +236,6 @@ impl TypeChecker {
             Node::Number(_value) => Ok(Type::Number),
             Node::Bool(_value) => Ok(Type::Bool),
             Node::String(_value) => Ok(Type::String),
-            Node::Null => Ok(Type::Null),
-            Node::Struct(type_name, _property_initializers) => {
-                match self.get_symbol_type(type_name) {
-                    Some(Type::Struct(struct_type)) => Ok(Type::Struct(struct_type)),
-                    _ => Err(format!("Undefined struct: {}", type_name)),
-                }
-            }
             Node::Identifier(name) => {
                 match self.get_symbol_type(name) {
                     Some(type_) => Ok(type_.clone()),
@@ -500,17 +500,49 @@ impl TypeChecker {
             Node::CallExpression(function, parameters) => {
                 self.check_node(function)?;
                 for parameter in parameters {
-                    self.check_node(parameter)?;
+                    self.check_node(parameter.value.deref())?;
                 }
 
                 let function_type = match self.eval_node_type(function)? {
                     Type::Function(function_type) => function_type,
+                    // TODO: Struct instantiation
+                    // Node::Struct(type_name, property_initializers) => {
+                    //     let struct_type = match self.get_symbol_type(type_name) {
+                    //         Some(Type::Struct(struct_type)) => struct_type,
+                    //         other => return Err(format!("Expected struct type, actual type is {:?}", other)),
+                    //     };
+                    //
+                    //     for definition in struct_type.properties.iter() {
+                    //         let initializer = match property_initializers
+                    //             .iter().find(|initializer| initializer.name == definition.name) {
+                    //             Some(initializer) => initializer,
+                    //             None => return Err(format!("Property {} is not initialized", definition.name)),
+                    //         };
+                    //
+                    //         let initializer_type = self.eval_node_type(&initializer.value)?;
+                    //
+                    //         if !initializer_type.is_assignable(&definition.type_) {
+                    //             return Err(format!("TypeError: Expected type {:?}, but actual type is {:?}", definition.type_, initializer_type));
+                    //         }
+                    //     }
+                    //
+                    //     for initializer in property_initializers {
+                    //         if !struct_type.properties.iter().any(|definition| definition.name == initializer.name) {
+                    //             return Err(
+                    //                 format!("Property \"{}\" is not defined in struct \"{}\"",
+                    //                         initializer.name, struct_type.name)
+                    //             );
+                    //         };
+                    //     }
+                    //
+                    //     Ok(())
+                    // }
                     _ => return Err(format!("{:?} is not a function", function)),
                 };
 
-                for (value, parameter) in parameters.iter().zip(function_type.parameters.iter()) {
-                    let value_type = self.eval_node_type(value)?;
-                    let parameter_type = &parameter.type_;
+                for (parameter, parameter_declaration) in parameters.iter().zip(function_type.parameters.iter()) {
+                    let value_type = self.eval_node_type(parameter.value.deref())?;
+                    let parameter_type = &parameter_declaration.type_;
 
                     if !value_type.is_assignable(parameter_type) {
                         return Err(format!("TypeError: Expected type {:?}, but actual type is {:?}", parameter_type, value_type));
@@ -521,7 +553,7 @@ impl TypeChecker {
             }
             Node::MemberExpression(struct_, property) => {
                 self.check_node(struct_)?;
-                
+
                 let struct_type = match self.eval_node_type(struct_)? {
                     Type::Struct(struct_type) => struct_type,
                     other => return Err(format!("Expected struct type, but got {:?}", other)),
@@ -536,38 +568,6 @@ impl TypeChecker {
             Node::Number(_value) => Ok(()),
             Node::Bool(_value) => Ok(()),
             Node::String(_value) => Ok(()),
-            Node::Null => Ok(()),
-            Node::Struct(type_name, property_initializers) => {
-                let struct_type = match self.get_symbol_type(type_name) {
-                    Some(Type::Struct(struct_type)) => struct_type,
-                    other => return Err(format!("Expected struct type, actual type is {:?}", other)),
-                };
-
-                for definition in struct_type.properties.iter() {
-                    let initializer = match property_initializers
-                        .iter().find(|initializer| initializer.name == definition.name) {
-                        Some(initializer) => initializer,
-                        None => return Err(format!("Property {} is not initialized", definition.name)),
-                    };
-
-                    let initializer_type = self.eval_node_type(&initializer.value)?;
-
-                    if !initializer_type.is_assignable(&definition.type_) {
-                        return Err(format!("TypeError: Expected type {:?}, but actual type is {:?}", definition.type_, initializer_type));
-                    }
-                }
-
-                for initializer in property_initializers {
-                    if !struct_type.properties.iter().any(|definition| definition.name == initializer.name) {
-                        return Err(
-                            format!("Property \"{}\" is not defined in struct \"{}\"",
-                                    initializer.name, struct_type.name)
-                        );
-                    };
-                }
-
-                Ok(())
-            }
             Node::Identifier(name) => {
                 if self.get_symbol_type(name).is_none() {
                     return Err(format!("Undefined symbol: {}", name));

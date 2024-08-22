@@ -64,7 +64,7 @@ z = true
 - 変数の型、初期値は省略可能
     - 変数の型が省略された場合、初期値から型を推論する
     - 初期値が省略された場合、初期化前に変数を参照するとエラーになる
-  
+
 #### 関数定義
 
 関数を定義する。
@@ -87,6 +87,11 @@ function double(x:number):number {
 struct User(id:number, name:string)
 ```
 
+- 定義した構造体は関数呼び出しと同じ文法で初期化することができる
+
+    ```text
+    let user = User(id=1, name="Alice")
+    ``` 
 
 ### 式
 
@@ -123,7 +128,11 @@ let x = if (flag) { 1 } else { 2 }
 
 ```text
 let x = double(2)
+
+print(text="hello", flag=true)
 ```
+
+- 引数名を指定して引数を渡すことができる
 
 #### リテラル
 
