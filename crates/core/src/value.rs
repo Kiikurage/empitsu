@@ -1,11 +1,9 @@
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::{Debug, Error, Formatter};
 use std::ops::ControlFlow;
 use std::rc::Rc;
-
 use crate::node::Node;
-use crate::vm::{BreakResult, Environment, VM};
+use crate::vm::{BreakResult, VM};
 
 pub type NativeFunction = fn(&Vec<Primitive>, &mut VM) -> ControlFlow<BreakResult, Primitive>;
 
@@ -72,8 +70,10 @@ pub enum Object {
 pub struct FunctionValue {
     pub name: String,
     pub parameters: Vec<String>,
-    pub body: Box<Node>,
-    pub closure: Rc<RefCell<Environment>>,
+    pub body: Rc<Box<Node>>,
+
+    // Index of the environment where the function was defined
+    pub closure: usize,
 }
 
 #[derive(Clone, PartialEq)]

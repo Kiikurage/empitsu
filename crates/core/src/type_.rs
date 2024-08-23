@@ -3,7 +3,6 @@ use std::fmt::Debug;
 
 #[derive(Clone, PartialEq, Eq, Debug, Hash)]
 pub enum Type {
-    // built-in
     Unchecked,
     Null,
     Number,
