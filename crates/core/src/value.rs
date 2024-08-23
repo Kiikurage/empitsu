@@ -16,6 +16,8 @@ pub enum Value {
     String(String),
     Function(FunctionValue),
     NativeFunction(NativeFunctionValue),
+    StructDefinition(StructDefinitionValue),
+    Struct(StructValue),
     Ref(usize),
     Null,
 }
@@ -33,6 +35,18 @@ pub struct NativeFunctionValue {
     pub name: String,
     pub parameters: Vec<String>,
     pub body: NativeFunction,
+}
+
+#[derive(Clone, PartialEq)]
+pub struct StructDefinitionValue {
+    pub name: String,
+    pub properties: Vec<String>,
+}
+
+#[derive(Clone, PartialEq)]
+pub struct StructValue {
+    pub name: String,
+    pub properties: HashMap<String, Value>,
 }
 
 impl Value {
@@ -60,6 +74,12 @@ impl Value {
             Value::Number(value) => Ok(value.to_string()),
             Value::Bool(value) => Ok(value.to_string()),
             Value::Ref(address) => Ok(format!("ref {}", address)),
+            Value::StructDefinition(struct_) => {
+                Ok(format!("Struct {}", struct_.name))
+            }
+            Value::Struct(struct_) => {
+                Ok(format!("struct {}", struct_.name))
+            }
             Value::Function(function) => {
                 Ok(format!("function {}({})", function.name, function.parameters.join(", ")))
             }
@@ -77,15 +97,12 @@ impl Debug for Value {
             Value::Number(value) => write!(f, "{}", value),
             Value::Bool(value) => write!(f, "{}", value),
             Value::String(value) => write!(f, "{}", value),
+            Value::Struct { .. } => write!(f, "{}", self.clone().into_string().unwrap()),
+            Value::StructDefinition { .. } => write!(f, "{}", self.clone().into_string().unwrap()),
             Value::Function { .. } => write!(f, "{}", self.clone().into_string().unwrap()),
             Value::NativeFunction { .. } => write!(f, "{}", self.clone().into_string().unwrap()),
             Value::Ref(value) => write!(f, "ref {}", value),
             Value::Null => write!(f, "null"),
         }
     }
-}
-
-#[derive(Clone, PartialEq)]
-pub struct StructValue {
-    pub properties: HashMap<String, Value>,
 }

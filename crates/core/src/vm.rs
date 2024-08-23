@@ -9,7 +9,7 @@ use crate::parser::parse;
 use crate::punctuation_kind::PunctuationKind;
 use crate::type_::Type;
 use crate::type_checker::TypeChecker;
-use crate::value::{FunctionValue, NativeFunction, NativeFunctionValue, StructValue, Value};
+use crate::value::{FunctionValue, NativeFunction, NativeFunctionValue, StructDefinitionValue, StructValue, Value};
 
 #[derive(Clone, PartialEq, Debug)]
 struct Variable {
@@ -145,6 +145,8 @@ impl Default for VM {
                 Value::Number(value) => println!("{}", value),
                 Value::Bool(value) => println!("{}", value),
                 Value::String(value) => println!("{}", value),
+                Value::Struct { .. } => println!("{}", value.clone().into_string().into_control_flow()?),
+                Value::StructDefinition { .. } => println!("{}", value.clone().into_string().into_control_flow()?),
                 Value::Function { .. } => println!("{}", value.clone().into_string().into_control_flow()?),
                 Value::NativeFunction { .. } => println!("{}", value.clone().into_string().into_control_flow()?),
                 Value::Ref(value) => println!("ref {}", value),
@@ -297,11 +299,17 @@ impl VM {
 
                 ControlFlow::Continue(function)
             }
-            Node::StructDeclaration(_name, property_declarations) => {
-                let mut properties = vec![];
+            Node::StructDeclaration(name, property_declarations) => {
+                let mut properties = Vec::new();
                 for property_declaration in property_declarations {
                     properties.push(property_declaration.name.clone());
                 }
+
+                let struct_ = Value::StructDefinition(StructDefinitionValue {
+                    name: name.clone(),
+                    properties
+                });
+                self.declare_variable(name, &struct_);
 
                 ControlFlow::Continue(Value::Number(0.0))
             }
@@ -391,12 +399,13 @@ impl VM {
                     _ => ControlFlow::Break(BreakResult::Error(Value::String(format!("Unexpected operator: {:?}", operator)))),
                 }
             }
-            Node::CallExpression(function, parameters) => {
-                let callee = self.eval_node(function)?;
+            Node::CallExpression(callee, parameters) => {
+                let callee = self.eval_node(callee)?;
                 match callee {
                     Value::Function(function) => {
                         let mut evaluated_parameters = vec![];
                         for parameter in parameters {
+                            // TODO: Named parameter
                             evaluated_parameters.push(self.eval_node(parameter.value.deref())?);
                         }
 
@@ -419,6 +428,7 @@ impl VM {
                     Value::NativeFunction(function) => {
                         let mut evaluated_parameters = vec![];
                         for parameter in parameters {
+                            // TODO: Named parameter
                             evaluated_parameters.push(self.eval_node(parameter.value.deref())?);
                         }
 
@@ -431,19 +441,20 @@ impl VM {
                         self.environments.pop();
                         ret
                     }
-                    // TODO: struct instantiation
-                    // Node::Struct(_type, property_initializers) => {
-                    //     let mut properties = HashMap::new();
-                    //     for StructPropertyInitializer { name, value } in property_initializers.iter() {
-                    //         properties.insert(name.clone(), self.eval_node(value)?);
-                    //     }
-                    //
-                    //     let address = self.allocate_object();
-                    //     self.structs.insert(address, RefCell::new(StructValue { properties }));
-                    //
-                    //     ControlFlow::Continue(Value::Ref(address))
-                    // }
-                    _ => ControlFlow::Break(BreakResult::Error(Value::String(format!("{:?} is not a function", function)))),
+                    Value::StructDefinition(struct_) => {
+                        let mut properties = HashMap::new();
+
+                        for (parameter, name) in parameters.iter().zip(struct_.properties.iter()) {
+                            // TODO: Named parameter
+                            properties.insert(name.clone(), self.eval_node(parameter.value.deref())?);
+                        }
+
+                        let address = self.allocate_object();
+                        self.structs.insert(address, RefCell::new(StructValue { name: struct_.name.clone(), properties }));
+
+                        ControlFlow::Continue(Value::Ref(address))
+                    }
+                    _ => ControlFlow::Break(BreakResult::Error(Value::String(format!("{:?} is not a callable", callee)))),
                 }
             }
             Node::Number(value) => ControlFlow::Continue(Value::Number(*value)),
@@ -1155,10 +1166,10 @@ mod tests {
         #[test]
         fn clean_up_all_unused_refs() {
             let mut vm = VM::new();
-            vm.eval("
+            println!("{:?}", vm.eval("
                 struct User(name: string)
                 let alice = User(name=\"Alice\")
-            ");
+            "));
             assert_eq!(vm.structs.len(), 1);
 
             vm.gc();
@@ -1370,8 +1381,8 @@ mod tests {
                 )
 
                 let user = User(
-                    id: \"userId\",
-                    name: \"Alice\"
+                    id=\"userId\",
+                    name=\"Alice\"
                 )
             "), Value::String("TypeError: Expected type Number, but actual type is String".to_string()));
         }

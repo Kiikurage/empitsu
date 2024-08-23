@@ -10,8 +10,7 @@ pub enum Type {
     Bool,
     String,
     Function(FunctionType), // parameters
-
-    // user-defined
+    StructDefinition(StructDefinitionType),
     Struct(StructType),
     Union(Vec<Type>),
 }
@@ -61,12 +60,17 @@ pub struct FunctionParameterDefinition {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug, Hash)]
-pub struct StructType {
+pub struct StructDefinitionType {
     pub name: String,
     pub properties: Vec<StructPropertyDefinition>,
 }
 
-impl StructType {
+#[derive(Clone, PartialEq, Eq, Debug, Hash)]
+pub struct StructType {
+    pub definition: StructDefinitionType,
+}
+
+impl StructDefinitionType {
     pub fn get_property_type(&self, property_name: &str) -> Option<&Type> {
         for property in self.properties.iter() {
             if property.name == property_name {
