@@ -9,11 +9,11 @@ use crate::parser::parse;
 use crate::punctuation_kind::PunctuationKind;
 use crate::type_::Type;
 use crate::type_checker::TypeChecker;
-use crate::value::{FunctionValue, HeapObject, NativeFunction, NativeFunctionValue, StructDefinitionValue, StructValue, Value};
+use crate::value::{FunctionValue, Object, NativeFunction, NativeFunctionValue, StructDefinitionValue, StructValue, Primitive};
 
 #[derive(Clone, PartialEq, Debug)]
 struct Variable {
-    value: Value,
+    value: Primitive,
 }
 
 #[derive(Default, Debug, PartialEq)]
@@ -32,8 +32,8 @@ impl Environment {
         }
     }
 
-    fn declare_variable(&mut self, name: &str, value: &Value) {
-        self.variables.insert(name.to_string(), Variable { value: value.clone() });
+    fn declare_variable(&mut self, name: &str, value: Primitive) {
+        self.variables.insert(name.to_string(), Variable { value });
     }
 
     fn get_variable(&self, name: &str) -> ControlFlow<BreakResult, Variable> {
@@ -42,22 +42,22 @@ impl Environment {
             None => {
                 match &self.parent {
                     Some(parent) => parent.borrow().get_variable(name),
-                    None => ControlFlow::Break(BreakResult::Error(Value::String(format!("Undefined variable: {}", name)))),
+                    None => ControlFlow::Break(BreakResult::Error(Primitive::String(format!("Undefined variable: {}", name)))),
                 }
             }
         }
     }
 
-    fn set_variable(&mut self, name: &str, value: &Value) -> ControlFlow<BreakResult, ()> {
+    fn set_variable(&mut self, name: &str, value: Primitive) -> ControlFlow<BreakResult, ()> {
         match self.variables.get_mut(name) {
             Some(variable) => {
-                variable.value = value.clone();
+                variable.value = value;
                 ControlFlow::Continue(())
             }
             None => {
                 match &self.parent {
                     Some(parent) => parent.borrow_mut().set_variable(name, value),
-                    None => ControlFlow::Break(BreakResult::Error(Value::String(format!("Undefined variable: {}", name)))),
+                    None => ControlFlow::Break(BreakResult::Error(Primitive::String(format!("Undefined variable: {}", name)))),
                 }
             }
         }
@@ -65,14 +65,14 @@ impl Environment {
 }
 
 pub enum BreakResult {
-    Return(Value),
-    Break(Value),
-    Error(Value),
+    Return(Primitive),
+    Break(Primitive),
+    Error(Primitive),
 }
 
 pub struct VM {
     environments: Vec<Rc<RefCell<Environment>>>,
-    pub heap: HashMap<usize, Rc<RefCell<HeapObject>>>,
+    pub heap: HashMap<usize, Rc<RefCell<Object>>>,
 }
 
 impl Default for VM {
@@ -85,69 +85,69 @@ impl Default for VM {
         vm.install_native_function("number", &["value"], |args, _vm| {
             let value = match args.first() {
                 Some(value) => value,
-                None => return ControlFlow::Break(BreakResult::Error(Value::String("Expected parameter".to_string()))),
+                None => return ControlFlow::Break(BreakResult::Error(Primitive::String("Expected parameter".to_string()))),
             };
             match value {
-                Value::Number(value) => ControlFlow::Continue(Value::Number(*value)),
-                Value::Bool(value) => ControlFlow::Continue(Value::Number(if *value { 1.0 } else { 0.0 })),
-                Value::String(value) => {
+                Primitive::Number(value) => ControlFlow::Continue(Primitive::Number(*value)),
+                Primitive::Bool(value) => ControlFlow::Continue(Primitive::Number(if *value { 1.0 } else { 0.0 })),
+                Primitive::String(value) => {
                     match value.parse::<f64>() {
-                        Ok(value) => ControlFlow::Continue(Value::Number(if value.is_nan() { 0.0 } else { value })),
-                        Err(_) => ControlFlow::Continue(Value::Number(0.0)),
+                        Ok(value) => ControlFlow::Continue(Primitive::Number(if value.is_nan() { 0.0 } else { value })),
+                        Err(_) => ControlFlow::Continue(Primitive::Number(0.0)),
                     }
                 }
-                _ => ControlFlow::Break(BreakResult::Error(Value::String(format!("Failed to cast {:?} to Number", value))))
+                _ => ControlFlow::Break(BreakResult::Error(Primitive::String(format!("Failed to cast {:?} to Number", value))))
             }
         });
         vm.install_native_function("bool", &["value"], |args, _vm| {
             let value = match args.first() {
                 Some(value) => value,
-                None => return ControlFlow::Break(BreakResult::Error(Value::String("Expected parameter".to_string()))),
+                None => return ControlFlow::Break(BreakResult::Error(Primitive::String("Expected parameter".to_string()))),
             };
             match value {
-                Value::Number(value) => ControlFlow::Continue(Value::Bool(*value != 0.0)),
-                Value::Bool(value) => ControlFlow::Continue(Value::Bool(*value)),
-                Value::String(value) => ControlFlow::Continue(Value::Bool(value != "false")),
-                _ => ControlFlow::Break(BreakResult::Error(Value::String(format!("Failed to cast {:?} to Bool", value)))),
+                Primitive::Number(value) => ControlFlow::Continue(Primitive::Bool(*value != 0.0)),
+                Primitive::Bool(value) => ControlFlow::Continue(Primitive::Bool(*value)),
+                Primitive::String(value) => ControlFlow::Continue(Primitive::Bool(value != "false")),
+                _ => ControlFlow::Break(BreakResult::Error(Primitive::String(format!("Failed to cast {:?} to Bool", value)))),
             }
         });
         vm.install_native_function("string", &["value"], |args, _vm| {
             let value = match args.first() {
                 Some(value) => value,
-                None => return ControlFlow::Break(BreakResult::Error(Value::String("Expected parameter".to_string()))),
+                None => return ControlFlow::Break(BreakResult::Error(Primitive::String("Expected parameter".to_string()))),
             };
             match value {
-                Value::Number(value) => ControlFlow::Continue(Value::String(value.to_string())),
-                Value::Bool(value) => ControlFlow::Continue(Value::String(value.to_string())),
-                Value::String(value) => ControlFlow::Continue(Value::String(value.clone())),
-                Value::Ref(address) => ControlFlow::Continue(Value::String(address.to_string())),
-                _ => ControlFlow::Break(BreakResult::Error(Value::String(format!("Failed to cast {:?} to Bool", value)))),
+                Primitive::Number(value) => ControlFlow::Continue(Primitive::String(value.to_string())),
+                Primitive::Bool(value) => ControlFlow::Continue(Primitive::String(value.to_string())),
+                Primitive::String(value) => ControlFlow::Continue(Primitive::String(value.clone())),
+                Primitive::Ref(address) => ControlFlow::Continue(Primitive::String(address.to_string())),
+                _ => ControlFlow::Break(BreakResult::Error(Primitive::String(format!("Failed to cast {:?} to Bool", value)))),
             }
         });
         vm.install_native_function("print", &["value"], |args, _vm| {
             let value = match args.first() {
                 Some(value) => value,
-                None => return ControlFlow::Break(BreakResult::Error(Value::String("Expected parameter".to_string()))),
+                None => return ControlFlow::Break(BreakResult::Error(Primitive::String("Expected parameter".to_string()))),
             };
             println!("{}", value.clone().into_string().into_control_flow()?);
-            ControlFlow::Continue(Value::Number(0.0))
+            ControlFlow::Continue(Primitive::Number(0.0))
         });
         vm.install_native_function("debug", &["value"], |args, _vm| {
             let value = match args.first() {
                 Some(value) => value,
-                None => return ControlFlow::Break(BreakResult::Error(Value::String("Expected parameter".to_string()))),
+                None => return ControlFlow::Break(BreakResult::Error(Primitive::String("Expected parameter".to_string()))),
             };
             match value {
-                Value::Number(value) => println!("{}", value),
-                Value::Bool(value) => println!("{}", value),
-                Value::String(value) => println!("{}", value),
-                Value::Ref(address) => {
+                Primitive::Number(value) => println!("{}", value),
+                Primitive::Bool(value) => println!("{}", value),
+                Primitive::String(value) => println!("{}", value),
+                Primitive::Ref(address) => {
                     // TODO: derefしたうえで、内容を表示する
                     println!("ref {}", address)
                 }
-                Value::Null => println!("null"),
+                Primitive::Null => println!("null"),
             }
-            ControlFlow::Continue(Value::Number(0.0))
+            ControlFlow::Continue(Primitive::Number(0.0))
         });
 
         vm
@@ -163,16 +163,16 @@ impl VM {
         Default::default()
     }
 
-    pub fn eval(&mut self, input: &str) -> Value {
+    pub fn eval(&mut self, input: &str) -> Primitive {
         let result = parse(input);
         let ast = if result.errors.is_empty() {
             result.node
         } else {
-            return Value::String(result.errors.first().unwrap().get_message());
+            return Primitive::String(result.errors.first().unwrap().get_message());
         };
 
         if let Err(message) = TypeChecker::new().check_node(&ast) {
-            return Value::String(message);
+            return Primitive::String(message);
         };
 
         match self.eval_node(&ast) {
@@ -188,7 +188,7 @@ impl VM {
 
         for env in self.environments.iter() {
             for variable in env.borrow().variables.values() {
-                if let Value::Ref(address) = variable.value {
+                if let Primitive::Ref(address) = variable.value {
                     retained_objects.insert(address);
                 }
             }
@@ -202,9 +202,9 @@ impl VM {
             };
 
             match heap_object.deref() {
-                HeapObject::StructInstance(struct_value) => {
+                Object::StructInstance(struct_value) => {
                     for value in struct_value.properties.values() {
-                        if let Value::Ref(address) = value {
+                        if let Primitive::Ref(address) = value {
                             if retained_objects.insert(*address) {
                                 queue.push_back(*address);
                             }
@@ -215,13 +215,13 @@ impl VM {
                     // struct User(name: String)
                     // let user = User(name="Alice")
                 }
-                HeapObject::StructDefinition(..) => {
+                Object::StructDefinition(..) => {
                     // TODO: プロパティの型として参照している別の構造体をretainする
                     // 以下の例の場合、UsersはUserを参照しているため、Userもretainする必要がある
                     // struct Users(user1: User)
                 }
-                HeapObject::Function(..) |
-                HeapObject::NativeFunction(..) => {
+                Object::Function(..) |
+                Object::NativeFunction(..) => {
                     // TODO: クロージャを通して参照しているオブジェクトをretainする
                     // いまはすべてのenvを見ているため問題ないが、そちらでは
                     // 現在の実行スコープから遡って参照可能なenvのみをチェックすべき
@@ -232,19 +232,19 @@ impl VM {
         self.heap.retain(|address, _| retained_objects.contains(address));
     }
 
-    fn eval_node(&mut self, node: &Node) -> ControlFlow<BreakResult, Value> {
+    fn eval_node(&mut self, node: &Node) -> ControlFlow<BreakResult, Primitive> {
         match node {
             Node::Program(nodes) => {
-                let mut ret = Value::Number(0.0);
+                let mut ret = Primitive::Number(0.0);
                 for node in nodes {
                     ret = match self.eval_node(node) {
                         ControlFlow::Continue(value) => value,
                         ControlFlow::Break(BreakResult::Return(_)) => {
-                            ret = Value::String("return is used outside of function".to_string());
+                            ret = Primitive::String("return is used outside of function".to_string());
                             break;
                         }
                         ControlFlow::Break(BreakResult::Break(_)) => {
-                            ret = Value::String("break is used outside of loop".to_string());
+                            ret = Primitive::String("break is used outside of loop".to_string());
                             break;
                         }
                         ControlFlow::Break(BreakResult::Error(value)) => {
@@ -257,25 +257,23 @@ impl VM {
             }
 
             // Statement
-            Node::EmptyStatement => ControlFlow::Continue(Value::Number(0.0)),
+            Node::EmptyStatement => ControlFlow::Continue(Primitive::Number(0.0)),
             Node::IfStatement(condition, true_branch, false_branch) => {
                 let condition = self.eval_node(condition)?.as_bool().into_control_flow()?;
                 if condition {
-                    self.eval_node(true_branch)
-                } else {
-                    match false_branch {
-                        Some(false_branch) => self.eval_node(false_branch),
-                        None => ControlFlow::Continue(Value::Number(0.0)),
-                    }
+                    self.eval_node(true_branch)?;
+                } else if let Some(false_branch) = false_branch {
+                    self.eval_node(false_branch)?;
                 }
+                ControlFlow::Continue(Primitive::Null)
             }
             Node::VariableDeclaration(name, _variable_type, value) => {
                 let value = match value {
                     Some(value) => self.eval_node(value)?,
-                    None => Value::Number(0.0),
+                    None => Primitive::Number(0.0),
                 };
-                self.declare_variable(name, &value);
-                ControlFlow::Continue(Value::Number(0.0))
+                self.declare_variable(name, value);
+                ControlFlow::Continue(Primitive::Null)
             }
             Node::ForStatement(variable, iterator, body) => {
                 self.enter_new_environment();
@@ -284,13 +282,13 @@ impl VM {
                     Node::RangeIterator(start, end) => {
                         (self.eval_node(start)?, self.eval_node(end)?)
                     }
-                    _ => return ControlFlow::Break(BreakResult::Error(Value::String("Unsupported iterator type".to_string())))
+                    _ => return ControlFlow::Break(BreakResult::Error(Primitive::String("Unsupported iterator type".to_string())))
                 };
                 let mut i = start.as_number().into_control_flow()?;
                 let end = end.as_number().into_control_flow()?;
-                self.declare_variable(variable, &start);
+                self.declare_variable(variable, start);
                 while i < end {
-                    self.set_variable(variable, &Value::Number(i))?;
+                    self.set_variable(variable, Primitive::Number(i))?;
                     match self.eval_node(body) {
                         ControlFlow::Break(BreakResult::Break(_)) => { break }
                         other => { other?; }
@@ -299,7 +297,7 @@ impl VM {
                 }
 
                 self.exit_environment();
-                ControlFlow::Continue(Value::Number(0.0))
+                ControlFlow::Continue(Primitive::Null)
             }
             Node::FunctionDeclaration(function_node) => {
                 let mut parameters = vec![];
@@ -308,16 +306,16 @@ impl VM {
                 }
 
                 let function_ref = self.allocate_heap(
-                    HeapObject::Function(FunctionValue {
+                    Object::Function(FunctionValue {
                         name: function_node.name.clone(),
                         parameters,
                         body: function_node.body.clone(),
                         closure: self.environments.last().unwrap().clone(),
                     })
                 );
-                self.declare_variable(&function_node.name, &function_ref);
+                self.declare_variable(&function_node.name, function_ref);
 
-                ControlFlow::Continue(function_ref)
+                ControlFlow::Continue(Primitive::Null)
             }
             Node::StructDeclaration(name, property_declarations) => {
                 let mut properties = Vec::new();
@@ -326,14 +324,14 @@ impl VM {
                 }
 
                 let struct_ref = self.allocate_heap(
-                    HeapObject::StructDefinition(StructDefinitionValue {
+                    Object::StructDefinition(StructDefinitionValue {
                         name: name.clone(),
                         properties,
                     })
                 );
-                self.declare_variable(name, &struct_ref);
+                self.declare_variable(name, struct_ref);
 
-                ControlFlow::Continue(struct_ref)
+                ControlFlow::Continue(Primitive::Null)
             }
 
             // Expression
@@ -344,7 +342,7 @@ impl VM {
                 }
 
                 let function_ref = self.allocate_heap(
-                    HeapObject::Function(FunctionValue {
+                    Object::Function(FunctionValue {
                         name: function_node.name.clone(),
                         parameters,
                         body: function_node.body.clone(),
@@ -356,7 +354,7 @@ impl VM {
             Node::IfExpression(condition, true_branch, false_branch) => {
                 let condition = match self.eval_node(condition)?.as_bool() {
                     Ok(condition) => condition,
-                    Err(message) => return ControlFlow::Break(BreakResult::Error(Value::String(message))),
+                    Err(message) => return ControlFlow::Break(BreakResult::Error(Primitive::String(message))),
                 };
 
                 if condition { self.eval_node(true_branch) } else { self.eval_node(false_branch) }
@@ -364,7 +362,7 @@ impl VM {
             Node::BlockExpression(nodes) => {
                 self.enter_new_environment();
 
-                let mut ret = Value::Number(0.0);
+                let mut ret = Primitive::Number(0.0);
                 for node in nodes {
                     ret = self.eval_node(node)?;
                 }
@@ -375,19 +373,19 @@ impl VM {
             Node::AssignmentExpression(lhs, value) => {
                 let value = self.eval_node(value)?;
                 match lhs.as_ref() {
-                    Node::Identifier(name) => self.set_variable(name, &value)?,
+                    Node::Identifier(name) => self.set_variable(name, value.clone())?,
                     Node::MemberExpression(object_ref, property) => {
                         let object_ref = self.eval_node(object_ref)?;
                         let object = self.dereference(&object_ref)?;
 
                         match object.borrow_mut().deref_mut() {
-                            HeapObject::StructInstance(ref mut struct_) => {
+                            Object::StructInstance(ref mut struct_) => {
                                 struct_.properties.insert(property.clone(), value.clone());
                             }
-                            _ => return ControlFlow::Break(BreakResult::Error(Value::String("Unsupported Operation: set property of non-struct object".to_string()))),
+                            _ => return ControlFlow::Break(BreakResult::Error(Primitive::String("Unsupported Operation: set property of non-struct object".to_string()))),
                         };
                     }
-                    _ => return ControlFlow::Break(BreakResult::Error(Value::String("Expected identifier".to_string()))),
+                    _ => return ControlFlow::Break(BreakResult::Error(Primitive::String("Expected identifier".to_string()))),
                 }
                 ControlFlow::Continue(value)
             }
@@ -396,29 +394,29 @@ impl VM {
                 let right = self.eval_node(right)?;
 
                 match operator {
-                    PunctuationKind::Plus => ControlFlow::Continue(Value::Number(left.as_number().into_control_flow()? + right.as_number().into_control_flow()?)),
-                    PunctuationKind::Minus => ControlFlow::Continue(Value::Number(left.as_number().into_control_flow()? - right.as_number().into_control_flow()?)),
-                    PunctuationKind::Asterisk => ControlFlow::Continue(Value::Number(left.as_number().into_control_flow()? * right.as_number().into_control_flow()?)),
-                    PunctuationKind::Slash => ControlFlow::Continue(Value::Number(left.as_number().into_control_flow()? / right.as_number().into_control_flow()?)),
-                    PunctuationKind::VerticalLineVerticalLine => ControlFlow::Continue(Value::Bool(left.as_bool().into_control_flow()? || right.as_bool().into_control_flow()?)),
-                    PunctuationKind::AndAnd => ControlFlow::Continue(Value::Bool(left.as_bool().into_control_flow()? && right.as_bool().into_control_flow()?)),
-                    PunctuationKind::EqualEqual => ControlFlow::Continue(Value::Bool(left == right)),  // TODO: 演算子オーバーロード
-                    PunctuationKind::ExclamationEqual => ControlFlow::Continue(Value::Bool(left != right)),  // TODO: 演算子オーバーロード
-                    PunctuationKind::LeftChevron => ControlFlow::Continue(Value::Bool(left.as_number().into_control_flow()? < right.as_number().into_control_flow()?)),
-                    PunctuationKind::LeftChevronEqual => ControlFlow::Continue(Value::Bool(left.as_number().into_control_flow()? <= right.as_number().into_control_flow()?)),
-                    PunctuationKind::RightChevron => ControlFlow::Continue(Value::Bool(left.as_number().into_control_flow()? > right.as_number().into_control_flow()?)),
-                    PunctuationKind::RightChevronEqual => ControlFlow::Continue(Value::Bool(left.as_number().into_control_flow()? >= right.as_number().into_control_flow()?)),
-                    _ => ControlFlow::Break(BreakResult::Error(Value::String(format!("Unexpected operator: {:?}", operator)))),
+                    PunctuationKind::Plus => ControlFlow::Continue(Primitive::Number(left.as_number().into_control_flow()? + right.as_number().into_control_flow()?)),
+                    PunctuationKind::Minus => ControlFlow::Continue(Primitive::Number(left.as_number().into_control_flow()? - right.as_number().into_control_flow()?)),
+                    PunctuationKind::Asterisk => ControlFlow::Continue(Primitive::Number(left.as_number().into_control_flow()? * right.as_number().into_control_flow()?)),
+                    PunctuationKind::Slash => ControlFlow::Continue(Primitive::Number(left.as_number().into_control_flow()? / right.as_number().into_control_flow()?)),
+                    PunctuationKind::VerticalLineVerticalLine => ControlFlow::Continue(Primitive::Bool(left.as_bool().into_control_flow()? || right.as_bool().into_control_flow()?)),
+                    PunctuationKind::AndAnd => ControlFlow::Continue(Primitive::Bool(left.as_bool().into_control_flow()? && right.as_bool().into_control_flow()?)),
+                    PunctuationKind::EqualEqual => ControlFlow::Continue(Primitive::Bool(left == right)),  // TODO: 演算子オーバーロード
+                    PunctuationKind::ExclamationEqual => ControlFlow::Continue(Primitive::Bool(left != right)),  // TODO: 演算子オーバーロード
+                    PunctuationKind::LeftChevron => ControlFlow::Continue(Primitive::Bool(left.as_number().into_control_flow()? < right.as_number().into_control_flow()?)),
+                    PunctuationKind::LeftChevronEqual => ControlFlow::Continue(Primitive::Bool(left.as_number().into_control_flow()? <= right.as_number().into_control_flow()?)),
+                    PunctuationKind::RightChevron => ControlFlow::Continue(Primitive::Bool(left.as_number().into_control_flow()? > right.as_number().into_control_flow()?)),
+                    PunctuationKind::RightChevronEqual => ControlFlow::Continue(Primitive::Bool(left.as_number().into_control_flow()? >= right.as_number().into_control_flow()?)),
+                    _ => ControlFlow::Break(BreakResult::Error(Primitive::String(format!("Unexpected operator: {:?}", operator)))),
                 }
             }
             Node::UnaryExpression(operator, operand) => {
                 let operand = self.eval_node(operand)?;
 
                 match operator {
-                    PunctuationKind::Plus => ControlFlow::Continue(Value::Number(operand.as_number().into_control_flow()?)),
-                    PunctuationKind::Minus => ControlFlow::Continue(Value::Number(-operand.as_number().into_control_flow()?)),
-                    PunctuationKind::Exclamation => ControlFlow::Continue(Value::Bool(!operand.as_bool().into_control_flow()?)),
-                    _ => ControlFlow::Break(BreakResult::Error(Value::String(format!("Unexpected operator: {:?}", operator)))),
+                    PunctuationKind::Plus => ControlFlow::Continue(Primitive::Number(operand.as_number().into_control_flow()?)),
+                    PunctuationKind::Minus => ControlFlow::Continue(Primitive::Number(-operand.as_number().into_control_flow()?)),
+                    PunctuationKind::Exclamation => ControlFlow::Continue(Primitive::Bool(!operand.as_bool().into_control_flow()?)),
+                    _ => ControlFlow::Break(BreakResult::Error(Primitive::String(format!("Unexpected operator: {:?}", operator)))),
                 }
             }
             Node::CallExpression(callee, parameters) => {
@@ -441,17 +439,17 @@ impl VM {
                 // callee.deref().borrow() が十分に生きていてほしい
                 let callee_deref_borrowed = callee.deref().borrow();
                 match callee_deref_borrowed.deref() {
-                    HeapObject::Function(function) => {
+                    Object::Function(function) => {
                         let parameters = match parse_parameters(&evaluated_parameters, &function.parameters) {
                             Ok(parameters) => parameters,
-                            Err(message) => return ControlFlow::Break(BreakResult::Error(Value::String(message))),
+                            Err(message) => return ControlFlow::Break(BreakResult::Error(Primitive::String(message))),
                         };
 
                         let mut environment = Environment::new();
                         environment.parent = Some(function.closure.clone());
                         self.environments.push(Rc::new(RefCell::new(environment)));
 
-                        for (parameter, parameter_name) in parameters.iter().zip(function.parameters.iter()) {
+                        for (parameter, parameter_name) in parameters.into_iter().zip(function.parameters.iter()) {
                             self.declare_variable(parameter_name, parameter);
                         }
                         let ret = match self.eval_node(function.body.deref()) {
@@ -463,10 +461,10 @@ impl VM {
                         self.environments.pop();
                         ControlFlow::Continue(ret)
                     }
-                    HeapObject::NativeFunction(function) => {
+                    Object::NativeFunction(function) => {
                         let parameters = match parse_parameters(&evaluated_parameters, &function.parameters) {
                             Ok(parameters) => parameters,
-                            Err(message) => return ControlFlow::Break(BreakResult::Error(Value::String(message))),
+                            Err(message) => return ControlFlow::Break(BreakResult::Error(Primitive::String(message))),
                         };
 
                         let mut environment = Environment::new();
@@ -478,11 +476,11 @@ impl VM {
                         self.environments.pop();
                         ret
                     }
-                    HeapObject::StructDefinition(struct_) => {
+                    Object::StructDefinition(struct_) => {
                         let mut properties = HashMap::new();
                         let parameters = match parse_parameters(&evaluated_parameters, &struct_.properties) {
                             Ok(parameters) => parameters,
-                            Err(message) => return ControlFlow::Break(BreakResult::Error(Value::String(message))),
+                            Err(message) => return ControlFlow::Break(BreakResult::Error(Primitive::String(message))),
                         };
 
                         for (parameter, name) in parameters.into_iter().zip(struct_.properties.iter()) {
@@ -490,7 +488,7 @@ impl VM {
                         }
 
                         let ref_ = self.allocate_heap(
-                            HeapObject::StructInstance(StructValue {
+                            Object::StructInstance(StructValue {
                                 name: struct_.name.clone(),
                                 properties,
                             })
@@ -498,12 +496,12 @@ impl VM {
 
                         ControlFlow::Continue(ref_)
                     }
-                    HeapObject::StructInstance(..) => ControlFlow::Break(BreakResult::Error(Value::String("Unsupported Operation: Use call expression with struct instance".to_string()))),
+                    Object::StructInstance(..) => ControlFlow::Break(BreakResult::Error(Primitive::String("Unsupported Operation: Use call expression with struct instance".to_string()))),
                 }
             }
-            Node::Number(value) => ControlFlow::Continue(Value::Number(*value)),
-            Node::Bool(value) => ControlFlow::Continue(Value::Bool(*value)),
-            Node::String(value) => ControlFlow::Continue(Value::String(value.clone())),
+            Node::Number(value) => ControlFlow::Continue(Primitive::Number(*value)),
+            Node::Bool(value) => ControlFlow::Continue(Primitive::Bool(*value)),
+            Node::String(value) => ControlFlow::Continue(Primitive::String(value.clone())),
             Node::Identifier(name) => {
                 ControlFlow::Continue(self.get_variable(name)?.value)
             }
@@ -511,29 +509,29 @@ impl VM {
                 ControlFlow::Break(BreakResult::Return(
                     match value {
                         Some(value) => self.eval_node(value)?,
-                        None => Value::Number(0.0),
+                        None => Primitive::Number(0.0),
                     }
                 ))
             }
-            Node::BreakExpression => ControlFlow::Break(BreakResult::Break(Value::Number(0.0))),
+            Node::BreakExpression => ControlFlow::Break(BreakResult::Break(Primitive::Number(0.0))),
             Node::MemberExpression(object_ref, property) => {
                 let object_ref = self.eval_node(object_ref)?;
                 let object = self.dereference(&object_ref)?;
 
                 match object.borrow().deref() {
-                    HeapObject::StructInstance(struct_value) => {
+                    Object::StructInstance(struct_value) => {
                         match struct_value.properties.get(property) {
                             Some(value) => ControlFlow::Continue(value.clone()),
-                            None => ControlFlow::Break(BreakResult::Error(Value::String(format!("Undefined property: {}", property))))
+                            None => ControlFlow::Break(BreakResult::Error(Primitive::String(format!("Undefined property: {}", property))))
                         }
                     }
-                    _ => ControlFlow::Break(BreakResult::Error(Value::String("Unsupported Operation: get property of non-struct object".to_string()))),
+                    _ => ControlFlow::Break(BreakResult::Error(Primitive::String("Unsupported Operation: get property of non-struct object".to_string()))),
                 }
             }
 
             // tmp
             Node::RangeIterator(_start, _end) => {
-                ControlFlow::Break(BreakResult::Break(Value::String("Unsupported".to_string())))
+                ControlFlow::Break(BreakResult::Break(Primitive::String("Unsupported".to_string())))
             }
         }
     }
@@ -548,7 +546,7 @@ impl VM {
         self.environments.pop();
     }
 
-    fn declare_variable(&mut self, name: &str, value: &Value) {
+    fn declare_variable(&mut self, name: &str, value: Primitive) {
         match self.environments.last() {
             Some(environment) => environment.borrow_mut().declare_variable(name, value),
             None => panic!("No environment"),
@@ -562,7 +560,7 @@ impl VM {
         }
     }
 
-    fn set_variable(&mut self, name: &str, value: &Value) -> ControlFlow<BreakResult, ()> {
+    fn set_variable(&mut self, name: &str, value: Primitive) -> ControlFlow<BreakResult, ()> {
         match self.environments.last() {
             Some(environment) => environment.borrow_mut().set_variable(name, value),
             None => panic!("No environment"),
@@ -580,7 +578,7 @@ impl VM {
             .collect();
 
         let ref_ = self.allocate_heap(
-            HeapObject::NativeFunction(NativeFunctionValue {
+            Object::NativeFunction(NativeFunctionValue {
                 name: name.to_string(),
                 parameters,
                 body,
@@ -591,36 +589,36 @@ impl VM {
         global.variables.insert(name.to_string(), Variable { value: ref_ });
     }
 
-    fn allocate_heap(&mut self, object: HeapObject) -> Value {
+    fn allocate_heap(&mut self, object: Object) -> Primitive {
         for address in 0.. {
             if let hash_map::Entry::Vacant(e) = self.heap.entry(address) {
                 e.insert(Rc::new(RefCell::new(object)));
-                return Value::Ref(address);
+                return Primitive::Ref(address);
             }
         }
         panic!("Failed to allocate object");
     }
 
     // TODO: 戻り値は、弱参照として貸し出せないか?
-    fn dereference(&self, ref_: &Value) -> ControlFlow<BreakResult, &Rc<RefCell<HeapObject>>> {
+    fn dereference(&self, ref_: &Primitive) -> ControlFlow<BreakResult, &Rc<RefCell<Object>>> {
         match ref_ {
-            Value::Ref(address) => {
+            Primitive::Ref(address) => {
                 match self.heap.get(address) {
                     Some(object) => ControlFlow::Continue(object),
-                    None => ControlFlow::Break(BreakResult::Error(Value::String("Undefined object".to_string()))),
+                    None => ControlFlow::Break(BreakResult::Error(Primitive::String("Undefined object".to_string()))),
                 }
             }
-            _ => ControlFlow::Break(BreakResult::Error(Value::String("Expected reference".to_string()))),
+            _ => ControlFlow::Break(BreakResult::Error(Primitive::String("Expected reference".to_string()))),
         }
     }
 }
 
 struct EvaluatedParameter {
     name: Option<String>,
-    value: Value,
+    value: Primitive,
 }
 
-fn parse_parameters(parameters: &[EvaluatedParameter], names: &[String]) -> Result<Vec<Value>, String> {
+fn parse_parameters(parameters: &[EvaluatedParameter], names: &[String]) -> Result<Vec<Primitive>, String> {
     let mut map = HashMap::new();
 
     let mut non_specified_names = names.iter().cloned().collect::<BTreeSet<_>>();
@@ -667,52 +665,52 @@ impl<T> IntoControlFlow<T> for Result<T, String> {
     fn into_control_flow(self) -> ControlFlow<BreakResult, T> {
         match self {
             Ok(value) => ControlFlow::Continue(value),
-            Err(message) => ControlFlow::Break(BreakResult::Error(Value::String(message))),
+            Err(message) => ControlFlow::Break(BreakResult::Error(Primitive::String(message))),
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::vm::{Value, VM};
+    use crate::vm::{Primitive, VM};
 
     #[test]
     fn reserved_words_in_variable_declaration() {
-        assert_eq!(VM::new().eval("let if"), Value::String("Syntax error: (1:5) \"if\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("let let"), Value::String("Syntax error: (1:5) \"let\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("let for"), Value::String("Syntax error: (1:5) \"for\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("let function"), Value::String("Syntax error: (1:5) \"function\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("let true"), Value::String("Syntax error: (1:5) Expected identifier".to_string()));
-        assert_eq!(VM::new().eval("let false"), Value::String("Syntax error: (1:5) Expected identifier".to_string()));
-        assert_eq!(VM::new().eval("let else"), Value::String("Syntax error: (1:5) \"else\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("let return"), Value::String("Syntax error: (1:5) \"return\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("let null"), Value::String("Syntax error: (1:5) \"null\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("let if"), Primitive::String("Syntax error: (1:5) \"if\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("let let"), Primitive::String("Syntax error: (1:5) \"let\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("let for"), Primitive::String("Syntax error: (1:5) \"for\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("let function"), Primitive::String("Syntax error: (1:5) \"function\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("let true"), Primitive::String("Syntax error: (1:5) Expected identifier".to_string()));
+        assert_eq!(VM::new().eval("let false"), Primitive::String("Syntax error: (1:5) Expected identifier".to_string()));
+        assert_eq!(VM::new().eval("let else"), Primitive::String("Syntax error: (1:5) \"else\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("let return"), Primitive::String("Syntax error: (1:5) \"return\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("let null"), Primitive::String("Syntax error: (1:5) \"null\" is a reserved word".to_string()));
     }
 
     #[test]
     fn reserved_words_in_function_name() {
-        assert_eq!(VM::new().eval("function if() {}"), Value::String("Syntax error: (1:10) \"if\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("function let() {}"), Value::String("Syntax error: (1:10) \"let\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("function for() {}"), Value::String("Syntax error: (1:10) \"for\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("function function() {}"), Value::String("Syntax error: (1:10) \"function\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("function true() {}"), Value::String("Syntax error: (1:10) Expected identifier".to_string()));
-        assert_eq!(VM::new().eval("function false() {}"), Value::String("Syntax error: (1:10) Expected identifier".to_string()));
-        assert_eq!(VM::new().eval("function else() {}"), Value::String("Syntax error: (1:10) \"else\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("function return() {}"), Value::String("Syntax error: (1:10) \"return\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("function null() {}"), Value::String("Syntax error: (1:10) \"null\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("function if() {}"), Primitive::String("Syntax error: (1:10) \"if\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("function let() {}"), Primitive::String("Syntax error: (1:10) \"let\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("function for() {}"), Primitive::String("Syntax error: (1:10) \"for\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("function function() {}"), Primitive::String("Syntax error: (1:10) \"function\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("function true() {}"), Primitive::String("Syntax error: (1:10) Expected identifier".to_string()));
+        assert_eq!(VM::new().eval("function false() {}"), Primitive::String("Syntax error: (1:10) Expected identifier".to_string()));
+        assert_eq!(VM::new().eval("function else() {}"), Primitive::String("Syntax error: (1:10) \"else\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("function return() {}"), Primitive::String("Syntax error: (1:10) \"return\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("function null() {}"), Primitive::String("Syntax error: (1:10) \"null\" is a reserved word".to_string()));
     }
 
     #[test]
     fn reserved_words_in_function_parameter() {
-        assert_eq!(VM::new().eval("function f(if): null {}"), Value::String("Syntax error: (1:12) \"if\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("function f(let): null {}"), Value::String("Syntax error: (1:12) \"let\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("function f(for): null {}"), Value::String("Syntax error: (1:12) \"for\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("function f(function): null {}"), Value::String("Syntax error: (1:12) \"function\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("function f(true): null {}"), Value::String("Syntax error: (1:12) Expected identifier".to_string()));
-        assert_eq!(VM::new().eval("function f(false): null {}"), Value::String("Syntax error: (1:12) Expected identifier".to_string()));
-        assert_eq!(VM::new().eval("function f(else): null {}"), Value::String("Syntax error: (1:12) \"else\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("function f(return): null {}"), Value::String("Syntax error: (1:12) \"return\" is a reserved word".to_string()));
-        assert_eq!(VM::new().eval("function f(null): null {}"), Value::String("Syntax error: (1:12) \"null\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("function f(if): null {}"), Primitive::String("Syntax error: (1:12) \"if\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("function f(let): null {}"), Primitive::String("Syntax error: (1:12) \"let\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("function f(for): null {}"), Primitive::String("Syntax error: (1:12) \"for\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("function f(function): null {}"), Primitive::String("Syntax error: (1:12) \"function\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("function f(true): null {}"), Primitive::String("Syntax error: (1:12) Expected identifier".to_string()));
+        assert_eq!(VM::new().eval("function f(false): null {}"), Primitive::String("Syntax error: (1:12) Expected identifier".to_string()));
+        assert_eq!(VM::new().eval("function f(else): null {}"), Primitive::String("Syntax error: (1:12) \"else\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("function f(return): null {}"), Primitive::String("Syntax error: (1:12) \"return\" is a reserved word".to_string()));
+        assert_eq!(VM::new().eval("function f(null): null {}"), Primitive::String("Syntax error: (1:12) \"null\" is a reserved word".to_string()));
     }
 
     #[test]
@@ -723,7 +721,7 @@ mod tests {
         // assert_eq!(VM::new().eval("debug(1)"), Value::Number(0.0));
         // assert_eq!(VM::new().eval("number(1)+number(true)"), Value::Number(2.0));
         // assert_eq!(VM::new().eval("{1+2}"), Value::Number(3.0));
-        assert_eq!(VM::new().eval("if (true) 2 else 3"), Value::Number(2.0));
+        assert_eq!(VM::new().eval("if (true) 2 else 3"), Primitive::Number(2.0));
         // assert_eq!(VM::new().eval("if (true) 2 else 3"), Value::Number(2.0));
         // assert_eq!(VM::new().eval("if (true) { debug(123); 2 } else { 3 }"), Value::Number(2.0));
         // assert_eq!(VM::new().eval("if (true) 2 else 3*3"), Value::Number(2.0));
@@ -763,7 +761,7 @@ mod tests {
             } else {
                 print(\"false\")
             }
-        "), Value::String("TypeError: If-statement condition must be a Bool, but actual type is Number".to_string()));
+        "), Primitive::String("TypeError: If-statement condition must be a Bool, but actual type is Number".to_string()));
     }
 
     #[test]
@@ -776,7 +774,7 @@ mod tests {
             test(1)
             test(10)
             test(100)
-        "), Value::Number(0.0));
+        "), Primitive::Number(0.0));
     }
 
     #[test]
@@ -784,7 +782,7 @@ mod tests {
         assert_eq!(VM::new().eval("
             let x = 1  // single line comment
             x
-        "), Value::Number(1.0));
+        "), Primitive::Number(1.0));
     }
 
     #[test]
@@ -797,7 +795,7 @@ mod tests {
 
             */
             x
-        "), Value::Number(1.0));
+        "), Primitive::Number(1.0));
     }
 
     #[test]
@@ -813,7 +811,7 @@ mod tests {
             setX(1)
             debug(x)
             x
-        "), Value::Number(1.0));
+        "), Primitive::Number(1.0));
     }
 
     #[test]
@@ -834,7 +832,7 @@ mod tests {
             wrapper()  // x=1
             debug(x)  // 1
             x
-        "), Value::Number(1.0));
+        "), Primitive::Number(1.0));
     }
 
     #[test]
@@ -845,7 +843,7 @@ mod tests {
             }
 
             double(3)
-        "), Value::Number(6.0));
+        "), Primitive::Number(6.0));
     }
 
     #[test]
@@ -856,14 +854,14 @@ mod tests {
             }
 
             double(3)
-        "), Value::Number(6.0));
+        "), Primitive::Number(6.0));
     }
 
     #[test]
     fn call_function_immediately() {
         assert_eq!(VM::new().eval("
             (function (x: number): number { x * 2 })(3)
-        "), Value::Number(6.0));
+        "), Primitive::Number(6.0));
     }
 
     #[test]
@@ -876,7 +874,7 @@ mod tests {
             }
 
             test()
-        "), Value::Number(2.0));
+        "), Primitive::Number(2.0));
     }
 
     #[test]
@@ -888,7 +886,7 @@ mod tests {
             }
 
             test()
-        "), Value::Number(1.0));
+        "), Primitive::Number(1.0));
     }
 
     #[test]
@@ -900,7 +898,7 @@ mod tests {
         }
         debug(i)
         i
-        "), Value::Number(100.0));
+        "), Primitive::Number(100.0));
     }
 
     #[test]
@@ -914,7 +912,7 @@ mod tests {
             }
         }
         x
-        "), Value::Number(-15.0));
+        "), Primitive::Number(-15.0));
     }
 
     #[test]
@@ -929,7 +927,7 @@ mod tests {
             }
         }
         x
-        "), Value::Number(-15.0));
+        "), Primitive::Number(-15.0));
     }
 
     #[test]
@@ -945,7 +943,7 @@ mod tests {
             }
         }
         x
-        "), Value::Number(-150.0));
+        "), Primitive::Number(-150.0));
     }
 
     #[test]
@@ -959,7 +957,7 @@ mod tests {
         }
         debug(x)
         x
-        "), Value::Number(0.0));
+        "), Primitive::Number(0.0));
     }
 
     #[test]
@@ -972,76 +970,76 @@ mod tests {
         }
         debug(x)
         x
-        "), Value::Number(100.0));
+        "), Primitive::Number(100.0));
     }
 
     mod expression {
-        use crate::value::Value;
+        use crate::value::Primitive;
         use crate::vm::VM;
 
         #[test]
         fn equal() {
-            assert_eq!(VM::new().eval("1 == 1"), Value::Bool(true));
-            assert_eq!(VM::new().eval("1 == 2"), Value::Bool(false));
-            assert_eq!(VM::new().eval("true == true"), Value::Bool(true));
-            assert_eq!(VM::new().eval("true == false"), Value::Bool(false));
-            assert_eq!(VM::new().eval("\"a\" == \"a\""), Value::Bool(true));
-            assert_eq!(VM::new().eval("\"a\" == \"b\""), Value::Bool(false));
+            assert_eq!(VM::new().eval("1 == 1"), Primitive::Bool(true));
+            assert_eq!(VM::new().eval("1 == 2"), Primitive::Bool(false));
+            assert_eq!(VM::new().eval("true == true"), Primitive::Bool(true));
+            assert_eq!(VM::new().eval("true == false"), Primitive::Bool(false));
+            assert_eq!(VM::new().eval("\"a\" == \"a\""), Primitive::Bool(true));
+            assert_eq!(VM::new().eval("\"a\" == \"b\""), Primitive::Bool(false));
         }
 
         #[test]
         fn not_equal() {
-            assert_eq!(VM::new().eval("1 != 1"), Value::Bool(false));
-            assert_eq!(VM::new().eval("1 != 2"), Value::Bool(true));
-            assert_eq!(VM::new().eval("true != true"), Value::Bool(false));
-            assert_eq!(VM::new().eval("true != false"), Value::Bool(true));
-            assert_eq!(VM::new().eval("\"a\" != \"a\""), Value::Bool(false));
-            assert_eq!(VM::new().eval("\"a\" != \"b\""), Value::Bool(true));
+            assert_eq!(VM::new().eval("1 != 1"), Primitive::Bool(false));
+            assert_eq!(VM::new().eval("1 != 2"), Primitive::Bool(true));
+            assert_eq!(VM::new().eval("true != true"), Primitive::Bool(false));
+            assert_eq!(VM::new().eval("true != false"), Primitive::Bool(true));
+            assert_eq!(VM::new().eval("\"a\" != \"a\""), Primitive::Bool(false));
+            assert_eq!(VM::new().eval("\"a\" != \"b\""), Primitive::Bool(true));
         }
 
         #[test]
         fn less_than() {
-            assert_eq!(VM::new().eval("1 < 0"), Value::Bool(false));
-            assert_eq!(VM::new().eval("1 < 1"), Value::Bool(false));
-            assert_eq!(VM::new().eval("1 < 2"), Value::Bool(true));
-            assert_eq!(VM::new().eval("true < false"), Value::String("TypeError: Expected type Number, but actual type is Bool".to_string()));
-            assert_eq!(VM::new().eval("\"a\" < \"a\""), Value::String("TypeError: Expected type Number, but actual type is String".to_string()));
-            assert_eq!(VM::new().eval("\"0.0\" < \"1.0\""), Value::String("TypeError: Expected type Number, but actual type is String".to_string()));
+            assert_eq!(VM::new().eval("1 < 0"), Primitive::Bool(false));
+            assert_eq!(VM::new().eval("1 < 1"), Primitive::Bool(false));
+            assert_eq!(VM::new().eval("1 < 2"), Primitive::Bool(true));
+            assert_eq!(VM::new().eval("true < false"), Primitive::String("TypeError: Expected type Number, but actual type is Bool".to_string()));
+            assert_eq!(VM::new().eval("\"a\" < \"a\""), Primitive::String("TypeError: Expected type Number, but actual type is String".to_string()));
+            assert_eq!(VM::new().eval("\"0.0\" < \"1.0\""), Primitive::String("TypeError: Expected type Number, but actual type is String".to_string()));
         }
 
         #[test]
         fn less_than_or_equal() {
-            assert_eq!(VM::new().eval("1 <= 0"), Value::Bool(false));
-            assert_eq!(VM::new().eval("1 <= 1"), Value::Bool(true));
-            assert_eq!(VM::new().eval("1 <= 2"), Value::Bool(true));
-            assert_eq!(VM::new().eval("true < false"), Value::String("TypeError: Expected type Number, but actual type is Bool".to_string()));
-            assert_eq!(VM::new().eval("\"a\" < \"a\""), Value::String("TypeError: Expected type Number, but actual type is String".to_string()));
-            assert_eq!(VM::new().eval("\"0.0\" < \"1.0\""), Value::String("TypeError: Expected type Number, but actual type is String".to_string()));
+            assert_eq!(VM::new().eval("1 <= 0"), Primitive::Bool(false));
+            assert_eq!(VM::new().eval("1 <= 1"), Primitive::Bool(true));
+            assert_eq!(VM::new().eval("1 <= 2"), Primitive::Bool(true));
+            assert_eq!(VM::new().eval("true < false"), Primitive::String("TypeError: Expected type Number, but actual type is Bool".to_string()));
+            assert_eq!(VM::new().eval("\"a\" < \"a\""), Primitive::String("TypeError: Expected type Number, but actual type is String".to_string()));
+            assert_eq!(VM::new().eval("\"0.0\" < \"1.0\""), Primitive::String("TypeError: Expected type Number, but actual type is String".to_string()));
         }
 
         #[test]
         fn greater_than() {
-            assert_eq!(VM::new().eval("0 > 1"), Value::Bool(false));
-            assert_eq!(VM::new().eval("1 > 1"), Value::Bool(false));
-            assert_eq!(VM::new().eval("2 > 1"), Value::Bool(true));
-            assert_eq!(VM::new().eval("true > false"), Value::String("TypeError: Expected type Number, but actual type is Bool".to_string()));
-            assert_eq!(VM::new().eval("\"a\" > \"a\""), Value::String("TypeError: Expected type Number, but actual type is String".to_string()));
-            assert_eq!(VM::new().eval("\"0.0\" > \"1.0\""), Value::String("TypeError: Expected type Number, but actual type is String".to_string()));
+            assert_eq!(VM::new().eval("0 > 1"), Primitive::Bool(false));
+            assert_eq!(VM::new().eval("1 > 1"), Primitive::Bool(false));
+            assert_eq!(VM::new().eval("2 > 1"), Primitive::Bool(true));
+            assert_eq!(VM::new().eval("true > false"), Primitive::String("TypeError: Expected type Number, but actual type is Bool".to_string()));
+            assert_eq!(VM::new().eval("\"a\" > \"a\""), Primitive::String("TypeError: Expected type Number, but actual type is String".to_string()));
+            assert_eq!(VM::new().eval("\"0.0\" > \"1.0\""), Primitive::String("TypeError: Expected type Number, but actual type is String".to_string()));
         }
 
         #[test]
         fn greater_than_or_equal() {
-            assert_eq!(VM::new().eval("0 >= 1"), Value::Bool(false));
-            assert_eq!(VM::new().eval("1 >= 1"), Value::Bool(true));
-            assert_eq!(VM::new().eval("2 >= 1"), Value::Bool(true));
-            assert_eq!(VM::new().eval("true >= false"), Value::String("TypeError: Expected type Number, but actual type is Bool".to_string()));
-            assert_eq!(VM::new().eval("\"a\" >= \"a\""), Value::String("TypeError: Expected type Number, but actual type is String".to_string()));
-            assert_eq!(VM::new().eval("\"0.0\" >= \"1.0\""), Value::String("TypeError: Expected type Number, but actual type is String".to_string()));
+            assert_eq!(VM::new().eval("0 >= 1"), Primitive::Bool(false));
+            assert_eq!(VM::new().eval("1 >= 1"), Primitive::Bool(true));
+            assert_eq!(VM::new().eval("2 >= 1"), Primitive::Bool(true));
+            assert_eq!(VM::new().eval("true >= false"), Primitive::String("TypeError: Expected type Number, but actual type is Bool".to_string()));
+            assert_eq!(VM::new().eval("\"a\" >= \"a\""), Primitive::String("TypeError: Expected type Number, but actual type is String".to_string()));
+            assert_eq!(VM::new().eval("\"0.0\" >= \"1.0\""), Primitive::String("TypeError: Expected type Number, but actual type is String".to_string()));
         }
     }
 
     mod variable_declaration {
-        use crate::vm::{Value, Variable, VM};
+        use crate::vm::{Primitive, Variable, VM};
         use std::ops::ControlFlow;
 
         #[test]
@@ -1049,7 +1047,7 @@ mod tests {
             let mut vm = VM::new();
             assert_eq!(
                 vm.eval("let x: number = 1"),
-                Value::Number(0.0)
+                Primitive::Null
             );
 
             let variable = match vm.get_variable("x") {
@@ -1057,14 +1055,14 @@ mod tests {
                 _ => panic!("Expected variable"),
             };
             assert_eq!(variable, Variable {
-                value: Value::Number(1.0),
+                value: Primitive::Number(1.0),
             });
         }
     }
 
     mod reference {
-        use crate::value::HeapObject;
-        use crate::vm::{Value, VM};
+        use crate::value::Object;
+        use crate::vm::{Primitive, VM};
         use std::collections::HashMap;
         use std::ops::Deref;
 
@@ -1076,15 +1074,15 @@ mod tests {
 
                 let user = User(id=1, name=\"Alice\")
                 user
-            "), Value::Ref(1 + VM::get_builtin_object_count()));
+            "), Primitive::Ref(1 + VM::get_builtin_object_count()));
 
             let mut properties = HashMap::new();
-            properties.insert("id".to_string(), Value::Number(1.0));
-            properties.insert("name".to_string(), Value::String("Alice".to_string()));
+            properties.insert("id".to_string(), Primitive::Number(1.0));
+            properties.insert("name".to_string(), Primitive::String("Alice".to_string()));
 
             let borrowed = vm.heap.get(&(1 + VM::get_builtin_object_count())).unwrap().deref().borrow();
             match borrowed.deref() {
-                HeapObject::StructInstance(struct_value) => {
+                Object::StructInstance(struct_value) => {
                     assert_eq!(struct_value.properties, properties);
                 }
                 _ => panic!("Expected StructInstance"),
@@ -1100,18 +1098,18 @@ mod tests {
 
                 let userRef = UserRef(user=User(id=1, name=\"Alice\"))
                 userRef
-            "), Value::Ref(3 + VM::get_builtin_object_count()));
+            "), Primitive::Ref(3 + VM::get_builtin_object_count()));
 
             let mut properties_user = HashMap::new();
-            properties_user.insert("id".to_string(), Value::Number(1.0));
-            properties_user.insert("name".to_string(), Value::String("Alice".to_string()));
+            properties_user.insert("id".to_string(), Primitive::Number(1.0));
+            properties_user.insert("name".to_string(), Primitive::String("Alice".to_string()));
 
             let mut properties_user_ref = HashMap::new();
-            properties_user_ref.insert("user".to_string(), Value::Ref(2 + VM::get_builtin_object_count()));
+            properties_user_ref.insert("user".to_string(), Primitive::Ref(2 + VM::get_builtin_object_count()));
 
             let borrowed = vm.heap.get(&(3 + VM::get_builtin_object_count())).unwrap().deref().borrow();
             match borrowed.deref() {
-                HeapObject::StructInstance(struct_value) => {
+                Object::StructInstance(struct_value) => {
                     assert_eq!(struct_value.properties, properties_user_ref);
                 }
                 _ => panic!("Expected StructInstance"),
@@ -1127,8 +1125,8 @@ mod tests {
 
                 let user = User { id: 1, name: \"Alice\" }
             ");
-            assert_eq!(vm.eval("user.id"), Value::Number(1f64));
-            assert_eq!(vm.eval("user.name"), Value::String("Alice".to_string()));
+            assert_eq!(vm.eval("user.id"), Primitive::Number(1f64));
+            assert_eq!(vm.eval("user.name"), Primitive::String("Alice".to_string()));
         }
 
         #[test]
@@ -1140,15 +1138,15 @@ mod tests {
                 let user = User(id=1, name=\"Alice\")
                 user.id = 2
                 user
-            "), Value::Ref(1 + VM::get_builtin_object_count()));
+            "), Primitive::Ref(1 + VM::get_builtin_object_count()));
 
             let mut properties = HashMap::new();
-            properties.insert("id".to_string(), Value::Number(2.0));
-            properties.insert("name".to_string(), Value::String("Alice".to_string()));
+            properties.insert("id".to_string(), Primitive::Number(2.0));
+            properties.insert("name".to_string(), Primitive::String("Alice".to_string()));
 
             let borrowed = vm.heap.get(&(1 + VM::get_builtin_object_count())).unwrap().deref().borrow();
             match borrowed.deref() {
-                HeapObject::StructInstance(struct_value) => {
+                Object::StructInstance(struct_value) => {
                     assert_eq!(struct_value.properties, properties);
                 }
                 _ => panic!("Expected StructInstance"),
@@ -1165,18 +1163,18 @@ mod tests {
                 let user1 = User(id=1, name=\"Alice\")
                 let userRef = UserRef(user=user1)
                 userRef
-            "), Value::Ref(3 + VM::get_builtin_object_count()));
+            "), Primitive::Ref(3 + VM::get_builtin_object_count()));
 
             let mut expected_members_user1 = HashMap::new();
-            expected_members_user1.insert("id".to_string(), Value::Number(1.0));
-            expected_members_user1.insert("name".to_string(), Value::String("Alice".to_string()));
+            expected_members_user1.insert("id".to_string(), Primitive::Number(1.0));
+            expected_members_user1.insert("name".to_string(), Primitive::String("Alice".to_string()));
 
             let mut properties_user_ref = HashMap::new();
-            properties_user_ref.insert("user".to_string(), Value::Ref(2 + VM::get_builtin_object_count()));
+            properties_user_ref.insert("user".to_string(), Primitive::Ref(2 + VM::get_builtin_object_count()));
 
             let borrowed = vm.heap.get(&(3 + VM::get_builtin_object_count())).unwrap().deref().borrow();
             match borrowed.deref() {
-                HeapObject::StructInstance(struct_value) => {
+                Object::StructInstance(struct_value) => {
                     assert_eq!(struct_value.properties, properties_user_ref);
                 }
                 _ => panic!("Expected StructInstance"),
@@ -1194,18 +1192,18 @@ mod tests {
                 let userRef = UserRef(user=user1)
                 userRef.user.id = 2
                 userRef
-            "), Value::Ref(3 + VM::get_builtin_object_count()));
+            "), Primitive::Ref(3 + VM::get_builtin_object_count()));
 
             let mut expected_members_user1 = HashMap::new();
-            expected_members_user1.insert("id".to_string(), Value::Number(2.0));
-            expected_members_user1.insert("name".to_string(), Value::String("Alice".to_string()));
+            expected_members_user1.insert("id".to_string(), Primitive::Number(2.0));
+            expected_members_user1.insert("name".to_string(), Primitive::String("Alice".to_string()));
 
             let mut properties_user_ref = HashMap::new();
-            properties_user_ref.insert("user".to_string(), Value::Ref(2 + VM::get_builtin_object_count()));
+            properties_user_ref.insert("user".to_string(), Primitive::Ref(2 + VM::get_builtin_object_count()));
 
             let borrowed = vm.heap.get(&(3 + VM::get_builtin_object_count())).unwrap().deref().borrow();
             match borrowed.deref() {
-                HeapObject::StructInstance(struct_value) => {
+                Object::StructInstance(struct_value) => {
                     assert_eq!(struct_value.properties, properties_user_ref);
                 }
                 _ => panic!("Expected StructInstance"),
@@ -1223,18 +1221,18 @@ mod tests {
                 let userRef = UserRef(user=user1)
                 user1 = User(id=2, name=\"Bob\")
                 userRef
-            "), Value::Ref(3 + VM::get_builtin_object_count()));
+            "), Primitive::Ref(3 + VM::get_builtin_object_count()));
 
             let mut expected_members_user1 = HashMap::new();
-            expected_members_user1.insert("id".to_string(), Value::Number(1.0));
-            expected_members_user1.insert("name".to_string(), Value::String("Alice".to_string()));
+            expected_members_user1.insert("id".to_string(), Primitive::Number(1.0));
+            expected_members_user1.insert("name".to_string(), Primitive::String("Alice".to_string()));
 
             let mut properties_user_ref = HashMap::new();
-            properties_user_ref.insert("user".to_string(), Value::Ref(2 + VM::get_builtin_object_count()));
+            properties_user_ref.insert("user".to_string(), Primitive::Ref(2 + VM::get_builtin_object_count()));
 
             let borrowed = vm.heap.get(&(3 + VM::get_builtin_object_count())).unwrap().deref().borrow();
             match borrowed.deref() {
-                HeapObject::StructInstance(struct_value) => {
+                Object::StructInstance(struct_value) => {
                     assert_eq!(struct_value.properties, properties_user_ref);
                 }
                 _ => panic!("Expected StructInstance"),
@@ -1246,63 +1244,63 @@ mod tests {
             assert_eq!(VM::new().eval("
                 let obj = 1
                 obj.id
-            "), Value::String("Expected struct type, but got Number".to_string()));
+            "), Primitive::String("Expected struct type, but got Number".to_string()));
         }
 
         #[test]
         fn resolve_member_of_undefined_object() {
             assert_eq!(VM::new().eval("
                 obj.id
-            "), Value::String("Undefined symbol: obj".to_string()));
+            "), Primitive::String("Undefined symbol: obj".to_string()));
         }
     }
 
     mod built_in_functions {
-        use crate::vm::{Value, VM};
+        use crate::vm::{Primitive, VM};
 
         #[test]
         fn number() {
-            assert_eq!(VM::new().eval("number(1)"), Value::Number(1.0));
-            assert_eq!(VM::new().eval("number(0)"), Value::Number(0.0));
-            assert_eq!(VM::new().eval("number(true)"), Value::Number(1.0));
-            assert_eq!(VM::new().eval("number(false)"), Value::Number(0.0));
-            assert_eq!(VM::new().eval("number(\"123\")"), Value::Number(123.0));
-            assert_eq!(VM::new().eval("number(\"NaN\")"), Value::Number(0.0));
+            assert_eq!(VM::new().eval("number(1)"), Primitive::Number(1.0));
+            assert_eq!(VM::new().eval("number(0)"), Primitive::Number(0.0));
+            assert_eq!(VM::new().eval("number(true)"), Primitive::Number(1.0));
+            assert_eq!(VM::new().eval("number(false)"), Primitive::Number(0.0));
+            assert_eq!(VM::new().eval("number(\"123\")"), Primitive::Number(123.0));
+            assert_eq!(VM::new().eval("number(\"NaN\")"), Primitive::Number(0.0));
         }
 
         #[test]
         fn bool() {
-            assert_eq!(VM::new().eval("bool(1)"), Value::Bool(true));
-            assert_eq!(VM::new().eval("bool(0)"), Value::Bool(false));
-            assert_eq!(VM::new().eval("bool(100)"), Value::Bool(true));
-            assert_eq!(VM::new().eval("bool(true)"), Value::Bool(true));
-            assert_eq!(VM::new().eval("bool(false)"), Value::Bool(false));
-            assert_eq!(VM::new().eval("bool(\"true\")"), Value::Bool(true));
-            assert_eq!(VM::new().eval("bool(\"false\")"), Value::Bool(false));
-            assert_eq!(VM::new().eval("bool(\"foo\")"), Value::Bool(true));
-            assert_eq!(VM::new().eval("bool(\"FALSE\")"), Value::Bool(true));
+            assert_eq!(VM::new().eval("bool(1)"), Primitive::Bool(true));
+            assert_eq!(VM::new().eval("bool(0)"), Primitive::Bool(false));
+            assert_eq!(VM::new().eval("bool(100)"), Primitive::Bool(true));
+            assert_eq!(VM::new().eval("bool(true)"), Primitive::Bool(true));
+            assert_eq!(VM::new().eval("bool(false)"), Primitive::Bool(false));
+            assert_eq!(VM::new().eval("bool(\"true\")"), Primitive::Bool(true));
+            assert_eq!(VM::new().eval("bool(\"false\")"), Primitive::Bool(false));
+            assert_eq!(VM::new().eval("bool(\"foo\")"), Primitive::Bool(true));
+            assert_eq!(VM::new().eval("bool(\"FALSE\")"), Primitive::Bool(true));
         }
 
         #[test]
         fn string() {
-            assert_eq!(VM::new().eval("string(1)"), Value::String("1".to_string()));
-            assert_eq!(VM::new().eval("string(0.5)"), Value::String("0.5".to_string()));
-            assert_eq!(VM::new().eval("string(true)"), Value::String("true".to_string()));
-            assert_eq!(VM::new().eval("string(false)"), Value::String("false".to_string()));
-            assert_eq!(VM::new().eval("string(\"ABC\")"), Value::String("ABC".to_string()));
-            assert_eq!(VM::new().eval("string(\"\")"), Value::String("".to_string()));
+            assert_eq!(VM::new().eval("string(1)"), Primitive::String("1".to_string()));
+            assert_eq!(VM::new().eval("string(0.5)"), Primitive::String("0.5".to_string()));
+            assert_eq!(VM::new().eval("string(true)"), Primitive::String("true".to_string()));
+            assert_eq!(VM::new().eval("string(false)"), Primitive::String("false".to_string()));
+            assert_eq!(VM::new().eval("string(\"ABC\")"), Primitive::String("ABC".to_string()));
+            assert_eq!(VM::new().eval("string(\"\")"), Primitive::String("".to_string()));
         }
 
         #[test]
         fn print() {
-            assert_eq!(VM::new().eval("print(1)"), Value::String("TypeError: Expected type String, but actual type is Number".to_string()));
-            assert_eq!(VM::new().eval("print(true)"), Value::String("TypeError: Expected type String, but actual type is Bool".to_string()));
-            assert_eq!(VM::new().eval("print(\"ABC\")"), Value::Number(0f64));
+            assert_eq!(VM::new().eval("print(1)"), Primitive::String("TypeError: Expected type String, but actual type is Number".to_string()));
+            assert_eq!(VM::new().eval("print(true)"), Primitive::String("TypeError: Expected type String, but actual type is Bool".to_string()));
+            assert_eq!(VM::new().eval("print(\"ABC\")"), Primitive::Number(0f64));
         }
     }
 
     mod gc {
-        use crate::value::{HeapObject, Value};
+        use crate::value::{Object, Primitive};
         use crate::vm::VM;
         use std::ops::Deref;
 
@@ -1431,23 +1429,40 @@ mod tests {
 
             vm.eval("b = Obj {i:3}");  // address 1 is reused
             vm.eval("b = Obj {i:4}");  // address 2 is reused
-            assert_eq!(vm.eval("a"), Value::Ref(2));
+            assert_eq!(vm.eval("a"), Primitive::Ref(2));
 
             let borrowed = vm.heap.get(&2).unwrap().deref().borrow();
             match borrowed.deref() {
-                HeapObject::StructInstance(struct_value) => {
+                Object::StructInstance(struct_value) => {
                     assert_eq!(
                         struct_value.properties.get("i").unwrap(),
-                        &Value::Number(2.0)
+                        &Primitive::Number(2.0)
                     );
                 }
                 _ => panic!("Expected StructInstance"),
             }
         }
+
+        #[test]
+        #[ignore] // 不要な型オブジェクト・関数の解放
+        fn gc_struct_declaration() {
+            let mut vm = VM::new();
+            vm.eval("
+                let a = {
+                    struct Obj(i: number)
+                    Obj(0)
+                }
+            ");
+
+            assert_eq!(vm.heap.len(), 2 + VM::get_builtin_object_count());
+
+            vm.gc();
+            assert_eq!(vm.heap.len(), 2 + VM::get_builtin_object_count());
+        }
     }
 
     mod struct_declaration {
-        use crate::value::Value;
+        use crate::value::Primitive;
         use crate::vm::VM;
 
         #[test]
@@ -1457,12 +1472,12 @@ mod tests {
                 struct User(id: number, name: string)
 
                 let user = User(id=1, name=\"Alice\")
-            "), Value::Number(0.0));
+            "), Primitive::Null);
         }
     }
 
     mod named_parameter {
-        use crate::value::Value;
+        use crate::value::Primitive;
         use crate::vm::VM;
 
         #[test]
@@ -1473,7 +1488,7 @@ mod tests {
                 }
 
                 sub(y=1, x=2)
-            "), Value::Number(1.0));
+            "), Primitive::Number(1.0));
         }
 
         #[test]
@@ -1484,7 +1499,7 @@ mod tests {
                 }
 
                 sub(y=1, 7, 2)
-            "), Value::Number(3.0));
+            "), Primitive::Number(3.0));
         }
 
         #[test]
@@ -1495,7 +1510,7 @@ mod tests {
                 }
 
                 sub(1, x=2)
-            "), Value::Number(1.0));
+            "), Primitive::Number(1.0));
         }
 
         #[test]
@@ -1507,7 +1522,7 @@ mod tests {
                 let user2 = User(age=40, id=2)
 
                 user1.id - user2.id
-            "), Value::Number(-1.0));
+            "), Primitive::Number(-1.0));
         }
 
         #[test]
@@ -1519,7 +1534,7 @@ mod tests {
                 let user2 = User(40, id=2)
 
                 user1.id - user2.id
-            "), Value::Number(-1.0));
+            "), Primitive::Number(-1.0));
         }
 
         #[test]
@@ -1528,7 +1543,7 @@ mod tests {
                 function test(x: number): number { x + 1 }
 
                 test(x=1, 1)
-            "), Value::String("Too many parameters".to_string()));
+            "), Primitive::String("Too many parameters".to_string()));
         }
 
         #[test]
@@ -1537,7 +1552,7 @@ mod tests {
                 function test(x: number, y: number): number { x + y }
 
                 test(1)
-            "), Value::String("Too few parameters. Follow parameter(s) is not specified: y".to_string()));
+            "), Primitive::String("Too few parameters. Follow parameter(s) is not specified: y".to_string()));
         }
 
         #[test]
@@ -1546,7 +1561,7 @@ mod tests {
                 function test(x: number, y: number): number { x + y }
 
                 test(y=1)
-            "), Value::String("Too few parameters. Follow parameter(s) is not specified: x".to_string()));
+            "), Primitive::String("Too few parameters. Follow parameter(s) is not specified: x".to_string()));
         }
 
         #[test]
@@ -1555,7 +1570,7 @@ mod tests {
                 function test(x: number, y: number): number { x + y }
 
                 test(z=1, 2, 3)
-            "), Value::String("Unknown parameter: z".to_string()));
+            "), Primitive::String("Unknown parameter: z".to_string()));
         }
     }
 }

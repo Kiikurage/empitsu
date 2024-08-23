@@ -7,10 +7,10 @@ use std::rc::Rc;
 use crate::node::Node;
 use crate::vm::{BreakResult, Environment, VM};
 
-pub type NativeFunction = fn(&Vec<Value>, &mut VM) -> ControlFlow<BreakResult, Value>;
+pub type NativeFunction = fn(&Vec<Primitive>, &mut VM) -> ControlFlow<BreakResult, Primitive>;
 
 #[derive(Clone, PartialEq)]
-pub enum Value {
+pub enum Primitive {
     Number(f64),
     Bool(bool),
     String(String),
@@ -18,8 +18,50 @@ pub enum Value {
     Null,
 }
 
+impl Primitive {
+    pub fn as_number(&self) -> Result<f64, String> {
+        match self {
+            Primitive::Number(value) => Ok(*value),
+            _ => Err(
+                format!("TypeError: Expected type Number, actual type {:?}", self)
+            ),
+        }
+    }
+
+    pub fn as_bool(&self) -> Result<bool, String> {
+        match self {
+            Primitive::Bool(value) => Ok(*value),
+            _ => Err(
+                format!("TypeError: Expected type Bool, actual type {:?}", self)
+            ),
+        }
+    }
+
+    pub fn into_string(self) -> Result<String, String> {
+        match self {
+            Primitive::String(value) => Ok(value.clone()),
+            Primitive::Number(value) => Ok(value.to_string()),
+            Primitive::Bool(value) => Ok(value.to_string()),
+            Primitive::Ref(address) => Ok(format!("ref {}", address)),
+            Primitive::Null => Ok("null".to_string()),
+        }
+    }
+}
+
+impl Debug for Primitive {
+    fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
+        match self {
+            Primitive::Number(value) => write!(f, "{}", value),
+            Primitive::Bool(value) => write!(f, "{}", value),
+            Primitive::String(value) => write!(f, "{}", value),
+            Primitive::Ref(value) => write!(f, "ref {}", value),
+            Primitive::Null => write!(f, "null"),
+        }
+    }
+}
+
 #[derive(PartialEq)]
-pub enum HeapObject {
+pub enum Object {
     Function(FunctionValue),
     NativeFunction(NativeFunctionValue),
     StructDefinition(StructDefinitionValue),
@@ -50,47 +92,5 @@ pub struct StructDefinitionValue {
 #[derive(Clone, PartialEq)]
 pub struct StructValue {
     pub name: String,
-    pub properties: HashMap<String, Value>,
-}
-
-impl Value {
-    pub fn as_number(&self) -> Result<f64, String> {
-        match self {
-            Value::Number(value) => Ok(*value),
-            _ => Err(
-                format!("TypeError: Expected type Number, actual type {:?}", self)
-            ),
-        }
-    }
-
-    pub fn as_bool(&self) -> Result<bool, String> {
-        match self {
-            Value::Bool(value) => Ok(*value),
-            _ => Err(
-                format!("TypeError: Expected type Bool, actual type {:?}", self)
-            ),
-        }
-    }
-
-    pub fn into_string(self) -> Result<String, String> {
-        match self {
-            Value::String(value) => Ok(value.clone()),
-            Value::Number(value) => Ok(value.to_string()),
-            Value::Bool(value) => Ok(value.to_string()),
-            Value::Ref(address) => Ok(format!("ref {}", address)),
-            Value::Null => Ok("null".to_string()),
-        }
-    }
-}
-
-impl Debug for Value {
-    fn fmt(&self, f: &mut Formatter) -> Result<(), Error> {
-        match self {
-            Value::Number(value) => write!(f, "{}", value),
-            Value::Bool(value) => write!(f, "{}", value),
-            Value::String(value) => write!(f, "{}", value),
-            Value::Ref(value) => write!(f, "ref {}", value),
-            Value::Null => write!(f, "null"),
-        }
-    }
+    pub properties: HashMap<String, Primitive>,
 }
