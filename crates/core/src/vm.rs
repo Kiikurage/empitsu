@@ -85,7 +85,7 @@ impl Default for VM {
         vm.install_native_function("number", &["value"], |args, _vm| {
             let value = match args.first() {
                 Some(value) => value,
-                None => return ControlFlow::Break(BreakResult::Error(Value::String("Expected argument".to_string()))),
+                None => return ControlFlow::Break(BreakResult::Error(Value::String("Expected parameter".to_string()))),
             };
             match value {
                 Value::Number(value) => ControlFlow::Continue(Value::Number(*value)),
@@ -102,7 +102,7 @@ impl Default for VM {
         vm.install_native_function("bool", &["value"], |args, _vm| {
             let value = match args.first() {
                 Some(value) => value,
-                None => return ControlFlow::Break(BreakResult::Error(Value::String("Expected argument".to_string()))),
+                None => return ControlFlow::Break(BreakResult::Error(Value::String("Expected parameter".to_string()))),
             };
             match value {
                 Value::Number(value) => ControlFlow::Continue(Value::Bool(*value != 0.0)),
@@ -115,7 +115,7 @@ impl Default for VM {
         vm.install_native_function("string", &["value"], |args, _vm| {
             let value = match args.first() {
                 Some(value) => value,
-                None => return ControlFlow::Break(BreakResult::Error(Value::String("Expected argument".to_string()))),
+                None => return ControlFlow::Break(BreakResult::Error(Value::String("Expected parameter".to_string()))),
             };
             match value {
                 Value::Number(value) => ControlFlow::Continue(Value::String(value.to_string())),
@@ -131,7 +131,7 @@ impl Default for VM {
         vm.install_native_function("print", &["value"], |args, _vm| {
             let value = match args.first() {
                 Some(value) => value,
-                None => return ControlFlow::Break(BreakResult::Error(Value::String("Expected argument".to_string()))),
+                None => return ControlFlow::Break(BreakResult::Error(Value::String("Expected parameter".to_string()))),
             };
             println!("{}", value.clone().into_string().into_control_flow()?);
             ControlFlow::Continue(Value::Number(0.0))
@@ -139,7 +139,7 @@ impl Default for VM {
         vm.install_native_function("debug", &["value"], |args, _vm| {
             let value = match args.first() {
                 Some(value) => value,
-                None => return ControlFlow::Break(BreakResult::Error(Value::String("Expected argument".to_string()))),
+                None => return ControlFlow::Break(BreakResult::Error(Value::String("Expected parameter".to_string()))),
             };
             match value {
                 Value::Number(value) => println!("{}", value),
@@ -417,8 +417,8 @@ impl VM {
                         environment.parent = Some(function.closure);
                         self.environments.push(Rc::new(RefCell::new(environment)));
 
-                        for (argument, parameter_name) in evaluated_parameters.iter().zip(function.parameters.iter()) {
-                            self.declare_variable(parameter_name, argument);
+                        for (parameter, parameter_name) in evaluated_parameters.iter().zip(function.parameters.iter()) {
+                            self.declare_variable(parameter_name, parameter);
                         }
                         let ret = match self.eval_node(function.body.deref()) {
                             ControlFlow::Continue(value) => value,

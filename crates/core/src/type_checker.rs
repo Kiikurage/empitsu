@@ -206,7 +206,7 @@ impl TypeChecker {
                     _ => Err(format!("Unexpected operator: {:?}", operator)),
                 }
             }
-            Node::CallExpression(callee, _argument) => {
+            Node::CallExpression(callee, _parameters) => {
                 match self.eval_node_type(callee)? {
                     Type::Function(function_type) => {
                         Ok(function_type.return_type.deref().clone())

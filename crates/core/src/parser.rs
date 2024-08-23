@@ -1572,7 +1572,7 @@ mod tests {
             use crate::punctuation_kind::PunctuationKind;
 
             #[test]
-            fn without_arguments() {
+            fn without_parameters() {
                 assert_eq!(
                     parse("func()").node,
                     Node::Program(vec![
@@ -1585,7 +1585,7 @@ mod tests {
             }
 
             #[test]
-            fn with_arguments() {
+            fn with_parameters() {
                 assert_eq!(
                     parse("func(1, 2, 3)").node,
                     Node::Program(vec![
@@ -1602,7 +1602,7 @@ mod tests {
             }
 
             #[test]
-            fn complex_expression_in_arguments() {
+            fn complex_expression_in_parameter() {
                 assert_eq!(
                     parse("func(1, 2*(3+4))").node,
                     Node::Program(vec![
@@ -1626,7 +1626,7 @@ mod tests {
             }
 
             #[test]
-            fn function_call_in_arguments() {
+            fn function_call_in_parameter() {
                 assert_eq!(
                     parse("f(g(1), h(2))").node,
                     Node::Program(vec![

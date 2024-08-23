@@ -29,7 +29,7 @@ struct User { } // struct declaraiton without members
 
 function f(v1:number, v2:string):number {} // function declaration
 function f(v1:number, v2:string,):number {} // function declaration with trailing comma
-function f():number {} // function declaration with no arguments
+function f():number {} // function declaration with no parameters
 
 /**
  * Expression
@@ -58,7 +58,7 @@ x = return 1 // return expression
 x = break // break expression
 fn(1, true, "hi") // call expression
 fn(1, true,) // call expression with trailing comma
-fn() // call expression without arguments
+fn() // call expression without parameters
 x.y // member expression
 user = User { id: 0, name: "Alice" } // struct literal
 user = User { id: 0, name: "Alice", } // struct literal with trailing comma
