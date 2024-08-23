@@ -1,10 +1,10 @@
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
 use std::ops::{ControlFlow, Deref};
 use std::rc::Rc;
 
-use crate::node::Node;
+use crate::node::{Node, Parameter};
 use crate::parser::parse;
 use crate::punctuation_kind::PunctuationKind;
 use crate::type_::Type;
@@ -307,7 +307,7 @@ impl VM {
 
                 let struct_ = Value::StructDefinition(StructDefinitionValue {
                     name: name.clone(),
-                    properties
+                    properties,
                 });
                 self.declare_variable(name, &struct_);
 
@@ -403,10 +403,14 @@ impl VM {
                 let callee = self.eval_node(callee)?;
                 match callee {
                     Value::Function(function) => {
+                        let parameters = match parse_parameters(parameters, &function.parameters) {
+                            Ok(parameters) => parameters,
+                            Err(message) => return ControlFlow::Break(BreakResult::Error(Value::String(message))),
+                        };
+
                         let mut evaluated_parameters = vec![];
                         for parameter in parameters {
-                            // TODO: Named parameter
-                            evaluated_parameters.push(self.eval_node(parameter.value.deref())?);
+                            evaluated_parameters.push(self.eval_node(&parameter)?);
                         }
 
                         let mut environment = Environment::new();
@@ -426,10 +430,14 @@ impl VM {
                         ControlFlow::Continue(ret)
                     }
                     Value::NativeFunction(function) => {
+                        let parameters = match parse_parameters(parameters, &function.parameters) {
+                            Ok(parameters) => parameters,
+                            Err(message) => return ControlFlow::Break(BreakResult::Error(Value::String(message))),
+                        };
+
                         let mut evaluated_parameters = vec![];
                         for parameter in parameters {
-                            // TODO: Named parameter
-                            evaluated_parameters.push(self.eval_node(parameter.value.deref())?);
+                            evaluated_parameters.push(self.eval_node(&parameter)?);
                         }
 
                         let mut environment = Environment::new();
@@ -444,9 +452,12 @@ impl VM {
                     Value::StructDefinition(struct_) => {
                         let mut properties = HashMap::new();
 
+                        let parameters = match parse_parameters(parameters, &struct_.properties) {
+                            Ok(parameters) => parameters,
+                            Err(message) => return ControlFlow::Break(BreakResult::Error(Value::String(message))),
+                        };
                         for (parameter, name) in parameters.iter().zip(struct_.properties.iter()) {
-                            // TODO: Named parameter
-                            properties.insert(name.clone(), self.eval_node(parameter.value.deref())?);
+                            properties.insert(name.clone(), self.eval_node(parameter.deref())?);
                         }
 
                         let address = self.allocate_object();
@@ -555,6 +566,45 @@ impl VM {
         }
         panic!("Failed to allocate object");
     }
+}
+
+fn parse_parameters(parameters: &[Parameter], names: &[String]) -> Result<Vec<Node>, String> {
+    let mut map = HashMap::new();
+
+    let mut non_specified_names = names.iter().cloned().collect::<BTreeSet<_>>();
+    for parameter in parameters.iter() {
+        if let Some(ref name) = parameter.name {
+            if !non_specified_names.remove(name) {
+                return Err(format!("Unknown parameter: {}", name))
+            }
+        };
+    }
+
+    for parameter in parameters.iter() {
+        let name = match parameter.name {
+            Some(ref name) => name,
+            None => match non_specified_names.iter().next() {
+                Some(name) => name,
+                None => return Err("Too many parameters".to_string()),
+            }
+        };
+
+        map.insert(name.clone(), parameter.value.clone());
+        non_specified_names.remove(&name.clone());
+    }
+
+    if !non_specified_names.is_empty() {
+        return Err(format!(
+            "Too few parameters. Follow parameter(s) is not specified: {}",
+            non_specified_names.into_iter().collect::<Vec<_>>().join(", ")
+        ));
+    }
+
+    Ok(
+        names.iter()
+            .map(|name| *(map.remove(name).unwrap()))
+            .collect::<Vec<_>>()
+    )
 }
 
 trait IntoControlFlow<T> {
@@ -1307,84 +1357,101 @@ mod tests {
         }
     }
 
-    mod type_check {
-        use crate::vm::{Value, VM};
+    mod named_parameter {
+        use crate::value::Value;
+        use crate::vm::VM;
 
         #[test]
-        fn assign_variable_declared_with_type_annotation() {
-            let mut vm = VM::new();
-            assert_eq!(vm.eval("
-                let x: number = true
-            "), Value::String("TypeError: Type Bool is not assignable into Number".to_string()));
-        }
-
-        #[test]
-        fn assign_variable_declared_without_type_annotation() {
-            let mut vm = VM::new();
-            assert_eq!(vm.eval("
-                let x = 0
-                x = true
-            "), Value::String("TypeError: Type Bool is not assignable into Number".to_string()));
-        }
-
-        #[test]
-        fn function_parameter() {
-            let mut vm = VM::new();
-            assert_eq!(vm.eval("
-                function f(x: number):number { x }
-                f(true)
-            "), Value::String("TypeError: Expected type Number, but actual type is Bool".to_string()));
-        }
-
-        #[test]
-        fn return_value() {
-            let mut vm = VM::new();
-            assert_eq!(vm.eval("
-                function f(): string { return \"test\" }
-                let x: number = f()
-            "), Value::String("TypeError: Type String is not assignable into Number".to_string()));
-        }
-
-        #[test]
-        fn return_value_with_inferred_type() {
-            let mut vm = VM::new();
-            assert_eq!(vm.eval("
-                function f(): string { return \"test\" }
-                let x = 0
-                x = f()
-            "), Value::String("TypeError: Type String is not assignable into Number".to_string()));
-        }
-
-        #[test]
-        fn assign_into_union_type_variable() {
+        fn function_call_with_named_parameters() {
             assert_eq!(VM::new().eval("
-                let x: number | string = 0
-            "), Value::Number(0f64));
+                function sub(x: number, y: number): number {
+                    x - y
+                }
+
+                sub(y=1, x=2)
+            "), Value::Number(1.0));
         }
 
         #[test]
-        fn assign_into_struct_property() {
+        fn function_call_with_partially_named_parameters() {
             assert_eq!(VM::new().eval("
-                struct User(id: number, name: string)
+                function sub(x: number, y: number, z:number): number {
+                    (x - y) / z
+                }
 
-                let user = User(id=1, name=\"Alice\")
-                user.id = \"userId\"
-            "), Value::String("TypeError: Type String is not assignable into Number".to_string()));
+                sub(y=1, 7, 2)
+            "), Value::Number(3.0));
         }
 
         #[test]
-        fn struct_initialization() {
+        fn named_parameters_after_unnamed_parameters() {
             assert_eq!(VM::new().eval("
-                struct User(
-                    id: number,
-                    name: string
-                )
+                function sub(x: number, y: number): number {
+                    x - y
+                }
 
-                let user = User(
-                    id=\"userId\",
-                    name=\"Alice\"
-                )
-            "), Value::String("TypeError: Expected type Number, but actual type is String".to_string()));
+                sub(1, x=2)
+            "), Value::Number(1.0));
+        }
+
+        #[test]
+        fn struct_initialization_with_named_parameters() {
+            assert_eq!(VM::new().eval("
+                struct User(id: number, age: number)
+
+                let user1 = User(id=1, age=30)
+                let user2 = User(age=40, id=2)
+
+                user1.id - user2.id
+            "), Value::Number(-1.0));
+        }
+
+        #[test]
+        fn struct_initialization_with_partially_named_parameters() {
+            assert_eq!(VM::new().eval("
+                struct User(id: number, age: number)
+
+                let user1 = User(1, age=30)
+                let user2 = User(40, id=2)
+
+                user1.id - user2.id
+            "), Value::Number(-1.0));
+        }
+
+        #[test]
+        fn too_many_parameters() {
+            assert_eq!(VM::new().eval("
+                function test(x: number): number { x + 1 }
+
+                test(x=1, 1)
+            "), Value::String("Too many parameters".to_string()));
+        }
+
+        #[test]
+        fn too_few_parameters1() {
+            assert_eq!(VM::new().eval("
+                function test(x: number, y: number): number { x + y }
+
+                test(1)
+            "), Value::String("Too few parameters. Follow parameter(s) is not specified: y".to_string()));
+        }
+
+        #[test]
+        fn too_few_parameters2() {
+            assert_eq!(VM::new().eval("
+                function test(x: number, y: number): number { x + y }
+
+                test(y=1)
+            "), Value::String("Too few parameters. Follow parameter(s) is not specified: x".to_string()));
+        }
+
+        #[test]
+        fn unknown_parameter() {
+            assert_eq!(VM::new().eval("
+                function test(x: number, y: number): number { x + y }
+
+                test(z=1, 2, 3)
+            "), Value::String("Unknown parameter: z".to_string()));
         }
     }
 }

@@ -60,13 +60,6 @@ macro_rules! assert_punctuation {
         }
     };
 }
-// fn assert_punctuation(token: &Result<Token, Error>, expected: &PunctuationKind) -> Result<PunctuationKind, Error> {
-//     match token {
-//         Ok(Token { kind: TokenKind::Punctuation(ref kind), .. }) if kind == expected => Ok(kind.clone()),
-//         Ok(token) => Err(Error::unexpected_token(token.position.clone(), expected.get_text())),
-//         Err(err) => Err(err.clone()),
-//     }
-// }
 
 type Parser = fn(tokens: &mut TokenIterator) -> Result<Node, Error>;
 

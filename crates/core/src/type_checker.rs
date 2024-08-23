@@ -508,21 +508,21 @@ impl TypeChecker {
                                 return Err(format!("TypeError: Expected type {:?}, but actual type is {:?}", parameter_type, value_type));
                             }
                         }
-                        
+
                         Ok(())
                     }
                     Type::StructDefinition(struct_) => {
                         for (definition, parameter) in struct_.properties.iter().zip(parameters) {
                             // TODO: Named property
                             let initializer_type = self.eval_node_type(&parameter.value)?;
-                    
+
                             if !initializer_type.is_assignable(&definition.type_) {
                                 return Err(format!("TypeError: Expected type {:?}, but actual type is {:?}", definition.type_, initializer_type));
                             }
                         }
-                        
+
                         // TODO: Check missing property
-                    
+
                         Ok(())
                     }
                     _ => Err(format!("{:?} is not a callable", callee)),
@@ -597,4 +597,89 @@ impl TypeChecker {
             }
         }
     }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::type_checker::TypeChecker;
+
+    #[test]
+    fn assign_variable_declared_with_type_annotation() {
+        assert_eq!(
+            TypeChecker::new().check("let x: number = true").unwrap_err(),
+            "TypeError: Type Bool is not assignable into Number".to_string()
+        );
+    }
+
+    #[test]
+    fn assign_variable_declared_without_type_annotation() {
+        assert_eq!(
+            TypeChecker::new().check("let x =0; x = true").unwrap_err(),
+            "TypeError: Type Bool is not assignable into Number".to_string()
+        );
+    }
+
+    #[test]
+    fn function_parameter() {
+        assert_eq!(
+            TypeChecker::new().check("function f(x: number):number { x } f(true)").unwrap_err(),
+            "TypeError: Expected type Number, but actual type is Bool".to_string()
+        );
+    }
+
+    #[test]
+    fn return_value() {
+        assert_eq!(
+            TypeChecker::new().check("function f(): string { return \"test\" } let x: number = f()").unwrap_err(),
+            "TypeError: Type String is not assignable into Number".to_string()
+        );
+    }
+
+    #[test]
+    fn return_value_with_inferred_type() {
+        assert_eq!(
+            TypeChecker::new().check("
+                function f(): string { return \"test\" }
+                let x = 0
+                x = f()
+            ").unwrap_err(),
+            "TypeError: Type String is not assignable into Number".to_string()
+        );
+    }
+
+    #[test]
+    fn assign_into_union_type_variable() {
+        assert!(TypeChecker::new().check("let x: number | string = 0").is_ok());
+    }
+
+    #[test]
+    fn assign_into_struct_property() {
+        assert_eq!(
+            TypeChecker::new().check("
+            struct User(id: number, name: string)
+
+            let user = User(id=1, name=\"Alice\")
+            user.id = \"userId\"
+            ").unwrap_err(),
+            "TypeError: Type String is not assignable into Number".to_string()
+        );
+    }
+
+    #[test]
+    fn struct_initialization() {
+        assert_eq!(
+            TypeChecker::new().check("
+            struct User(
+                id: number,
+                name: string
+            )
+
+            let user = User(
+                id=\"userId\",
+                name=\"Alice\"
+            )
+            ").unwrap_err(),
+            "TypeError: Expected type Number, but actual type is String".to_string()
+        );
+   }
 }
