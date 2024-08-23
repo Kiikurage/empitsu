@@ -14,12 +14,16 @@ pub enum Value {
     Number(f64),
     Bool(bool),
     String(String),
+    Ref(usize),
+    Null,
+}
+
+#[derive(PartialEq)]
+pub enum HeapObject {
     Function(FunctionValue),
     NativeFunction(NativeFunctionValue),
     StructDefinition(StructDefinitionValue),
-    Struct(StructValue),
-    Ref(usize),
-    Null,
+    StructInstance(StructValue),
 }
 
 #[derive(Clone, PartialEq)]
@@ -74,18 +78,6 @@ impl Value {
             Value::Number(value) => Ok(value.to_string()),
             Value::Bool(value) => Ok(value.to_string()),
             Value::Ref(address) => Ok(format!("ref {}", address)),
-            Value::StructDefinition(struct_) => {
-                Ok(format!("Struct {}", struct_.name))
-            }
-            Value::Struct(struct_) => {
-                Ok(format!("struct {}", struct_.name))
-            }
-            Value::Function(function) => {
-                Ok(format!("function {}({})", function.name, function.parameters.join(", ")))
-            }
-            Value::NativeFunction(function) => {
-                Ok(format!("function {}({})", function.name, function.parameters.join(", ")))
-            }
             Value::Null => Ok("null".to_string()),
         }
     }
@@ -97,10 +89,6 @@ impl Debug for Value {
             Value::Number(value) => write!(f, "{}", value),
             Value::Bool(value) => write!(f, "{}", value),
             Value::String(value) => write!(f, "{}", value),
-            Value::Struct { .. } => write!(f, "{}", self.clone().into_string().unwrap()),
-            Value::StructDefinition { .. } => write!(f, "{}", self.clone().into_string().unwrap()),
-            Value::Function { .. } => write!(f, "{}", self.clone().into_string().unwrap()),
-            Value::NativeFunction { .. } => write!(f, "{}", self.clone().into_string().unwrap()),
             Value::Ref(value) => write!(f, "ref {}", value),
             Value::Null => write!(f, "null"),
         }

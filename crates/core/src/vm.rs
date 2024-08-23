@@ -1,15 +1,15 @@
 use std::cell::RefCell;
-use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::collections::{hash_map, BTreeSet, HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
-use std::ops::{ControlFlow, Deref};
+use std::ops::{ControlFlow, Deref, DerefMut};
 use std::rc::Rc;
 
-use crate::node::{Node, Parameter};
+use crate::node::Node;
 use crate::parser::parse;
 use crate::punctuation_kind::PunctuationKind;
 use crate::type_::Type;
 use crate::type_checker::TypeChecker;
-use crate::value::{FunctionValue, NativeFunction, NativeFunctionValue, StructDefinitionValue, StructValue, Value};
+use crate::value::{FunctionValue, HeapObject, NativeFunction, NativeFunctionValue, StructDefinitionValue, StructValue, Value};
 
 #[derive(Clone, PartialEq, Debug)]
 struct Variable {
@@ -72,14 +72,14 @@ pub enum BreakResult {
 
 pub struct VM {
     environments: Vec<Rc<RefCell<Environment>>>,
-    pub structs: HashMap<usize, RefCell<StructValue>>,
+    pub heap: HashMap<usize, Rc<RefCell<HeapObject>>>,
 }
 
 impl Default for VM {
     fn default() -> Self {
         let mut vm = VM {
             environments: vec![Rc::new(RefCell::new(Environment::new()))],
-            structs: HashMap::new(),
+            heap: HashMap::new(),
         };
 
         vm.install_native_function("number", &["value"], |args, _vm| {
@@ -108,7 +108,6 @@ impl Default for VM {
                 Value::Number(value) => ControlFlow::Continue(Value::Bool(*value != 0.0)),
                 Value::Bool(value) => ControlFlow::Continue(Value::Bool(*value)),
                 Value::String(value) => ControlFlow::Continue(Value::Bool(value != "false")),
-                Value::Function { .. } => ControlFlow::Continue(Value::Bool(true)),
                 _ => ControlFlow::Break(BreakResult::Error(Value::String(format!("Failed to cast {:?} to Bool", value)))),
             }
         });
@@ -121,9 +120,6 @@ impl Default for VM {
                 Value::Number(value) => ControlFlow::Continue(Value::String(value.to_string())),
                 Value::Bool(value) => ControlFlow::Continue(Value::String(value.to_string())),
                 Value::String(value) => ControlFlow::Continue(Value::String(value.clone())),
-                Value::Function { .. } => {
-                    ControlFlow::Continue(Value::String(value.clone().into_string().into_control_flow()?))
-                }
                 Value::Ref(address) => ControlFlow::Continue(Value::String(address.to_string())),
                 _ => ControlFlow::Break(BreakResult::Error(Value::String(format!("Failed to cast {:?} to Bool", value)))),
             }
@@ -145,11 +141,10 @@ impl Default for VM {
                 Value::Number(value) => println!("{}", value),
                 Value::Bool(value) => println!("{}", value),
                 Value::String(value) => println!("{}", value),
-                Value::Struct { .. } => println!("{}", value.clone().into_string().into_control_flow()?),
-                Value::StructDefinition { .. } => println!("{}", value.clone().into_string().into_control_flow()?),
-                Value::Function { .. } => println!("{}", value.clone().into_string().into_control_flow()?),
-                Value::NativeFunction { .. } => println!("{}", value.clone().into_string().into_control_flow()?),
-                Value::Ref(value) => println!("ref {}", value),
+                Value::Ref(address) => {
+                    // TODO: derefしたうえで、内容を表示する
+                    println!("ref {}", address)
+                }
                 Value::Null => println!("null"),
             }
             ControlFlow::Continue(Value::Number(0.0))
@@ -160,6 +155,10 @@ impl Default for VM {
 }
 
 impl VM {
+    pub fn get_builtin_object_count() -> usize {
+        VM::new().heap.len()
+    }
+
     pub fn new() -> Self {
         Default::default()
     }
@@ -197,21 +196,40 @@ impl VM {
 
         let mut queue = retained_objects.iter().copied().collect::<VecDeque<_>>();
         while let Some(address) = queue.pop_front() {
-            let struct_value = match self.structs.get(&address) {
+            let heap_object = match self.heap.get(&address) {
                 Some(struct_value) => struct_value.borrow(),
                 None => continue,
             };
 
-            for value in struct_value.properties.values() {
-                if let Value::Ref(address) = value {
-                    if retained_objects.insert(*address) {
-                        queue.push_back(*address);
+            match heap_object.deref() {
+                HeapObject::StructInstance(struct_value) => {
+                    for value in struct_value.properties.values() {
+                        if let Value::Ref(address) = value {
+                            if retained_objects.insert(*address) {
+                                queue.push_back(*address);
+                            }
+                        }
                     }
+                    // TODO: 自身の型をretainする
+                    // 以下の例の場合、userはUserをretainする必要がある
+                    // struct User(name: String)
+                    // let user = User(name="Alice")
+                }
+                HeapObject::StructDefinition(..) => {
+                    // TODO: プロパティの型として参照している別の構造体をretainする
+                    // 以下の例の場合、UsersはUserを参照しているため、Userもretainする必要がある
+                    // struct Users(user1: User)
+                }
+                HeapObject::Function(..) |
+                HeapObject::NativeFunction(..) => {
+                    // TODO: クロージャを通して参照しているオブジェクトをretainする
+                    // いまはすべてのenvを見ているため問題ないが、そちらでは
+                    // 現在の実行スコープから遡って参照可能なenvのみをチェックすべき
                 }
             }
         }
 
-        self.structs.retain(|address, _| retained_objects.contains(address));
+        self.heap.retain(|address, _| retained_objects.contains(address));
     }
 
     fn eval_node(&mut self, node: &Node) -> ControlFlow<BreakResult, Value> {
@@ -289,15 +307,17 @@ impl VM {
                     parameters.push(parameter_declaration.name.clone());
                 }
 
-                let function = Value::Function(FunctionValue {
-                    name: function_node.name.clone(),
-                    parameters,
-                    body: function_node.body.clone(),
-                    closure: self.environments.last().unwrap().clone(),
-                });
-                self.declare_variable(&function_node.name, &function);
+                let function_ref = self.allocate_heap(
+                    HeapObject::Function(FunctionValue {
+                        name: function_node.name.clone(),
+                        parameters,
+                        body: function_node.body.clone(),
+                        closure: self.environments.last().unwrap().clone(),
+                    })
+                );
+                self.declare_variable(&function_node.name, &function_ref);
 
-                ControlFlow::Continue(function)
+                ControlFlow::Continue(function_ref)
             }
             Node::StructDeclaration(name, property_declarations) => {
                 let mut properties = Vec::new();
@@ -305,13 +325,15 @@ impl VM {
                     properties.push(property_declaration.name.clone());
                 }
 
-                let struct_ = Value::StructDefinition(StructDefinitionValue {
-                    name: name.clone(),
-                    properties,
-                });
-                self.declare_variable(name, &struct_);
+                let struct_ref = self.allocate_heap(
+                    HeapObject::StructDefinition(StructDefinitionValue {
+                        name: name.clone(),
+                        properties,
+                    })
+                );
+                self.declare_variable(name, &struct_ref);
 
-                ControlFlow::Continue(Value::Number(0.0))
+                ControlFlow::Continue(struct_ref)
             }
 
             // Expression
@@ -321,13 +343,15 @@ impl VM {
                     parameters.push(parameter_declaration.name.clone());
                 }
 
-                let function = Value::Function(FunctionValue {
-                    name: function_node.name.clone(),
-                    parameters,
-                    body: function_node.body.clone(),
-                    closure: self.environments.last().unwrap().clone(),
-                });
-                ControlFlow::Continue(function)
+                let function_ref = self.allocate_heap(
+                    HeapObject::Function(FunctionValue {
+                        name: function_node.name.clone(),
+                        parameters,
+                        body: function_node.body.clone(),
+                        closure: self.environments.last().unwrap().clone(),
+                    })
+                );
+                ControlFlow::Continue(function_ref)
             }
             Node::IfExpression(condition, true_branch, false_branch) => {
                 let condition = match self.eval_node(condition)?.as_bool() {
@@ -352,18 +376,16 @@ impl VM {
                 let value = self.eval_node(value)?;
                 match lhs.as_ref() {
                     Node::Identifier(name) => self.set_variable(name, &value)?,
-                    Node::MemberExpression(object, property) => {
-                        let mut struct_value = match self.eval_node(object)? {
-                            Value::Ref(address) => {
-                                match self.structs.get(&address) {
-                                    Some(object) => object.borrow_mut(),
-                                    None => return ControlFlow::Break(BreakResult::Error(Value::String("Undefined object".to_string()))),
-                                }
-                            }
-                            _ => return ControlFlow::Break(BreakResult::Error(Value::String("Expected reference".to_string()))),
-                        };
+                    Node::MemberExpression(object_ref, property) => {
+                        let object_ref = self.eval_node(object_ref)?;
+                        let object = self.dereference(&object_ref)?;
 
-                        struct_value.properties.insert(property.clone(), value.clone());
+                        match object.borrow_mut().deref_mut() {
+                            HeapObject::StructInstance(ref mut struct_) => {
+                                struct_.properties.insert(property.clone(), value.clone());
+                            }
+                            _ => return ControlFlow::Break(BreakResult::Error(Value::String("Unsupported Operation: set property of non-struct object".to_string()))),
+                        };
                     }
                     _ => return ControlFlow::Break(BreakResult::Error(Value::String("Expected identifier".to_string()))),
                 }
@@ -400,24 +422,36 @@ impl VM {
                 }
             }
             Node::CallExpression(callee, parameters) => {
-                let callee = self.eval_node(callee)?;
-                match callee {
-                    Value::Function(function) => {
-                        let parameters = match parse_parameters(parameters, &function.parameters) {
+                let mut evaluated_parameters = vec![];
+                for parameter in parameters {
+                    evaluated_parameters.push(EvaluatedParameter {
+                        name: parameter.name.clone(),
+                        value: self.eval_node(&parameter.value)?,
+                    });
+                }
+
+                let callee_ref = self.eval_node(callee)?;
+                let callee = self.dereference(&callee_ref)?.clone();
+
+                // VMから「呼び出されるオブジェクト」を取ってくる
+                // 「呼び出されるオブジェクト」に応じてVMに変更を加える
+
+                // TODO: ライフタイムの延長がなぜか効かない
+                // callee.deref().borrow().deref() を使うために、
+                // callee.deref().borrow() が十分に生きていてほしい
+                let callee_deref_borrowed = callee.deref().borrow();
+                match callee_deref_borrowed.deref() {
+                    HeapObject::Function(function) => {
+                        let parameters = match parse_parameters(&evaluated_parameters, &function.parameters) {
                             Ok(parameters) => parameters,
                             Err(message) => return ControlFlow::Break(BreakResult::Error(Value::String(message))),
                         };
 
-                        let mut evaluated_parameters = vec![];
-                        for parameter in parameters {
-                            evaluated_parameters.push(self.eval_node(&parameter)?);
-                        }
-
                         let mut environment = Environment::new();
-                        environment.parent = Some(function.closure);
+                        environment.parent = Some(function.closure.clone());
                         self.environments.push(Rc::new(RefCell::new(environment)));
 
-                        for (parameter, parameter_name) in evaluated_parameters.iter().zip(function.parameters.iter()) {
+                        for (parameter, parameter_name) in parameters.iter().zip(function.parameters.iter()) {
                             self.declare_variable(parameter_name, parameter);
                         }
                         let ret = match self.eval_node(function.body.deref()) {
@@ -429,43 +463,42 @@ impl VM {
                         self.environments.pop();
                         ControlFlow::Continue(ret)
                     }
-                    Value::NativeFunction(function) => {
-                        let parameters = match parse_parameters(parameters, &function.parameters) {
+                    HeapObject::NativeFunction(function) => {
+                        let parameters = match parse_parameters(&evaluated_parameters, &function.parameters) {
                             Ok(parameters) => parameters,
                             Err(message) => return ControlFlow::Break(BreakResult::Error(Value::String(message))),
                         };
-
-                        let mut evaluated_parameters = vec![];
-                        for parameter in parameters {
-                            evaluated_parameters.push(self.eval_node(&parameter)?);
-                        }
 
                         let mut environment = Environment::new();
                         environment.parent = self.environments.first().map(Rc::clone);
                         self.environments.push(Rc::new(RefCell::new(environment)));
 
-                        let ret = (function.body)(&evaluated_parameters, self);
+                        let ret = (function.body)(&parameters, self);
 
                         self.environments.pop();
                         ret
                     }
-                    Value::StructDefinition(struct_) => {
+                    HeapObject::StructDefinition(struct_) => {
                         let mut properties = HashMap::new();
-
-                        let parameters = match parse_parameters(parameters, &struct_.properties) {
+                        let parameters = match parse_parameters(&evaluated_parameters, &struct_.properties) {
                             Ok(parameters) => parameters,
                             Err(message) => return ControlFlow::Break(BreakResult::Error(Value::String(message))),
                         };
-                        for (parameter, name) in parameters.iter().zip(struct_.properties.iter()) {
-                            properties.insert(name.clone(), self.eval_node(parameter.deref())?);
+
+                        for (parameter, name) in parameters.into_iter().zip(struct_.properties.iter()) {
+                            properties.insert(name.clone(), parameter);
                         }
 
-                        let address = self.allocate_object();
-                        self.structs.insert(address, RefCell::new(StructValue { name: struct_.name.clone(), properties }));
+                        let ref_ = self.allocate_heap(
+                            HeapObject::StructInstance(StructValue {
+                                name: struct_.name.clone(),
+                                properties,
+                            })
+                        );
 
-                        ControlFlow::Continue(Value::Ref(address))
+                        ControlFlow::Continue(ref_)
                     }
-                    _ => ControlFlow::Break(BreakResult::Error(Value::String(format!("{:?} is not a callable", callee)))),
+                    HeapObject::StructInstance(..) => ControlFlow::Break(BreakResult::Error(Value::String("Unsupported Operation: Use call expression with struct instance".to_string()))),
                 }
             }
             Node::Number(value) => ControlFlow::Continue(Value::Number(*value)),
@@ -483,20 +516,18 @@ impl VM {
                 ))
             }
             Node::BreakExpression => ControlFlow::Break(BreakResult::Break(Value::Number(0.0))),
-            Node::MemberExpression(object, property) => {
-                let struct_value = match self.eval_node(object)? {
-                    Value::Ref(address) => {
-                        match self.structs.get(&address) {
-                            Some(object) => object.borrow_mut(),
-                            None => return ControlFlow::Break(BreakResult::Error(Value::String("Undefined object".to_string()))),
+            Node::MemberExpression(object_ref, property) => {
+                let object_ref = self.eval_node(object_ref)?;
+                let object = self.dereference(&object_ref)?;
+
+                match object.borrow().deref() {
+                    HeapObject::StructInstance(struct_value) => {
+                        match struct_value.properties.get(property) {
+                            Some(value) => ControlFlow::Continue(value.clone()),
+                            None => ControlFlow::Break(BreakResult::Error(Value::String(format!("Undefined property: {}", property))))
                         }
                     }
-                    _ => return ControlFlow::Break(BreakResult::Error(Value::String("Expected reference".to_string()))),
-                };
-
-                match struct_value.properties.get(property) {
-                    Some(value) => ControlFlow::Continue(value.clone()),
-                    None => ControlFlow::Break(BreakResult::Error(Value::String(format!("Undefined property: {}", property))))
+                    _ => ControlFlow::Break(BreakResult::Error(Value::String("Unsupported Operation: get property of non-struct object".to_string()))),
                 }
             }
 
@@ -544,38 +575,59 @@ impl VM {
         parameters: &[&str],
         body: NativeFunction,
     ) {
-        let mut global = self.environments.first().unwrap().borrow_mut();
-
         let parameters = parameters.iter().cloned()
             .map(str::to_string)
             .collect();
 
-        let native_function = Value::NativeFunction(NativeFunctionValue {
-            name: name.to_string(),
-            parameters,
-            body,
-        });
-        global.variables.insert(name.to_string(), Variable { value: native_function });
+        let ref_ = self.allocate_heap(
+            HeapObject::NativeFunction(NativeFunctionValue {
+                name: name.to_string(),
+                parameters,
+                body,
+            })
+        );
+
+        let mut global = self.environments.first().unwrap().borrow_mut();
+        global.variables.insert(name.to_string(), Variable { value: ref_ });
     }
 
-    fn allocate_object(&self) -> usize {
-        for i in 0.. {
-            if !self.structs.contains_key(&i) {
-                return i;
+    fn allocate_heap(&mut self, object: HeapObject) -> Value {
+        for address in 0.. {
+            if let hash_map::Entry::Vacant(e) = self.heap.entry(address) {
+                e.insert(Rc::new(RefCell::new(object)));
+                return Value::Ref(address);
             }
         }
         panic!("Failed to allocate object");
     }
+
+    // TODO: 戻り値は、弱参照として貸し出せないか?
+    fn dereference(&self, ref_: &Value) -> ControlFlow<BreakResult, &Rc<RefCell<HeapObject>>> {
+        match ref_ {
+            Value::Ref(address) => {
+                match self.heap.get(address) {
+                    Some(object) => ControlFlow::Continue(object),
+                    None => ControlFlow::Break(BreakResult::Error(Value::String("Undefined object".to_string()))),
+                }
+            }
+            _ => ControlFlow::Break(BreakResult::Error(Value::String("Expected reference".to_string()))),
+        }
+    }
 }
 
-fn parse_parameters(parameters: &[Parameter], names: &[String]) -> Result<Vec<Node>, String> {
+struct EvaluatedParameter {
+    name: Option<String>,
+    value: Value,
+}
+
+fn parse_parameters(parameters: &[EvaluatedParameter], names: &[String]) -> Result<Vec<Value>, String> {
     let mut map = HashMap::new();
 
     let mut non_specified_names = names.iter().cloned().collect::<BTreeSet<_>>();
     for parameter in parameters.iter() {
         if let Some(ref name) = parameter.name {
             if !non_specified_names.remove(name) {
-                return Err(format!("Unknown parameter: {}", name))
+                return Err(format!("Unknown parameter: {}", name));
             }
         };
     }
@@ -602,7 +654,7 @@ fn parse_parameters(parameters: &[Parameter], names: &[String]) -> Result<Vec<No
 
     Ok(
         names.iter()
-            .map(|name| *(map.remove(name).unwrap()))
+            .map(|name| map.remove(name).unwrap())
             .collect::<Vec<_>>()
     )
 }
@@ -1011,8 +1063,10 @@ mod tests {
     }
 
     mod reference {
+        use crate::value::HeapObject;
         use crate::vm::{Value, VM};
         use std::collections::HashMap;
+        use std::ops::Deref;
 
         #[test]
         fn set_and_get_object() {
@@ -1022,12 +1076,19 @@ mod tests {
 
                 let user = User(id=1, name=\"Alice\")
                 user
-            "), Value::Ref(0));
+            "), Value::Ref(1 + VM::get_builtin_object_count()));
 
             let mut properties = HashMap::new();
             properties.insert("id".to_string(), Value::Number(1.0));
             properties.insert("name".to_string(), Value::String("Alice".to_string()));
-            assert_eq!(vm.structs.get(&0).unwrap().borrow().clone().properties, properties);
+
+            let borrowed = vm.heap.get(&(1 + VM::get_builtin_object_count())).unwrap().deref().borrow();
+            match borrowed.deref() {
+                HeapObject::StructInstance(struct_value) => {
+                    assert_eq!(struct_value.properties, properties);
+                }
+                _ => panic!("Expected StructInstance"),
+            }
         }
 
         #[test]
@@ -1039,16 +1100,22 @@ mod tests {
 
                 let userRef = UserRef(user=User(id=1, name=\"Alice\"))
                 userRef
-            "), Value::Ref(1));
+            "), Value::Ref(3 + VM::get_builtin_object_count()));
 
             let mut properties_user = HashMap::new();
             properties_user.insert("id".to_string(), Value::Number(1.0));
             properties_user.insert("name".to_string(), Value::String("Alice".to_string()));
 
             let mut properties_user_ref = HashMap::new();
-            properties_user_ref.insert("user".to_string(), Value::Ref(0));
+            properties_user_ref.insert("user".to_string(), Value::Ref(2 + VM::get_builtin_object_count()));
 
-            assert_eq!(vm.structs.get(&1).unwrap().borrow().clone().properties, properties_user_ref);
+            let borrowed = vm.heap.get(&(3 + VM::get_builtin_object_count())).unwrap().deref().borrow();
+            match borrowed.deref() {
+                HeapObject::StructInstance(struct_value) => {
+                    assert_eq!(struct_value.properties, properties_user_ref);
+                }
+                _ => panic!("Expected StructInstance"),
+            }
         }
 
         #[test]
@@ -1073,12 +1140,19 @@ mod tests {
                 let user = User(id=1, name=\"Alice\")
                 user.id = 2
                 user
-            "), Value::Ref(0));
+            "), Value::Ref(1 + VM::get_builtin_object_count()));
 
             let mut properties = HashMap::new();
             properties.insert("id".to_string(), Value::Number(2.0));
             properties.insert("name".to_string(), Value::String("Alice".to_string()));
-            assert_eq!(vm.structs.get(&0).unwrap().borrow().clone().properties, properties);
+
+            let borrowed = vm.heap.get(&(1 + VM::get_builtin_object_count())).unwrap().deref().borrow();
+            match borrowed.deref() {
+                HeapObject::StructInstance(struct_value) => {
+                    assert_eq!(struct_value.properties, properties);
+                }
+                _ => panic!("Expected StructInstance"),
+            }
         }
 
         #[test]
@@ -1091,16 +1165,22 @@ mod tests {
                 let user1 = User(id=1, name=\"Alice\")
                 let userRef = UserRef(user=user1)
                 userRef
-            "), Value::Ref(1));
+            "), Value::Ref(3 + VM::get_builtin_object_count()));
 
             let mut expected_members_user1 = HashMap::new();
             expected_members_user1.insert("id".to_string(), Value::Number(1.0));
             expected_members_user1.insert("name".to_string(), Value::String("Alice".to_string()));
 
             let mut properties_user_ref = HashMap::new();
-            properties_user_ref.insert("user".to_string(), Value::Ref(0));
+            properties_user_ref.insert("user".to_string(), Value::Ref(2 + VM::get_builtin_object_count()));
 
-            assert_eq!(vm.structs.get(&1).unwrap().borrow().clone().properties, properties_user_ref);
+            let borrowed = vm.heap.get(&(3 + VM::get_builtin_object_count())).unwrap().deref().borrow();
+            match borrowed.deref() {
+                HeapObject::StructInstance(struct_value) => {
+                    assert_eq!(struct_value.properties, properties_user_ref);
+                }
+                _ => panic!("Expected StructInstance"),
+            }
         }
 
         #[test]
@@ -1114,16 +1194,22 @@ mod tests {
                 let userRef = UserRef(user=user1)
                 userRef.user.id = 2
                 userRef
-            "), Value::Ref(1));
+            "), Value::Ref(3 + VM::get_builtin_object_count()));
 
             let mut expected_members_user1 = HashMap::new();
             expected_members_user1.insert("id".to_string(), Value::Number(2.0));
             expected_members_user1.insert("name".to_string(), Value::String("Alice".to_string()));
 
             let mut properties_user_ref = HashMap::new();
-            properties_user_ref.insert("user".to_string(), Value::Ref(0));
+            properties_user_ref.insert("user".to_string(), Value::Ref(2 + VM::get_builtin_object_count()));
 
-            assert_eq!(vm.structs.get(&1).unwrap().borrow().clone().properties, properties_user_ref);
+            let borrowed = vm.heap.get(&(3 + VM::get_builtin_object_count())).unwrap().deref().borrow();
+            match borrowed.deref() {
+                HeapObject::StructInstance(struct_value) => {
+                    assert_eq!(struct_value.properties, properties_user_ref);
+                }
+                _ => panic!("Expected StructInstance"),
+            }
         }
 
         #[test]
@@ -1137,16 +1223,22 @@ mod tests {
                 let userRef = UserRef(user=user1)
                 user1 = User(id=2, name=\"Bob\")
                 userRef
-            "), Value::Ref(1));
+            "), Value::Ref(3 + VM::get_builtin_object_count()));
 
             let mut expected_members_user1 = HashMap::new();
             expected_members_user1.insert("id".to_string(), Value::Number(1.0));
             expected_members_user1.insert("name".to_string(), Value::String("Alice".to_string()));
 
             let mut properties_user_ref = HashMap::new();
-            properties_user_ref.insert("user".to_string(), Value::Ref(0));
+            properties_user_ref.insert("user".to_string(), Value::Ref(2 + VM::get_builtin_object_count()));
 
-            assert_eq!(vm.structs.get(&1).unwrap().borrow().clone().properties, properties_user_ref);
+            let borrowed = vm.heap.get(&(3 + VM::get_builtin_object_count())).unwrap().deref().borrow();
+            match borrowed.deref() {
+                HeapObject::StructInstance(struct_value) => {
+                    assert_eq!(struct_value.properties, properties_user_ref);
+                }
+                _ => panic!("Expected StructInstance"),
+            }
         }
 
         #[test]
@@ -1210,8 +1302,9 @@ mod tests {
     }
 
     mod gc {
-        use crate::value::Value;
+        use crate::value::{HeapObject, Value};
         use crate::vm::VM;
+        use std::ops::Deref;
 
         #[test]
         fn clean_up_all_unused_refs() {
@@ -1220,14 +1313,15 @@ mod tests {
                 struct User(name: string)
                 let alice = User(name=\"Alice\")
             "));
-            assert_eq!(vm.structs.len(), 1);
+            assert_eq!(vm.heap.len(), 2 + VM::get_builtin_object_count());
 
             vm.gc();
-            assert_eq!(vm.structs.len(), 1);
+            assert_eq!(vm.heap.len(), 2 + VM::get_builtin_object_count());
 
-            vm.eval("alice = User {};");
+            vm.eval("alice = User(name=\"Bob\");");
             vm.gc();
-            assert_eq!(vm.structs.len(), 1); // New empty object assigned into alice and bob
+            assert_eq!(vm.heap.len(), 2 + VM::get_builtin_object_count());
+            // Alice should be released
         }
 
         #[test]
@@ -1239,14 +1333,14 @@ mod tests {
                 struct Users { alice: User }
                 let users = Users { alice: User { name: \"Alice\" } }
             ");
-            assert_eq!(vm.structs.len(), 2);
+            assert_eq!(vm.heap.len(), 2);
 
             vm.gc();
-            assert_eq!(vm.structs.len(), 2);
+            assert_eq!(vm.heap.len(), 2);
 
             vm.eval("users = Users { alice: User { name: \"Alice2\" } }");
             vm.gc();
-            assert_eq!(vm.structs.len(), 1); // New empty object assigned into alice and bob
+            assert_eq!(vm.heap.len(), 1); // New empty object assigned into alice and bob
         }
 
         #[test]
@@ -1261,17 +1355,17 @@ mod tests {
                 bob.friend = alice
             ");
 
-            assert_eq!(vm.structs.len(), 2);
+            assert_eq!(vm.heap.len(), 2);
 
             vm.gc();
-            assert_eq!(vm.structs.len(), 2);
+            assert_eq!(vm.heap.len(), 2);
 
             println!("{:?}", vm.eval("
                 alice = User { name: \"Alice\" }
                 bob = alice
             "));
             vm.gc();
-            assert_eq!(vm.structs.len(), 1); // New object assigned into alice and bob
+            assert_eq!(vm.heap.len(), 1); // New object assigned into alice and bob
         }
 
         #[test]
@@ -1285,13 +1379,13 @@ mod tests {
                     let user = User { name: \"Alice\" }
                 }
             ");
-            assert_eq!(vm.structs.len(), 0);
+            assert_eq!(vm.heap.len(), 0);
 
             vm.eval("createUser()");
-            assert_eq!(vm.structs.len(), 1);
+            assert_eq!(vm.heap.len(), 1);
 
             vm.gc();
-            assert_eq!(vm.structs.len(), 0);
+            assert_eq!(vm.heap.len(), 0);
         }
 
         #[test]
@@ -1305,17 +1399,17 @@ mod tests {
                     return User { name: \"Alice\" }
                 }
             ");
-            assert_eq!(vm.structs.len(), 0);
+            assert_eq!(vm.heap.len(), 0);
 
             vm.eval("let user = createUser()");
-            assert_eq!(vm.structs.len(), 1);
+            assert_eq!(vm.heap.len(), 1);
 
             vm.gc();
-            assert_eq!(vm.structs.len(), 1);
+            assert_eq!(vm.heap.len(), 1);
 
             vm.eval("user = {}");
             vm.gc();
-            assert_eq!(vm.structs.len(), 1); // New empty object assigned into alice and bob
+            assert_eq!(vm.heap.len(), 1); // New empty object assigned into alice and bob
         }
 
         #[test]
@@ -1327,18 +1421,28 @@ mod tests {
                 let a = Obj {i:0}
                 let b = Obj {i:1}
              ");
-            assert_eq!(vm.structs.len(), 2);
+            assert_eq!(vm.heap.len(), 2);
 
             vm.eval("a = Obj {i:2}; b = a");
-            assert_eq!(vm.structs.len(), 3);
+            assert_eq!(vm.heap.len(), 3);
 
             vm.gc();    // address 0 and 1 are released
-            assert_eq!(vm.structs.len(), 1);
+            assert_eq!(vm.heap.len(), 1);
 
             vm.eval("b = Obj {i:3}");  // address 1 is reused
             vm.eval("b = Obj {i:4}");  // address 2 is reused
             assert_eq!(vm.eval("a"), Value::Ref(2));
-            assert_eq!(*vm.structs.get(&2).unwrap().borrow().properties.get("i").unwrap(), Value::Number(2.0));
+
+            let borrowed = vm.heap.get(&2).unwrap().deref().borrow();
+            match borrowed.deref() {
+                HeapObject::StructInstance(struct_value) => {
+                    assert_eq!(
+                        struct_value.properties.get("i").unwrap(),
+                        &Value::Number(2.0)
+                    );
+                }
+                _ => panic!("Expected StructInstance"),
+            }
         }
     }
 
