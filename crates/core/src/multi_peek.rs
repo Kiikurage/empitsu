@@ -20,10 +20,6 @@ where
         }
     }
 
-    pub fn get_iter(&self) -> &I {
-        &self.iter
-    }
-
     pub fn peek(&mut self, offset: usize) -> Option<&I::Item> {
         while self.peeked.len() <= offset {
             if let Some(next) = self.iter.next() {

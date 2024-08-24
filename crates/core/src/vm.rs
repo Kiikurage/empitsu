@@ -9,57 +9,65 @@ use std::ops::{ControlFlow, Deref};
 use std::rc::Rc;
 
 #[derive(Default, Debug, PartialEq)]
-pub struct Environment {
-    stack: HashMap<String, Primitive>,
+pub struct StackFrame {
+    offset: usize,
+    variable_offset: HashMap<String, usize>,
 
-    // VM内での親Envのindex
+    // VM内での親Frameのindex
     parent: Option<usize>,
 }
 
-impl Environment {
-    fn new() -> Self {
-        Environment {
-            stack: HashMap::new(),
-            parent: None,
-        }
+impl StackFrame {
+    fn new(offset: usize, parent: Option<usize>) -> Self {
+        StackFrame { offset, variable_offset: HashMap::new(), parent }
     }
-}
-
-pub enum BreakResult {
-    Return(Primitive),
-    Break(Primitive),
-    Error(Primitive),
 }
 
 struct Stack {
-    environments: Vec<Environment>,
+    stack: Vec<Primitive>,
+    frames: Vec<StackFrame>,
 }
 
 impl Stack {
-    fn enter_new_environment(&mut self) {
-        let mut environment = Environment::new();
-        environment.parent = Some(self.environments.len() - 1);
-        self.environments.push(environment);
+    fn new() -> Self {
+        Stack {
+            stack: Vec::new(),
+            frames: vec![StackFrame::new(0, None)],
+        }
     }
 
-    fn exit_environment(&mut self) {
-        self.environments.pop();
+    fn enter_frame(&mut self) {
+        self.frames.push(
+            StackFrame::new(self.stack.len(), Some(self.frames.len() - 1))
+        );
+    }
+
+    fn enter_frame_with_closure(&mut self, closure: usize) {
+        self.frames.push(
+            StackFrame::new(self.stack.len(), Some(closure))
+        );
+    }
+
+    fn exit_frame(&mut self) {
+        self.frames.pop();
     }
 
     fn declare_variable(&mut self, name: String, value: Primitive) {
-        let env = self.environments.last_mut().unwrap();
+        let frame = self.frames.last_mut().unwrap();
 
-        env.stack.insert(name, value);
+        let offset = frame.variable_offset.len();
+        frame.variable_offset.insert(name, offset);
+        self.stack.insert(frame.offset + offset, value);
     }
 
     fn get_variable(&self, name: &str) -> Option<&Primitive> {
-        let mut env = self.environments.last()?;
+        let mut frame = self.frames.last()?;
 
         loop {
-            match env.stack.get(name) {
-                Some(value) => return Some(value),
-                None => match &env.parent {
-                    Some(parent) => env = self.environments.get(*parent)?,
+            match frame.variable_offset.get(name) {
+                Some(offset) => return self.stack.get(frame.offset + offset),
+                None => match frame.parent {
+                    Some(parent) => frame = self.frames.get(parent)?,
                     None => return None
                 },
             }
@@ -67,17 +75,18 @@ impl Stack {
     }
 
     fn set_variable(&mut self, name: String, value: Primitive) -> Result<(), String> {
-        let mut env = self.environments.last_mut().unwrap();
+        let mut frame = self.frames.last_mut().unwrap();
 
         loop {
-            if env.stack.contains_key(&name) {
-                env.stack.insert(name, value);
-                return Ok(());
-            } else {
-                match env.parent {
-                    Some(parent) => env = self.environments.get_mut(parent).unwrap(),
-                    None => return Err(format!("Undefined variable: {}", name)),
+            match frame.variable_offset.get(&name) {
+                Some(offset) => {
+                    self.stack[frame.offset + offset] = value;
+                    return Ok(());
                 }
+                None => match frame.parent {
+                    Some(parent) => frame = self.frames.get_mut(parent).unwrap(),
+                    None => return Err(format!("Undefined variable: {}", name)),
+                },
             }
         }
     }
@@ -88,6 +97,12 @@ struct Heap {
 }
 
 impl Heap {
+    fn new() -> Self {
+        Heap {
+            heap: HashMap::new(),
+        }
+    }
+
     fn allocate(&mut self, object: Object) -> Primitive {
         for address in 0.. {
             if let hash_map::Entry::Vacant(e) = self.heap.entry(address) {
@@ -119,6 +134,12 @@ impl Heap {
     }
 }
 
+pub enum BreakResult {
+    Return(Primitive),
+    Break(Primitive),
+    Error(Primitive),
+}
+
 pub struct VM {
     stack: Stack,
     heap: Heap,
@@ -126,12 +147,7 @@ pub struct VM {
 
 impl VM {
     pub fn new() -> Self {
-        let mut vm = VM {
-            stack: Stack { environments: vec![Environment::new()] },
-            heap: Heap {
-                heap: HashMap::new(),
-            },
-        };
+        let mut vm = VM { stack: Stack::new(), heap: Heap::new() };
 
         vm.install_native_function("number", vec!["value".to_string()], |args, _vm| {
             let value = match args.first() {
@@ -268,11 +284,9 @@ impl VM {
     pub fn gc(&mut self) {
         let mut retained_objects = HashSet::new();
 
-        for env in self.stack.environments.iter() {
-            for value in env.stack.values() {
-                if let Primitive::Ref(address) = value {
-                    retained_objects.insert(*address);
-                }
+        for value in self.stack.stack.iter() {
+            if let Primitive::Ref(address) = value {
+                retained_objects.insert(*address);
             }
         }
 
@@ -304,8 +318,8 @@ impl VM {
                 }
                 Object::Function(..) | Object::NativeFunction(..) => {
                     // TODO: クロージャを通して参照しているオブジェクトをretainする
-                    // いまはすべてのenvを見ているため問題ないが、そちらでは
-                    // 現在の実行スコープから遡って参照可能なenvのみをチェックすべき
+                    // いまはすべてのframeを見ているため問題ないが、そちらでは
+                    // 現在の実行スコープから遡って参照可能なframeのみをチェックすべき
                 }
             }
         }
@@ -363,7 +377,6 @@ impl VM {
                 ControlFlow::Continue(Primitive::Null)
             }
             Node::ForStatement(var_name, iterator, body) => {
-                self.stack.enter_new_environment();
 
                 let (start, end) = match iterator.deref() {
                     Node::RangeIterator(start, end) => {
@@ -377,24 +390,19 @@ impl VM {
                 };
                 let mut i = start.as_number().into_control_flow()?;
                 let end = end.as_number().into_control_flow()?;
-                self.stack.declare_variable(var_name.clone(), start);
                 while i < end {
-                    match self.stack.set_variable(var_name.clone(), Primitive::Number(i)) {
-                        Ok(()) => {}
-                        Err(message) => {
-                            return ControlFlow::Break(BreakResult::Error(Primitive::String(message)))
-                        }
-                    }
-                    match self.eval_node(body) {
+                    self.stack.enter_frame();
+                    self.stack.declare_variable(var_name.clone(), Primitive::Number(i));
+                    let ret = self.eval_node(body);
+                    self.stack.exit_frame();
+
+                    match ret {
                         ControlFlow::Break(BreakResult::Break(_)) => break,
-                        other => {
-                            other?;
-                        }
-                    }
+                        other => other?,
+                    };
                     i += 1f64;
                 }
 
-                self.stack.exit_environment();
                 ControlFlow::Continue(Primitive::Null)
             }
             Node::FunctionDeclaration(function_node) => {
@@ -407,7 +415,7 @@ impl VM {
                     name: function_node.name.clone(),
                     parameters,
                     body: Rc::new(function_node.body.clone()),
-                    closure: self.stack.environments.len() - 1,
+                    closure: self.stack.frames.len() - 1,
                 }));
                 self.stack.declare_variable(function_node.name.clone(), function_ref);
 
@@ -439,7 +447,7 @@ impl VM {
                     name: function_node.name.clone(),
                     parameters,
                     body: Rc::new(function_node.body.clone()),
-                    closure: self.stack.environments.len() - 1,
+                    closure: self.stack.frames.len() - 1,
                 }));
                 ControlFlow::Continue(function_ref)
             }
@@ -458,14 +466,14 @@ impl VM {
                 }
             }
             Node::BlockExpression(nodes) => {
-                self.stack.enter_new_environment();
+                self.stack.enter_frame();
 
                 let mut ret = Primitive::Number(0.0);
                 for node in nodes {
                     ret = self.eval_node(node)?;
                 }
 
-                self.stack.exit_environment();
+                self.stack.exit_frame();
                 ControlFlow::Continue(ret)
             }
             Node::AssignmentExpression(lhs, value) => {
@@ -608,9 +616,7 @@ impl VM {
                             }
                         };
 
-                        let mut environment = Environment::new();
-                        environment.parent = Some(function.closure);
-                        self.stack.environments.push(environment);
+                        self.stack.enter_frame_with_closure(function.closure);
 
                         for (parameter, parameter_name) in parameters.into_iter().zip(function.parameters.iter()) {
                             self.stack.declare_variable(parameter_name.clone(), parameter);
@@ -621,7 +627,7 @@ impl VM {
                             others => return others,
                         };
 
-                        self.stack.environments.pop();
+                        self.stack.frames.pop();
                         ControlFlow::Continue(ret)
                     }
                     Object::NativeFunction(function) => {
@@ -634,13 +640,11 @@ impl VM {
                             }
                         };
 
-                        let mut environment = Environment::new();
-                        environment.parent = Some(0);
-                        self.stack.environments.push(environment);
+                        self.stack.enter_frame_with_closure(0);
 
                         let ret = (function.body)(&parameters, self);
 
-                        self.stack.environments.pop();
+                        self.stack.frames.pop();
                         ret
                     }
                     Object::StructDefinition(struct_) => {
@@ -728,8 +732,7 @@ impl VM {
             body,
         }));
 
-        let global = self.stack.environments.first_mut().unwrap();
-        global.stack.insert(name.to_string(), ref_);
+        self.stack.declare_variable(name.to_string(), ref_);
     }
 }
 

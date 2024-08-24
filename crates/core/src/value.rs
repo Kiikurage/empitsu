@@ -72,7 +72,7 @@ pub struct FunctionValue {
     pub parameters: Vec<String>,
     pub body: Rc<Box<Node>>,
 
-    // Index of the environment where the function was defined
+    // Index of the frame where the function was defined
     pub closure: usize,
 }
 
