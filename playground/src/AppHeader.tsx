@@ -1,7 +1,14 @@
+import type { AnchorHTMLAttributes, ReactNode } from "react";
+
 export function AppHeader({
 	onRunButtonClick,
 	onSaveButtonClick,
-}: { onRunButtonClick?: () => void; onSaveButtonClick?: () => void }) {
+	onHelpButtonClick,
+}: {
+	onRunButtonClick?: () => void;
+	onSaveButtonClick?: () => void;
+	onHelpButtonClick?: () => void;
+}) {
 	return (
 		<header
 			css={{
@@ -15,9 +22,6 @@ export function AppHeader({
 				background: "#da7b2d",
 			}}
 		>
-			<h1 css={{ padding: 0, fontSize: "1.5rem", color: "#fff" }}>
-				Empitsu Playground
-			</h1>
 			<div
 				css={{
 					padding: 0,
@@ -26,13 +30,115 @@ export function AppHeader({
 					gap: 16,
 				}}
 			>
-				<button onClick={onRunButtonClick} type="button">
+				<h1 css={{ padding: 0, fontSize: "1.5rem", color: "#fff" }}>
+					Empitsu Playground
+				</h1>
+				<AppHeaderButtonLink
+					href="https://github.com/Kiikurage/empitsu"
+					target="_blank"
+				>
+					<img
+						src={require("./github-mark-white.svg")}
+						alt="GitHub"
+						width={26}
+					/>
+					GitHub
+				</AppHeaderButtonLink>
+			</div>
+			<div
+				css={{
+					padding: 0,
+					display: "flex",
+					flexDirection: "row",
+					gap: 16,
+				}}
+			>
+				<AppHeaderButton onClick={onRunButtonClick}>
+					<span className="material-symbols-outlined">play_arrow</span>
 					Run
-				</button>
-				<button onClick={onSaveButtonClick} type="button">
+				</AppHeaderButton>
+				<AppHeaderButton onClick={onSaveButtonClick}>
+					<span className="material-symbols-outlined">save</span>
 					Save
-				</button>
+				</AppHeaderButton>
+				<AppHeaderButton onClick={onHelpButtonClick}>
+					<span className="material-symbols-outlined">help</span>
+					Help
+				</AppHeaderButton>
 			</div>
 		</header>
+	);
+}
+
+export function AppHeaderButton({
+	children,
+	onClick,
+}: {
+	children?: ReactNode;
+	onClick?: () => void;
+}) {
+	return (
+		<button
+			css={{
+				padding: "8px 16px",
+				background: "transparent",
+				color: "#fff",
+				border: "none",
+				borderRadius: 4,
+				cursor: "pointer",
+				fontSize: "1.25rem",
+				display: "flex",
+				flexDirection: "row",
+				alignItems: "center",
+				justifyContent: "center",
+				gap: 8,
+				":hover": {
+					background: "rgba(255,255,255,0.2)",
+				},
+				":active": {
+					background: "rgba(255,255,255,0.35)",
+				},
+			}}
+			type="button"
+			onClick={onClick}
+		>
+			{children}
+		</button>
+	);
+}
+
+export function AppHeaderButtonLink({
+	children,
+	...otherAttributes
+}: AnchorHTMLAttributes<HTMLAnchorElement> & {
+	children?: ReactNode;
+}) {
+	return (
+		<a
+			css={{
+				padding: "8px 16px",
+				background: "transparent",
+				color: "#fff",
+				border: "none",
+				borderRadius: 4,
+				cursor: "pointer",
+				fontSize: "1.25rem",
+				display: "flex",
+				textDecoration: "none",
+				flexDirection: "row",
+				alignItems: "center",
+				justifyContent: "center",
+				gap: 8,
+				":hover": {
+					background: "rgba(255,255,255,0.2)",
+				},
+				":active": {
+					background: "rgba(255,255,255,0.35)",
+				},
+			}}
+			{...otherAttributes}
+		>
+			{children}
+		</a>
 	);
 }

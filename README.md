@@ -1,5 +1,7 @@
 # 自作言語
 
+[Playground](https://kiikurage.github.io/empitsu/)
+
 言語処理系を自作する
 
 # 言語仕様

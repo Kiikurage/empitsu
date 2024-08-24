@@ -4,6 +4,7 @@ build
 /.gradle
 idea-flex.skeleton
 jflex-*.jar
+node_modules
 
 # error logs produced by IntelliJ IDEA
 rustc-ice-*
