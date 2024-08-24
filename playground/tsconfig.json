@@ -1,0 +1,14 @@
+{
+	"compilerOptions": {
+		"target": "ES2020",
+		"strict": true,
+		"sourceMap": true,
+		"moduleResolution": "node",
+		"forceConsistentCasingInFileNames": true,
+		"lib": ["DOM", "ES2020"],
+		"jsx": "react-jsx",
+		"jsxImportSource": "@emotion/react",
+		"rootDir": "./src"
+	},
+	"include": ["src/**/*", "../crates/wasm/pkg/**/*"]
+}
