@@ -248,7 +248,7 @@ fn scan_token(chars: &mut CharIterator) -> Result<Token, Error> {
                 })
             } else {
                 chars.next();
-                Err(Error::syntax_error(position, "Unexpected character"))
+                Err(Error::unexpected_token(position, "&"))
             }
         }
         Some('|') => {
@@ -283,7 +283,7 @@ fn scan_token(chars: &mut CharIterator) -> Result<Token, Error> {
         Some(other) => {
             let other = other.clone();
             chars.next();
-            Err(Error::syntax_error(position, format!("Unexpected character \"{}\"", other)))
+            Err(Error::unexpected_token(position, other))
         },
         None => Ok(Token {
             kind: TokenKind::EndOfInput,
@@ -596,6 +596,15 @@ mod tests {
     #[test]
     fn invalid_token() {
         test("[@#$^&%]", vec![
+            Err(Error::unexpected_token(Position::new(0, 0), "[")),
+            Err(Error::unexpected_token(Position::new(0, 1), "@")),
+            Err(Error::unexpected_token(Position::new(0, 2), "#")),
+            Err(Error::unexpected_token(Position::new(0, 3), "$")),
+            Err(Error::unexpected_token(Position::new(0, 4), "^")),
+            Err(Error::unexpected_token(Position::new(0, 5), "&")),
+            Err(Error::unexpected_token(Position::new(0, 6), "%")),
+            Err(Error::unexpected_token(Position::new(0, 7), "]")),
+            Ok(Token::end_of_input(0, 8)),
         ]);
     }
 }

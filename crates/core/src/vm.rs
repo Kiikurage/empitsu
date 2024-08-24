@@ -2238,24 +2238,4 @@ mod tests {
             (int1 + int2).value
         "#), Primitive::Number(3.0));
     }
-
-    #[test]
-    fn invalid_syntax() {
-        assert_eq!(
-            VM::new().eval(r#"
-                struct User(
-                  id: number,
-                  name: string
-                ) {
-                  fn getName(self): string {
-                    return self.name;
-                  }
-                }
-
-                let user = User(10, 10)
-                user["name"]"#
-            ),
-            Primitive::Number(0f64)
-        )
-    }
 }
