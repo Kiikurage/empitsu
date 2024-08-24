@@ -270,8 +270,9 @@ let user = User(id=1, name="Alice")
 stringify(user)  // => "Alice"
                  	`.trim()}
 				</Code>
-
-				<h3>演算子</h3>
+			</section>
+			<section>
+				<h2>演算子</h2>
 				<Code>
 					{`
 // 算術演算
@@ -293,6 +294,38 @@ stringify(user)  // => "Alice"
 flag1 && flag2
 flag1 || flag2
                  	`.trim()}
+				</Code>
+			</section>
+			<section>
+				<h2>型</h2>
+
+				<h3>組み込み型</h3>
+				<Code>
+					{`
+let x: number = 123
+let y: string = "hello"
+let z: boolean = true
+				 	`.trim()}
+				</Code>
+
+				<h3>Optional型</h3>
+				<Code>
+					{`
+let x: number? = 123
+				 	`.trim()}
+				</Code>
+
+				<h3>Union型</h3>
+				<Code>
+					{`
+fn test1(value: number|string): string {
+	// ...
+}
+
+fn test2(value: (number|string)?): string {
+	// ...
+}
+				 	`.trim()}
 				</Code>
 			</section>
 		</div>
