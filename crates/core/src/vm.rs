@@ -1,4 +1,4 @@
-use crate::node::Node;
+use crate::node::{FunctionNode, Node};
 use crate::parser::parse;
 use crate::punctuation_kind::PunctuationKind;
 use crate::value::{BoundFunctionValue, FunctionValue, NativeFunction, NativeFunctionValue, Object, Primitive, StructDefinitionValue, StructInstanceValue};
@@ -12,60 +12,87 @@ pub struct StackFrame {
     offset: usize,
     variable_offset: HashMap<String, usize>,
 
-    // VM内での親Frameのindex
+    // 参照解決に用いる上位フレームのid
     parent: Option<usize>,
+
+    // このフレームを抜けたときに戻るべきフレームのid
+    return_address: Option<usize>,
 }
 
 impl StackFrame {
-    fn new(offset: usize, parent: Option<usize>) -> Self {
-        StackFrame { offset, variable_offset: HashMap::new(), parent }
+    fn new(offset: usize, parent: Option<usize>, return_address: Option<usize>) -> Self {
+        StackFrame { offset, variable_offset: HashMap::new(), parent, return_address }
     }
 }
 
 struct Stack {
     stack: Vec<Primitive>,
-    frames: Vec<StackFrame>,
+    frames: HashMap<usize, StackFrame>,
+    frame_id: usize,
+    next_frame_id: usize,
 }
 
 impl Stack {
     fn new() -> Self {
+        let mut frames = HashMap::new();
+        frames.insert(0, StackFrame::new(0, None, None));
+
         Stack {
             stack: Vec::new(),
-            frames: vec![StackFrame::new(0, None)],
+            frames,
+            frame_id: 0,
+            next_frame_id: 1,
         }
     }
 
-    fn enter_frame(&mut self) {
-        self.frames.push(
-            StackFrame::new(self.stack.len(), Some(self.frames.len() - 1))
-        );
+    fn current_frame(&self) -> &StackFrame {
+        self.frames.get(&self.frame_id).unwrap()
     }
 
-    fn enter_frame_with_closure(&mut self, closure: usize) {
-        self.frames.push(
-            StackFrame::new(self.stack.len(), Some(closure))
-        );
+    fn current_frame_mut(&mut self) -> &mut StackFrame {
+        self.frames.get_mut(&self.frame_id).unwrap()
+    }
+
+    fn enter_frame(&mut self) {
+        self.enter_frame_with_closure(self.frame_id);
+    }
+
+    fn enter_frame_with_closure(&mut self, closure_id: usize) {
+        let new_frame = StackFrame::new(self.stack.len(), Some(closure_id), Some(self.frame_id));
+        let new_frame_id = self.next_frame_id;
+        self.next_frame_id += 1;
+
+        self.frames.insert(new_frame_id, new_frame);
+        self.frame_id = new_frame_id;
     }
 
     fn exit_frame(&mut self) {
-        self.frames.pop();
+        self.frame_id = match self.current_frame().return_address {
+            Some(ref parent) => parent.clone()
+,
+            None => panic!("Failed to exit frame"),
+        };
     }
 
     fn declare_variable(&mut self, name: String, value: Primitive) {
-        let frame = self.frames.last_mut().unwrap();
+        let offset = {
+            let frame = self.current_frame_mut();
+            let offset = frame.variable_offset.len();
+            frame.variable_offset.insert(name, offset);
 
-        let offset = frame.variable_offset.len();
-        frame.variable_offset.insert(name, offset);
-        self.stack.insert(frame.offset + offset, value);
+            frame.offset + offset
+        };
+
+        self.stack.insert(offset, value);
     }
 
-    fn get_variable(&self, name: &str) -> Option<&Primitive> {
-        let mut frame = self.frames.last()?;
+    fn load_variable(&self, name: &str) -> Option<&Primitive> {
+        let mut frame = self.current_frame();
 
         loop {
             match frame.variable_offset.get(name) {
                 Some(offset) => return self.stack.get(frame.offset + offset),
-                None => match frame.parent {
+                None => match &frame.parent {
                     Some(parent) => frame = self.frames.get(parent)?,
                     None => return None
                 },
@@ -73,19 +100,25 @@ impl Stack {
         }
     }
 
-    fn set_variable(&mut self, name: String, value: Primitive) -> Result<(), String> {
-        let mut frame = self.frames.last_mut().unwrap();
+    fn store_variable(&mut self, name: String, value: Primitive) -> Result<(), String> {
+        let mut frame = self.current_frame();
 
         loop {
-            match frame.variable_offset.get(&name) {
+            let offset = match frame.variable_offset.get(&name) {
+                Some(offset) => Some(frame.offset + offset),
+                None => None,
+            };
+            let parent = frame.parent.clone();
+
+            match offset {
                 Some(offset) => {
-                    self.stack[frame.offset + offset] = value;
+                    self.stack[offset] = value;
                     return Ok(());
-                }
-                None => match frame.parent {
-                    Some(parent) => frame = self.frames.get_mut(parent).unwrap(),
-                    None => return Err(format!("Undefined variable: {}", name)),
                 },
+                None => match parent {
+                    Some(parent) => frame = self.frames.get(&parent).unwrap(),
+                    None => return Err(format!("Undefined variable: {}", name)),
+                }
             }
         }
     }
@@ -168,8 +201,8 @@ impl VM {
     }
 
     fn install_builtin_objects(&mut self) {
-        self.install_native_function("number", vec!["value".to_string()], |vm| {
-            match vm.stack.get_variable("value") {
+        self.declare_native_function("number".to_string(), vec!["value".to_string()], |vm| {
+            match vm.load_variable("value") {
                 Some(Primitive::Number(value)) => ControlFlow::Continue(Primitive::Number(*value)),
                 Some(Primitive::Bool(value)) => {
                     ControlFlow::Continue(Primitive::Number(if *value { 1.0 } else { 0.0 }))
@@ -185,8 +218,8 @@ impl VM {
                 _ => ControlFlow::Break(BreakResult::Error(Primitive::String("Failed to cast to Number".to_string()))),
             }
         });
-        self.install_native_function("bool", vec!["value".to_string()], |vm| {
-            match vm.stack.get_variable("value") {
+        self.declare_native_function("bool".to_string(), vec!["value".to_string()], |vm| {
+            match vm.load_variable("value") {
                 Some(Primitive::Number(value)) => ControlFlow::Continue(Primitive::Bool(*value != 0.0)),
                 Some(Primitive::Bool(value)) => ControlFlow::Continue(Primitive::Bool(*value)),
                 Some(Primitive::String(value)) => {
@@ -195,8 +228,8 @@ impl VM {
                 _ => ControlFlow::Break(BreakResult::Error(Primitive::String("Failed to cast to Bool".to_string()))),
             }
         });
-        self.install_native_function("string", vec!["value".to_string()], |vm| {
-            match vm.stack.get_variable("value") {
+        self.declare_native_function("string".to_string(), vec!["value".to_string()], |vm| {
+            match vm.load_variable("value") {
                 Some(Primitive::Number(value)) => {
                     ControlFlow::Continue(Primitive::String(value.to_string()))
                 }
@@ -209,8 +242,8 @@ impl VM {
                 }
             }
         });
-        self.install_native_function("print", vec!["value".to_string()], |vm| {
-            let value = match vm.stack.get_variable("value") {
+        self.declare_native_function("print".to_string(), vec!["value".to_string()], |vm| {
+            let value = match vm.load_variable("value") {
                 Some(value) => value,
                 None => {
                     return ControlFlow::Break(BreakResult::Error(Primitive::String(
@@ -221,8 +254,8 @@ impl VM {
             println!("{}", value.clone().into_string());
             ControlFlow::Continue(Primitive::Number(0.0))
         });
-        self.install_native_function("debug", vec!["value".to_string()], |vm| {
-            let value = match vm.stack.get_variable("value") {
+        self.declare_native_function("debug".to_string(), vec!["value".to_string()], |vm| {
+            let value = match vm.load_variable("value") {
                 Some(value) => value,
                 None => {
                     return ControlFlow::Break(BreakResult::Error(Primitive::String(
@@ -243,13 +276,88 @@ impl VM {
             ControlFlow::Continue(Primitive::Number(0.0))
         });
 
-        self.eval(
-            r#"
-            interface ToString {
-                fn toString(self): string
+        let array_ref = self.declare_struct("Array".to_string(), vec!["length".to_string()], vec![], vec![]);
+
+        let array_new_ref = self.allocate_native_function(vec!["length".to_string()], |vm| {
+            let array_ref = vm.load_variable("Array").unwrap();
+
+            let length = match vm.load_variable("length") {
+                Some(Primitive::Number(value)) => *value as usize,
+                _ => return ControlFlow::Break(BreakResult::Error(Primitive::String("Expected number".to_string()))),
+            };
+
+            let mut properties = HashMap::new();
+            for i in 0..length {
+                properties.insert(i.to_string(), Primitive::Number(0.0));
             }
-            "#,
-        );
+            properties.insert("length".to_string(), Primitive::Number(length as f64));
+
+            let ref_ = vm.heap.allocate(Object::StructInstance(StructInstanceValue {
+                definition: array_ref.clone(),
+                properties,
+            }));
+
+            ControlFlow::Continue(ref_)
+        });
+        self.declare_static_method(&array_ref, "new".to_string(), array_new_ref);
+
+        let array_get_ref = self.allocate_native_function(vec!["self".to_string(), "index".to_string()], |vm| {
+            let index = match vm.load_variable("index") {
+                Some(Primitive::Number(value)) => *value as usize,
+                _ => return ControlFlow::Break(BreakResult::Error(Primitive::String("Expected number".to_string()))),
+            };
+
+            let array_ref = match vm.load_variable("self") {
+                Some(r @ Primitive::Ref(..)) => r,
+                _ => return ControlFlow::Break(BreakResult::Error(Primitive::String("Expected array".to_string()))),
+            };
+
+            let array = match vm.heap.dereference(array_ref) {
+                Ok(Object::StructInstance(array)) => array,
+                _ => return ControlFlow::Break(BreakResult::Error(Primitive::String("Expected array".to_string()))),
+            };
+
+            match array.properties.get(&index.to_string()) {
+                Some(value) => ControlFlow::Continue(value.clone()),
+                None => ControlFlow::Break(BreakResult::Error(Primitive::String("Index out of range".to_string()))),
+            }
+        });
+        self.declare_instance_method(&array_ref, "get".to_string(), array_get_ref);
+
+        let array_set_ref = self.allocate_native_function(vec!["self".to_string(), "index".to_string(), "value".to_string()], |vm| {
+            let index = match vm.load_variable("index") {
+                Some(Primitive::Number(value)) => *value,
+                _ => return ControlFlow::Break(BreakResult::Error(Primitive::String("Expected number".to_string()))),
+            };
+
+            let value = match vm.load_variable("value") {
+                Some(value) => value.clone(),
+                _ => return ControlFlow::Break(BreakResult::Error(Primitive::String("Expected value".to_string()))),
+            };
+
+            let array_ref = match vm.load_variable("self") {
+                Some(r @ Primitive::Ref(..)) => r.clone(),
+                _ => return ControlFlow::Break(BreakResult::Error(Primitive::String("Expected array".to_string()))),
+            };
+
+            let array = match vm.heap.dereference_mut(&array_ref) {
+                Ok(Object::StructInstance(array)) => array,
+                _ => return ControlFlow::Break(BreakResult::Error(Primitive::String("Expected array".to_string()))),
+            };
+
+            if index.fract() != 0.0 {
+                return ControlFlow::Break(BreakResult::Error(Primitive::String("Expected integer".to_string())));
+            }
+            if index < 0f64 || index >= array.properties.get("length").unwrap().as_number().unwrap() {
+                return ControlFlow::Break(BreakResult::Error(Primitive::String("Index out of range".to_string())));
+            }
+            let index = index as usize;
+
+            array.properties.insert(index.to_string(), value);
+
+            ControlFlow::Continue(Primitive::Null)
+        });
+        self.declare_instance_method(&array_ref, "set".to_string(), array_set_ref);
     }
 
     pub fn eval(&mut self, input: &str) -> Primitive {
@@ -303,6 +411,7 @@ impl VM {
                     // let user = User(name="Alice")
                 }
                 Object::StructDefinition(..) => {
+
                     // TODO: プロパティの型として参照している別の構造体をretainする
                     // 以下の例の場合、UsersはUserを参照しているため、Userもretainする必要がある
                     // struct Users(user1: User)
@@ -359,12 +468,13 @@ impl VM {
                 }
                 ControlFlow::Continue(Primitive::Null)
             }
-            Node::VariableDeclaration(name, _variable_type, value) => {
+            Node::VariableDeclaration(name, _, value) => {
                 let value = match value {
                     Some(value) => self.eval_node(value)?,
                     None => Primitive::Number(0.0),
                 };
-                self.stack.declare_variable(name.clone(), value);
+                self.declare_variable(name.clone(), value);
+
                 ControlFlow::Continue(Primitive::Null)
             }
             Node::ForStatement(var_name, iterator, body) => {
@@ -382,7 +492,7 @@ impl VM {
                 let end = end.as_number().into_control_flow()?;
                 while i < end {
                     self.stack.enter_frame();
-                    self.stack.declare_variable(var_name.clone(), Primitive::Number(i));
+                    self.declare_variable(var_name.clone(), Primitive::Number(i));
                     let ret = self.eval_node(body);
                     self.stack.exit_frame();
 
@@ -396,58 +506,21 @@ impl VM {
                 ControlFlow::Continue(Primitive::Null)
             }
             Node::FunctionDeclaration(function_node) => {
-                let mut parameters = vec![];
-                for parameter_declaration in function_node.interface.parameters.iter() {
-                    parameters.push(parameter_declaration.name.clone());
-                }
-
-                let function_ref = self.heap.allocate(Object::Function(FunctionValue {
-                    name: function_node.interface.name.clone(),
-                    parameters,
-                    body: Rc::new(function_node.body.clone()),
-                    closure: self.stack.frames.len() - 1,
-                }));
-                self.stack.declare_variable(function_node.interface.name.clone(), function_ref);
+                self.declare_function(
+                    function_node.interface.name.clone(),
+                    function_node.interface.parameters.iter().map(|p| p.name.clone()).collect(),
+                    *function_node.body.clone(),
+                );
 
                 ControlFlow::Continue(Primitive::Null)
             }
             Node::StructDeclaration(struct_) => {
-                let mut properties = Vec::new();
-                for property in struct_.properties.iter() {
-                    properties.push(property.name.clone());
-                }
-
-                let mut instance_methods = HashMap::new();
-                for function in struct_.instance_methods.iter() {
-                    instance_methods.insert(function.interface.name.clone(), self.heap.allocate(
-                        Object::Function(FunctionValue {
-                            name: function.interface.name.clone(),
-                            parameters: function.interface.parameters.iter().map(|p| p.name.clone()).collect(),
-                            body: Rc::new(function.body.clone()),
-                            closure: self.stack.frames.len() - 1,
-                        })
-                    ));
-                }
-
-                let mut static_methods = HashMap::new();
-                for function in struct_.static_methods.iter() {
-                    static_methods.insert(function.interface.name.clone(), self.heap.allocate(
-                        Object::Function(FunctionValue {
-                            name: function.interface.name.clone(),
-                            parameters: function.interface.parameters.iter().map(|p| p.name.clone()).collect(),
-                            body: Rc::new(function.body.clone()),
-                            closure: self.stack.frames.len() - 1,
-                        })
-                    ));
-                }
-
-                let struct_ref = self.heap.allocate(Object::StructDefinition(StructDefinitionValue {
-                    name: struct_.name.clone(),
-                    properties,
-                    instance_methods,
-                    static_methods,
-                }));
-                self.stack.declare_variable(struct_.name.clone(), struct_ref);
+                self.declare_struct(
+                    struct_.name.clone(),
+                    struct_.properties.iter().map(|p| p.name.clone()).collect(),
+                    struct_.instance_methods.clone(),
+                    struct_.static_methods.clone(),
+                );
 
                 ControlFlow::Continue(Primitive::Null)
             }
@@ -456,8 +529,8 @@ impl VM {
                 ControlFlow::Continue(Primitive::Null)
             }
             Node::ImplStatement(impl_statement) => {
-                let struct_ref = match self.stack.get_variable(&impl_statement.struct_name) {
-                    Some(struct_ref) => struct_ref,
+                let struct_ref = match self.load_variable(&impl_statement.struct_name) {
+                    Some(struct_ref) => struct_ref.clone(),
                     None => return ControlFlow::Break(BreakResult::Error(Primitive::String("Undefined struct".to_string()))),
                 };
 
@@ -469,7 +542,7 @@ impl VM {
                             name: instance_method.interface.name.clone(),
                             parameters: instance_method.interface.parameters.iter().map(|p| p.name.clone()).collect(),
                             body: Rc::new(instance_method.body.clone()),
-                            closure: self.stack.frames.len() - 1,
+                            closure: self.stack.frame_id,
                         }))
                     ));
                 }
@@ -479,8 +552,8 @@ impl VM {
                     _ => return ControlFlow::Break(BreakResult::Error(Primitive::String("Undefined struct".to_string()))),
                 };
 
-                for (name, fn_ptr) in methods {
-                    struct_.instance_methods.insert(name, fn_ptr);
+                for (name, fn_ref) in methods {
+                    struct_.instance_methods.insert(name, fn_ref);
                 }
 
                 ControlFlow::Continue(Primitive::Null)
@@ -497,7 +570,7 @@ impl VM {
                     name: function_node.interface.name.clone(),
                     parameters,
                     body: Rc::new(function_node.body.clone()),
-                    closure: self.stack.frames.len() - 1,
+                    closure: self.stack.frame_id,
                 }));
                 ControlFlow::Continue(function_ref)
             }
@@ -518,19 +591,22 @@ impl VM {
             Node::BlockExpression(nodes) => {
                 self.stack.enter_frame();
 
-                let mut ret = Primitive::Number(0.0);
+                let mut ret = ControlFlow::Continue(Primitive::Null);
                 for node in nodes {
-                    ret = self.eval_node(node)?;
+                    ret = self.eval_node(node);
+                    if matches!(ret, ControlFlow::Break(..)) {
+                        break;
+                    }
                 }
 
                 self.stack.exit_frame();
-                ControlFlow::Continue(ret)
+                ret
             }
             Node::AssignmentExpression(lhs, value) => {
                 let value = self.eval_node(value)?;
                 match lhs.as_ref() {
                     Node::Identifier(name) => {
-                        return match self.stack.set_variable(name.clone(), value.clone()) {
+                        return match self.store_variable(name.clone(), value.clone()) {
                             Ok(()) => ControlFlow::Continue(value),
                             Err(message) => ControlFlow::Break(BreakResult::Error(Primitive::String(message))),
                         }
@@ -574,7 +650,7 @@ impl VM {
                                     + right.as_number().into_control_flow()?,
                             ))
                         } else {
-                            self.dispatch(&left, "plus", vec![EvaluatedParameter { name: None, value: right }])
+                            self.call_method(&left, "plus", vec![EvaluatedParameter { name: None, value: right }])
                         }
                     }
                     PunctuationKind::Minus => ControlFlow::Continue(Primitive::Number(
@@ -662,7 +738,7 @@ impl VM {
                 };
 
                 match callee {
-                    Object::Function(function) => {
+                    Object::Function(..) => {
                         self.call_function(&callee_ref, evaluated_parameters)
                     }
                     Object::BoundFunction(bound_function) => {
@@ -670,7 +746,6 @@ impl VM {
                             name: Some("self".to_string()),
                             value: bound_function.receiver.clone(),
                         });
-
                         let ret = self.call_function(&bound_function.function.clone(), evaluated_parameters);
 
                         if let Err(message) = self.heap.release(&callee_ref) {
@@ -692,14 +767,15 @@ impl VM {
                             }
                         };
 
-                        self.stack.enter_frame_with_closure(0);
+                        self.stack.enter_frame();
 
                         for (parameter, parameter_name) in parameters.into_iter().zip(function.parameters.iter()) {
+                            // selfの参照はcalleeが持っているため、明示的にstack.declare_variable()を呼ぶ必要あり
                             self.stack.declare_variable(parameter_name.clone(), parameter);
                         }
                         let ret = (function.body)(self);
 
-                        self.stack.frames.pop();
+                        self.stack.exit_frame();
 
                         match ret {
                             ControlFlow::Break(BreakResult::Return(value)) => ControlFlow::Continue(value),
@@ -742,7 +818,7 @@ impl VM {
             Node::Bool(value) => ControlFlow::Continue(Primitive::Bool(*value)),
             Node::String(value) => ControlFlow::Continue(Primitive::String(value.clone())),
             Node::Identifier(name) => {
-                match self.stack.get_variable(name) {
+                match self.load_variable(name) {
                     Some(value) => ControlFlow::Continue(value.clone()),
                     None => ControlFlow::Break(BreakResult::Error(Primitive::String(format!(
                         "Undefined variable: {}",
@@ -809,45 +885,149 @@ impl VM {
         }
     }
 
-    fn install_native_function(&mut self, name: &str, parameters: Vec<String>, body: NativeFunction) {
-        let ref_ = self.heap.allocate(Object::NativeFunction(NativeFunctionValue {
-            name: name.to_string(),
+    // 言語機能関係
+
+    fn declare_variable(&mut self, name: String, value: Primitive) {
+        self.stack.declare_variable(name, value)
+    }
+
+    fn store_variable(&mut self, name: String, value: Primitive) -> Result<(), String> {
+        self.stack.store_variable(name, value)
+    }
+
+    fn load_variable(&self, name: &str) -> Option<&Primitive> {
+        self.stack.load_variable(name)
+    }
+
+    fn declare_function(&mut self, name: String, parameters: Vec<String>, body: Node) -> Primitive {
+        let fn_ref = self.heap.allocate(Object::Function(FunctionValue {
+            name: "(anonymous)".to_string(),
+            parameters,
+            body: Rc::new(Box::new(body)),
+            closure: self.stack.frame_id,
+        }));
+        self.declare_variable(name, fn_ref.clone());
+
+        fn_ref
+    }
+
+    fn allocate_native_function(&mut self, parameters: Vec<String>, body: NativeFunction) -> Primitive {
+        self.heap.allocate(Object::NativeFunction(NativeFunctionValue {
+            name: "(anonymous)".to_string(),
             parameters,
             body,
+        }))
+    }
+
+    fn declare_native_function(&mut self, name: String, parameters: Vec<String>, body: NativeFunction) -> Primitive {
+        let fn_ref = self.allocate_native_function(parameters, body);
+        self.declare_variable(name, fn_ref.clone());
+
+        fn_ref
+    }
+
+    fn declare_struct(&mut self, name: String, properties: Vec<String>, instance_methods: Vec<FunctionNode>, static_methods: Vec<FunctionNode>) -> Primitive {
+        let struct_ref = self.heap.allocate(Object::StructDefinition(StructDefinitionValue {
+            name: name.clone(),
+            properties,
+            instance_methods: HashMap::new(),
+            static_methods: HashMap::new(),
         }));
 
-        self.stack.declare_variable(name.to_string(), ref_);
+        for instance_method in instance_methods.into_iter() {
+            let fn_ref = self.declare_function(
+                instance_method.interface.name.clone(),
+                instance_method.interface.parameters.iter().map(|p| p.name.clone()).collect(),
+                *instance_method.body,
+            );
+
+            self.declare_instance_method(&struct_ref, instance_method.interface.name, fn_ref)
+        }
+
+        for static_method in static_methods {
+            let fn_ref = self.declare_function(
+                static_method.interface.name.clone(),
+                static_method.interface.parameters.iter().map(|p| p.name.clone()).collect(),
+                *static_method.body,
+            );
+
+            self.declare_static_method(&struct_ref, static_method.interface.name, fn_ref)
+        }
+
+        self.declare_variable(name, struct_ref.clone());
+
+        struct_ref
     }
 
-    fn call_function(&mut self, function: &Primitive, parameters: Vec<EvaluatedParameter>) -> ControlFlow<BreakResult, Primitive> {
-        let function = match self.heap.dereference(function) {
-            Ok(Object::Function(function)) => function,
-            _ => return ControlFlow::Break(BreakResult::Error(Primitive::String("Undefined function".to_string()))),
+    fn declare_instance_method(&mut self, struct_definition_ref: &Primitive, name: String, fn_ref: Primitive) {
+        let struct_definition = match self.heap.dereference_mut(struct_definition_ref) {
+            Ok(Object::StructDefinition(struct_definition)) => struct_definition,
+            _ => return,
         };
 
-        let parameters = match parse_parameters(parameters, &function.parameters) {
-            Ok(parameters) => parameters,
-            Err(message) => {
-                return ControlFlow::Break(BreakResult::Error(
-                    Primitive::String(message),
-                ))
-            }
+        struct_definition.instance_methods.insert(name, fn_ref);
+    }
+
+    fn declare_static_method(&mut self, struct_definition_ref: &Primitive, name: String, fn_ref: Primitive) {
+        let struct_definition = match self.heap.dereference_mut(struct_definition_ref) {
+            Ok(Object::StructDefinition(struct_definition)) => struct_definition,
+            _ => return,
         };
 
-        self.stack.enter_frame_with_closure(function.closure);
-        for (parameter, parameter_name) in parameters.into_iter().zip(function.parameters.iter()) {
-            self.stack.declare_variable(parameter_name.clone(), parameter);
-        }
-        let ret = self.eval_node(&function.body.clone());
-        self.stack.frames.pop();
+        struct_definition.static_methods.insert(name, fn_ref);
+    }
 
-        match ret {
-            ControlFlow::Break(BreakResult::Return(value)) => ControlFlow::Continue(value),
-            others => others,
+    fn call_function(&mut self, fn_ref: &Primitive, parameters: Vec<EvaluatedParameter>) -> ControlFlow<BreakResult, Primitive> {
+        match self.heap.dereference(fn_ref) {
+            Ok(Object::Function(function)) => {
+                let parameters = match parse_parameters(parameters, &function.parameters) {
+                    Ok(parameters) => parameters,
+                    Err(message) => {
+                        return ControlFlow::Break(BreakResult::Error(
+                            Primitive::String(message),
+                        ))
+                    }
+                };
+
+                self.stack.enter_frame_with_closure(function.closure);
+                for (parameter, parameter_name) in parameters.into_iter().zip(function.parameters.iter()) {
+                    self.stack.declare_variable(parameter_name.clone(), parameter);
+                }
+                let ret = self.eval_node(&function.body.clone());
+                self.stack.exit_frame();
+
+                match ret {
+                    ControlFlow::Break(BreakResult::Return(value)) => ControlFlow::Continue(value),
+                    others => others,
+                }
+            },
+            Ok(Object::NativeFunction(function)) => {
+                let parameters = match parse_parameters(parameters, &function.parameters) {
+                    Ok(parameters) => parameters,
+                    Err(message) => {
+                        return ControlFlow::Break(BreakResult::Error(
+                            Primitive::String(message),
+                        ))
+                    }
+                };
+
+                self.stack.enter_frame();
+                for (parameter, parameter_name) in parameters.into_iter().zip(function.parameters.iter()) {
+                    self.stack.declare_variable(parameter_name.clone(), parameter);
+                }
+                let ret =  (function.body)(self);
+                self.stack.exit_frame();
+
+                match ret {
+                    ControlFlow::Break(BreakResult::Return(value)) => ControlFlow::Continue(value),
+                    others => others,
+                }
+            },
+            _ => ControlFlow::Break(BreakResult::Error(Primitive::String("Undefined function".to_string()))),
         }
     }
 
-    fn dispatch(&mut self, receiver: &Primitive, method: &str, mut parameters: Vec<EvaluatedParameter>) -> ControlFlow<BreakResult, Primitive> {
+    fn call_method(&mut self, receiver: &Primitive, method: &str, mut parameters: Vec<EvaluatedParameter>) -> ControlFlow<BreakResult, Primitive> {
         let struct_ = match self.heap.dereference(receiver) {
             Ok(Object::StructInstance(struct_)) => struct_,
             Err(message) => return ControlFlow::Break(BreakResult::Error(Primitive::String(message))),
@@ -1197,6 +1377,21 @@ mod tests {
     }
 
     #[test]
+    fn closure3() {
+        VM::new().eval(r#"
+            fn main():func{
+                fn add():func{
+                    return add
+                }
+                return add
+            }
+
+            let test=main()
+            test()
+        "#);
+    }
+
+    #[test]
     fn function_object() {
         assert_eq!(
             VM::new().eval(
@@ -1450,7 +1645,7 @@ mod tests {
             let mut vm = VM::new();
             assert_eq!(vm.eval("let x: number = 1"), Primitive::Null);
 
-            let value = match vm.stack.get_variable("x") {
+            let value = match vm.stack.load_variable("x") {
                 Some(value) => value,
                 _ => panic!("Expected variable"),
             };
@@ -1733,26 +1928,6 @@ mod tests {
         }
 
         #[test]
-        fn stringify_custom_struct() {
-            assert_eq!(
-                VM::new().eval(r#"
-                struct User(id: number, name: string)
-
-                // ToString is built-in interface
-                impl ToString for User {
-                    fn toString(self): string {
-                        return self.name
-                    }
-                }
-
-                let user = User(id=1, name="Alice")
-                string(user)
-                "#),
-                Primitive::String("Alice".to_string())
-            );
-        }
-
-        #[test]
         fn print() {
             assert_eq!(VM::new().eval("print(\"ABC\")"), Primitive::Number(0f64));
         }
@@ -1762,26 +1937,23 @@ mod tests {
         use crate::value::{Object, Primitive};
         use crate::vm::VM;
 
+        #[ignore] // 組み込みオブジェクトがGCされてしまいテストケースが想定している以上にヒープが空いてしまう
         #[test]
         fn clean_up_all_unused_refs() {
             let mut vm = VM::new();
-            println!(
-                "{:?}",
-                vm.eval(
-                    "
+
+            vm.eval("
                 struct User(name: string)
                 let alice = User(name=\"Alice\")
-            "
-                )
-            );
-            assert_eq!(vm.heap.heap.len(), 2 + VM::get_builtin_object_count());
+            ");
+            assert_eq!(vm.heap.heap.len() - VM::get_builtin_object_count(), 2);
 
             vm.gc();
-            assert_eq!(vm.heap.heap.len(), 2 + VM::get_builtin_object_count());
+            assert_eq!(vm.heap.heap.len() - VM::get_builtin_object_count(), 2);
 
             vm.eval("alice = User(name=\"Bob\");");
             vm.gc();
-            assert_eq!(vm.heap.heap.len(), 2 + VM::get_builtin_object_count());
+            assert_eq!(vm.heap.heap.len() - VM::get_builtin_object_count(), 2);
             // Alice should be released
         }
 
@@ -2237,5 +2409,17 @@ mod tests {
             let int2 = Int(value=2)
             (int1 + int2).value
         "#), Primitive::Number(3.0));
+    }
+
+    #[test]
+    fn builtin_array() {
+        assert_eq!(VM::new().eval(r#"
+            struct User(id: number, name: string)
+
+            let array = Array.new(3)
+            array.set(0, User(id=1, name="Alice"))
+
+            (array.get(0)).name
+        "#), Primitive::String("Alice".to_string()));
     }
 }

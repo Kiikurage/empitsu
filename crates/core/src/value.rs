@@ -1,5 +1,5 @@
 use crate::node::Node;
-use crate::vm::{BreakResult, VM};
+use crate::vm::{BreakResult, StackFrame, VM};
 use std::collections::HashMap;
 use std::fmt::{Debug, Error, Formatter};
 use std::ops::ControlFlow;
@@ -58,7 +58,7 @@ impl Debug for Primitive {
     }
 }
 
-#[derive(PartialEq)]
+#[derive(Debug, PartialEq)]
 pub enum Object {
     Function(FunctionValue),
     BoundFunction(BoundFunctionValue),
@@ -67,7 +67,7 @@ pub enum Object {
     StructInstance(StructInstanceValue),
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Debug,Clone, PartialEq)]
 pub struct FunctionValue {
     pub name: String,
     pub parameters: Vec<String>,
@@ -77,24 +77,24 @@ pub struct FunctionValue {
     #[allow(clippy::redundant_allocation)]
     pub body: Rc<Box<Node>>,
 
-    // Index of the frame where the function was defined
+    // the frame where the function was defined
     pub closure: usize,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Debug,Clone, PartialEq)]
 pub struct BoundFunctionValue {
     pub function: Primitive,
     pub receiver: Primitive,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Debug,Clone, PartialEq)]
 pub struct NativeFunctionValue {
     pub name: String,
     pub parameters: Vec<String>,
     pub body: NativeFunction,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Debug,Clone, PartialEq)]
 pub struct StructDefinitionValue {
     pub name: String,
     pub properties: Vec<String>,
@@ -104,7 +104,7 @@ pub struct StructDefinitionValue {
     pub static_methods: HashMap<String, Primitive>,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Debug,Clone, PartialEq)]
 pub struct StructInstanceValue {
     // heap address of struct definition
     pub definition: Primitive,

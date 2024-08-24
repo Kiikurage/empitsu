@@ -784,6 +784,8 @@ fn parse_primary_type(tokens: &mut TokenIterator) -> Result<TypeExpression, Erro
 
 #[cfg(test)]
 mod tests {
+    use crate::parser::parse;
+
     mod if_statement {
         use crate::node::Node;
         use crate::parser::parse;
@@ -1084,7 +1086,7 @@ mod tests {
     }
 
     mod impl_statement {
-        use crate::node::{FunctionInterfaceNode, FunctionNode, FunctionParameterDeclaration, ImplStatementNode, InterfaceDeclarationNode, Node, TypeExpression};
+        use crate::node::{FunctionInterfaceNode, FunctionNode, FunctionParameterDeclaration, ImplStatementNode, Node, TypeExpression};
         use crate::parser::parse;
 
         #[test]
