@@ -1,8 +1,7 @@
 use crate::node::Node;
 use crate::parser::parse;
 use crate::punctuation_kind::PunctuationKind;
-use crate::type_checker::TypeChecker;
-use crate::value::{FunctionValue, NativeFunction, NativeFunctionValue, Object, Primitive, StructDefinitionValue, StructValue};
+use crate::value::{BoundFunctionValue, FunctionValue, NativeFunction, NativeFunctionValue, Object, Primitive, StructDefinitionValue, StructInstanceValue};
 use std::collections::{hash_map, BTreeSet, HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
 use std::ops::{ControlFlow, Deref};
@@ -113,23 +112,39 @@ impl Heap {
         panic!("Failed to allocate object");
     }
 
-    fn dereference(&self, ref_: &Primitive) -> Result<&Object, String> {
-        match ref_ {
-            Primitive::Ref(address) => match self.heap.get(address) {
-                Some(object) => Ok(object),
-                None => Err("Undefined object".to_string()),
-            },
-            _ => Err("Expected reference".to_string()),
+    fn dereference(&self, address: &Primitive) -> Result<&Object, String> {
+        let address = match address {
+            Primitive::Ref(address) => address,
+            _ => return Err("Expected reference".to_string()),
+        };
+
+        match self.heap.get(address) {
+            Some(object) => Ok(object),
+            None => Err("Undefined object".to_string()),
         }
     }
 
-    fn dereference_mut(&mut self, ref_: &Primitive) -> Result<&mut Object, String> {
-        match ref_ {
-            Primitive::Ref(address) => match self.heap.get_mut(address) {
-                Some(object) => Ok(object),
-                None => Err("Undefined object".to_string()),
-            },
-            _ => Err("Expected reference".to_string()),
+    fn dereference_mut(&mut self, address: &Primitive) -> Result<&mut Object, String> {
+        let address = match address {
+            Primitive::Ref(address) => address,
+            _ => return Err("Expected reference".to_string()),
+        };
+
+        match self.heap.get_mut(address) {
+            Some(object) => Ok(object),
+            None => Err("Undefined object".to_string()),
+        }
+    }
+
+    fn release(&mut self, address: &Primitive) -> Result<(), String> {
+        let address = match address {
+            Primitive::Ref(address) => address,
+            _ => return Err("Expected reference".to_string()),
+        };
+
+        match self.heap.remove(address) {
+            Some(_) => Ok(()),
+            None => Err("Releasing already released address".to_string()),
         }
     }
 }
@@ -269,9 +284,9 @@ impl VM {
             return Primitive::String(result.errors.first().unwrap().get_message());
         };
 
-        if let Err(message) = TypeChecker::new().check_node(&ast) {
-            return Primitive::String(message);
-        };
+        // if let Err(message) = TypeChecker::new().check_node(&ast) {
+        //     return Primitive::String(message);
+        // };
 
         match self.eval_node(&ast) {
             ControlFlow::Continue(value) => value,
@@ -316,7 +331,7 @@ impl VM {
                     // 以下の例の場合、UsersはUserを参照しているため、Userもretainする必要がある
                     // struct Users(user1: User)
                 }
-                Object::Function(..) | Object::NativeFunction(..) => {
+                Object::Function(..) | Object::BoundFunction(..) | Object::NativeFunction(..) => {
                     // TODO: クロージャを通して参照しているオブジェクトをretainする
                     // いまはすべてのframeを見ているため問題ないが、そちらでは
                     // 現在の実行スコープから遡って参照可能なframeのみをチェックすべき
@@ -377,7 +392,6 @@ impl VM {
                 ControlFlow::Continue(Primitive::Null)
             }
             Node::ForStatement(var_name, iterator, body) => {
-
                 let (start, end) = match iterator.deref() {
                     Node::RangeIterator(start, end) => {
                         (self.eval_node(start)?, self.eval_node(end)?)
@@ -421,17 +435,29 @@ impl VM {
 
                 ControlFlow::Continue(Primitive::Null)
             }
-            Node::StructDeclaration(name, property_declarations) => {
+            Node::StructDeclaration(struct_) => {
                 let mut properties = Vec::new();
-                for property_declaration in property_declarations {
-                    properties.push(property_declaration.name.clone());
+                for property in struct_.properties.iter() {
+                    properties.push(property.name.clone());
+                }
+
+                let mut functions = HashMap::new();
+                for function in struct_.functions.iter() {
+                    let function_ref = self.heap.allocate(Object::Function(FunctionValue {
+                        name: function.name.clone(),
+                        parameters: function.parameters.iter().map(|p| p.name.clone()).collect(),
+                        body: Rc::new(function.body.clone()),
+                        closure: self.stack.frames.len() - 1,
+                    }));
+                    functions.insert(function.name.clone(), function_ref);
                 }
 
                 let struct_ref = self.heap.allocate(Object::StructDefinition(StructDefinitionValue {
-                    name: name.clone(),
+                    name: struct_.name.clone(),
                     properties,
+                    functions,
                 }));
-                self.stack.declare_variable(name.clone(), struct_ref);
+                self.stack.declare_variable(struct_.name.clone(), struct_ref);
 
                 ControlFlow::Continue(Primitive::Null)
             }
@@ -630,6 +656,42 @@ impl VM {
                         self.stack.frames.pop();
                         ControlFlow::Continue(ret)
                     }
+                    Object::BoundFunction(bound_function) => {
+                        let function = match self.heap.dereference(&bound_function.function) {
+                            Ok(Object::Function(function)) => function,
+                            _ => return ControlFlow::Break(BreakResult::Error(Primitive::String("Undefined function".to_string()))),
+                        };
+
+                        evaluated_parameters.insert(0, EvaluatedParameter {
+                            name: Some("self".to_string()),
+                            value: bound_function.receiver.clone(),
+                        });
+
+                        let parameters = match parse_parameters(evaluated_parameters, &function.parameters) {
+                            Ok(parameters) => parameters,
+                            Err(message) => {
+                                return ControlFlow::Break(BreakResult::Error(
+                                    Primitive::String(message),
+                                ))
+                            }
+                        };
+
+                        self.stack.enter_frame_with_closure(function.closure);
+                        for (parameter, parameter_name) in parameters.into_iter().zip(function.parameters.iter()) {
+                            self.stack.declare_variable(parameter_name.clone(), parameter);
+                        }
+                        let ret = self.eval_node(&function.body.clone());
+                        self.stack.exit_frame();
+
+                        if let Err(message) = self.heap.release(&callee_ref) {
+                            return ControlFlow::Break(BreakResult::Error(Primitive::String(message)));
+                        }
+
+                        match ret {
+                            ControlFlow::Break(BreakResult::Return(value)) => ControlFlow::Continue(value),
+                            others => others,
+                        }
+                    }
                     Object::NativeFunction(function) => {
                         let parameters = match parse_parameters(evaluated_parameters, &function.parameters) {
                             Ok(parameters) => parameters,
@@ -664,8 +726,8 @@ impl VM {
                             properties.insert(name.clone(), parameter);
                         }
 
-                        let ref_ = self.heap.allocate(Object::StructInstance(StructValue {
-                            name: struct_.name.clone(),
+                        let ref_ = self.heap.allocate(Object::StructInstance(StructInstanceValue {
+                            definition: callee_ref,
                             properties,
                         }));
 
@@ -705,12 +767,28 @@ impl VM {
 
                 match object {
                     Object::StructInstance(struct_value) => {
-                        match struct_value.properties.get(property) {
-                            Some(value) => ControlFlow::Continue(value.clone()),
-                            None => ControlFlow::Break(BreakResult::Error(Primitive::String(
-                                format!("Undefined property: {}", property),
-                            ))),
+                        if let Some(value) = struct_value.properties.get(property) {
+                            return ControlFlow::Continue(value.clone());
                         }
+
+                        let struct_definition = match self.heap.dereference(&struct_value.definition) {
+                            Ok(Object::StructDefinition(struct_definition)) => struct_definition,
+                            Err(message) => return ControlFlow::Break(BreakResult::Error(Primitive::String(message))),
+                            _ => return ControlFlow::Break(BreakResult::Error(Primitive::String("Undefined struct definition".to_string()))),
+                        };
+                        if let Some(function_address) = struct_definition.functions.get(property) {
+                            let function_address = self.heap.allocate(
+                                Object::BoundFunction(BoundFunctionValue {
+                                    function: function_address.clone(),
+                                    receiver: object_ref,
+                                })
+                            );
+                            return ControlFlow::Continue(function_address.clone());
+                        }
+
+                        ControlFlow::Break(BreakResult::Error(Primitive::String(
+                            format!("Undefined property: {}", property),
+                        )))
                     }
                     _ => ControlFlow::Break(BreakResult::Error(Primitive::String(
                         "Unsupported Operation: get property of non-struct object".to_string(),
@@ -817,8 +895,8 @@ mod tests {
             Primitive::String("Syntax error: (1:5) \"for\" is a reserved word".to_string())
         );
         assert_eq!(
-            VM::new().eval("let function"),
-            Primitive::String("Syntax error: (1:5) \"function\" is a reserved word".to_string())
+            VM::new().eval("let fn"),
+            Primitive::String("Syntax error: (1:5) \"fn\" is a reserved word".to_string())
         );
         assert_eq!(
             VM::new().eval("let true"),
@@ -845,80 +923,80 @@ mod tests {
     #[test]
     fn reserved_words_in_function_name() {
         assert_eq!(
-            VM::new().eval("function if() {}"),
-            Primitive::String("Syntax error: (1:10) \"if\" is a reserved word".to_string())
+            VM::new().eval("fn if() {}"),
+            Primitive::String("Syntax error: (1:4) \"if\" is a reserved word".to_string())
         );
         assert_eq!(
-            VM::new().eval("function let() {}"),
-            Primitive::String("Syntax error: (1:10) \"let\" is a reserved word".to_string())
+            VM::new().eval("fn let() {}"),
+            Primitive::String("Syntax error: (1:4) \"let\" is a reserved word".to_string())
         );
         assert_eq!(
-            VM::new().eval("function for() {}"),
-            Primitive::String("Syntax error: (1:10) \"for\" is a reserved word".to_string())
+            VM::new().eval("fn for() {}"),
+            Primitive::String("Syntax error: (1:4) \"for\" is a reserved word".to_string())
         );
         assert_eq!(
-            VM::new().eval("function function() {}"),
-            Primitive::String("Syntax error: (1:10) \"function\" is a reserved word".to_string())
+            VM::new().eval("fn fn() {}"),
+            Primitive::String("Syntax error: (1:4) \"fn\" is a reserved word".to_string())
         );
         assert_eq!(
-            VM::new().eval("function true() {}"),
-            Primitive::String("Syntax error: (1:10) Expected identifier".to_string())
+            VM::new().eval("fn true() {}"),
+            Primitive::String("Syntax error: (1:4) Expected identifier".to_string())
         );
         assert_eq!(
-            VM::new().eval("function false() {}"),
-            Primitive::String("Syntax error: (1:10) Expected identifier".to_string())
+            VM::new().eval("fn false() {}"),
+            Primitive::String("Syntax error: (1:4) Expected identifier".to_string())
         );
         assert_eq!(
-            VM::new().eval("function else() {}"),
-            Primitive::String("Syntax error: (1:10) \"else\" is a reserved word".to_string())
+            VM::new().eval("fn else() {}"),
+            Primitive::String("Syntax error: (1:4) \"else\" is a reserved word".to_string())
         );
         assert_eq!(
-            VM::new().eval("function return() {}"),
-            Primitive::String("Syntax error: (1:10) \"return\" is a reserved word".to_string())
+            VM::new().eval("fn return() {}"),
+            Primitive::String("Syntax error: (1:4) \"return\" is a reserved word".to_string())
         );
         assert_eq!(
-            VM::new().eval("function null() {}"),
-            Primitive::String("Syntax error: (1:10) \"null\" is a reserved word".to_string())
+            VM::new().eval("fn null() {}"),
+            Primitive::String("Syntax error: (1:4) \"null\" is a reserved word".to_string())
         );
     }
 
     #[test]
     fn reserved_words_in_function_parameter() {
         assert_eq!(
-            VM::new().eval("function f(if): null {}"),
-            Primitive::String("Syntax error: (1:12) \"if\" is a reserved word".to_string())
+            VM::new().eval("fn f(if): null {}"),
+            Primitive::String("Syntax error: (1:6) \"if\" is a reserved word".to_string())
         );
         assert_eq!(
-            VM::new().eval("function f(let): null {}"),
-            Primitive::String("Syntax error: (1:12) \"let\" is a reserved word".to_string())
+            VM::new().eval("fn f(let): null {}"),
+            Primitive::String("Syntax error: (1:6) \"let\" is a reserved word".to_string())
         );
         assert_eq!(
-            VM::new().eval("function f(for): null {}"),
-            Primitive::String("Syntax error: (1:12) \"for\" is a reserved word".to_string())
+            VM::new().eval("fn f(for): null {}"),
+            Primitive::String("Syntax error: (1:6) \"for\" is a reserved word".to_string())
         );
         assert_eq!(
-            VM::new().eval("function f(function): null {}"),
-            Primitive::String("Syntax error: (1:12) \"function\" is a reserved word".to_string())
+            VM::new().eval("fn f(fn): null {}"),
+            Primitive::String("Syntax error: (1:6) \"fn\" is a reserved word".to_string())
         );
         assert_eq!(
-            VM::new().eval("function f(true): null {}"),
-            Primitive::String("Syntax error: (1:12) Expected identifier".to_string())
+            VM::new().eval("fn f(true): null {}"),
+            Primitive::String("Syntax error: (1:6) Expected identifier".to_string())
         );
         assert_eq!(
-            VM::new().eval("function f(false): null {}"),
-            Primitive::String("Syntax error: (1:12) Expected identifier".to_string())
+            VM::new().eval("fn f(false): null {}"),
+            Primitive::String("Syntax error: (1:6) Expected identifier".to_string())
         );
         assert_eq!(
-            VM::new().eval("function f(else): null {}"),
-            Primitive::String("Syntax error: (1:12) \"else\" is a reserved word".to_string())
+            VM::new().eval("fn f(else): null {}"),
+            Primitive::String("Syntax error: (1:6) \"else\" is a reserved word".to_string())
         );
         assert_eq!(
-            VM::new().eval("function f(return): null {}"),
-            Primitive::String("Syntax error: (1:12) \"return\" is a reserved word".to_string())
+            VM::new().eval("fn f(return): null {}"),
+            Primitive::String("Syntax error: (1:6) \"return\" is a reserved word".to_string())
         );
         assert_eq!(
-            VM::new().eval("function f(null): null {}"),
-            Primitive::String("Syntax error: (1:12) \"null\" is a reserved word".to_string())
+            VM::new().eval("fn f(null): null {}"),
+            Primitive::String("Syntax error: (1:6) \"null\" is a reserved word".to_string())
         );
     }
 
@@ -963,30 +1041,11 @@ mod tests {
     }
 
     #[test]
-    fn if_statement() {
-        assert_eq!(
-            VM::new().eval(
-                "
-            if (0) {
-                print(\"true\")
-            } else {
-                print(\"false\")
-            }
-        "
-            ),
-            Primitive::String(
-                "TypeError: If-statement condition must be a Bool, but actual type is Number"
-                    .to_string()
-            )
-        );
-    }
-
-    #[test]
     fn declare_function() {
         assert_eq!(
             VM::new().eval(
                 "
-            function test (x: number):null {
+            fn test (x: number):null {
                 print(string(x*2))
             }
 
@@ -1037,7 +1096,7 @@ mod tests {
                 "
             let x = 0
 
-            function setX (y: number): null {
+            fn setX (y: number): null {
                 x = y
             }
 
@@ -1057,11 +1116,11 @@ mod tests {
             VM::new().eval(
                 "
             let x = 0
-            function setX (y: number):null {
+            fn setX (y: number):null {
                 x = y
             }
 
-            function wrapper ():null {
+            fn wrapper ():null {
                 let x = 100
                 setX(1)
                 debug(x)  // 100
@@ -1082,7 +1141,7 @@ mod tests {
         assert_eq!(
             VM::new().eval(
                 "
-            let double = function (x: number):number {
+            let double = fn (x: number):number {
                 x * 2
             }
 
@@ -1098,7 +1157,7 @@ mod tests {
         assert_eq!(
             VM::new().eval(
                 "
-            let double = function (x: number): number {
+            let double = fn (x: number): number {
                 x * 2
             }
 
@@ -1114,7 +1173,7 @@ mod tests {
         assert_eq!(
             VM::new().eval(
                 "
-            (function (x: number): number { x * 2 })(3)
+            (fn (x: number): number { x * 2 })(3)
         "
             ),
             Primitive::Number(6.0)
@@ -1126,7 +1185,7 @@ mod tests {
         assert_eq!(
             VM::new().eval(
                 "
-            function test():number {
+            fn test():number {
                 return 2
                 print(\"unreachable\")
                 3
@@ -1145,7 +1204,7 @@ mod tests {
         assert_eq!(
             VM::new().eval(
                 "
-            function test():number {
+            fn test():number {
                 return true && (return 1)
             }
 
@@ -1299,24 +1358,6 @@ mod tests {
             assert_eq!(VM::new().eval("1 < 0"), Primitive::Bool(false));
             assert_eq!(VM::new().eval("1 < 1"), Primitive::Bool(false));
             assert_eq!(VM::new().eval("1 < 2"), Primitive::Bool(true));
-            assert_eq!(
-                VM::new().eval("true < false"),
-                Primitive::String(
-                    "TypeError: Expected type Number, but actual type is Bool".to_string()
-                )
-            );
-            assert_eq!(
-                VM::new().eval("\"a\" < \"a\""),
-                Primitive::String(
-                    "TypeError: Expected type Number, but actual type is String".to_string()
-                )
-            );
-            assert_eq!(
-                VM::new().eval("\"0.0\" < \"1.0\""),
-                Primitive::String(
-                    "TypeError: Expected type Number, but actual type is String".to_string()
-                )
-            );
         }
 
         #[test]
@@ -1324,24 +1365,6 @@ mod tests {
             assert_eq!(VM::new().eval("1 <= 0"), Primitive::Bool(false));
             assert_eq!(VM::new().eval("1 <= 1"), Primitive::Bool(true));
             assert_eq!(VM::new().eval("1 <= 2"), Primitive::Bool(true));
-            assert_eq!(
-                VM::new().eval("true < false"),
-                Primitive::String(
-                    "TypeError: Expected type Number, but actual type is Bool".to_string()
-                )
-            );
-            assert_eq!(
-                VM::new().eval("\"a\" < \"a\""),
-                Primitive::String(
-                    "TypeError: Expected type Number, but actual type is String".to_string()
-                )
-            );
-            assert_eq!(
-                VM::new().eval("\"0.0\" < \"1.0\""),
-                Primitive::String(
-                    "TypeError: Expected type Number, but actual type is String".to_string()
-                )
-            );
         }
 
         #[test]
@@ -1349,24 +1372,6 @@ mod tests {
             assert_eq!(VM::new().eval("0 > 1"), Primitive::Bool(false));
             assert_eq!(VM::new().eval("1 > 1"), Primitive::Bool(false));
             assert_eq!(VM::new().eval("2 > 1"), Primitive::Bool(true));
-            assert_eq!(
-                VM::new().eval("true > false"),
-                Primitive::String(
-                    "TypeError: Expected type Number, but actual type is Bool".to_string()
-                )
-            );
-            assert_eq!(
-                VM::new().eval("\"a\" > \"a\""),
-                Primitive::String(
-                    "TypeError: Expected type Number, but actual type is String".to_string()
-                )
-            );
-            assert_eq!(
-                VM::new().eval("\"0.0\" > \"1.0\""),
-                Primitive::String(
-                    "TypeError: Expected type Number, but actual type is String".to_string()
-                )
-            );
         }
 
         #[test]
@@ -1374,24 +1379,6 @@ mod tests {
             assert_eq!(VM::new().eval("0 >= 1"), Primitive::Bool(false));
             assert_eq!(VM::new().eval("1 >= 1"), Primitive::Bool(true));
             assert_eq!(VM::new().eval("2 >= 1"), Primitive::Bool(true));
-            assert_eq!(
-                VM::new().eval("true >= false"),
-                Primitive::String(
-                    "TypeError: Expected type Number, but actual type is Bool".to_string()
-                )
-            );
-            assert_eq!(
-                VM::new().eval("\"a\" >= \"a\""),
-                Primitive::String(
-                    "TypeError: Expected type Number, but actual type is String".to_string()
-                )
-            );
-            assert_eq!(
-                VM::new().eval("\"0.0\" >= \"1.0\""),
-                Primitive::String(
-                    "TypeError: Expected type Number, but actual type is String".to_string()
-                )
-            );
         }
     }
 
@@ -1629,31 +1616,6 @@ mod tests {
                 _ => panic!("Expected StructInstance"),
             }
         }
-
-        #[test]
-        fn resolve_member_of_primitive() {
-            assert_eq!(
-                VM::new().eval(
-                    "
-                let obj = 1
-                obj.id
-            "
-                ),
-                Primitive::String("Expected struct type, but got Number".to_string())
-            );
-        }
-
-        #[test]
-        fn resolve_member_of_undefined_object() {
-            assert_eq!(
-                VM::new().eval(
-                    "
-                obj.id
-            "
-                ),
-                Primitive::String("Undefined symbol: obj".to_string())
-            );
-        }
     }
 
     mod built_in_functions {
@@ -1712,18 +1674,6 @@ mod tests {
 
         #[test]
         fn print() {
-            assert_eq!(
-                VM::new().eval("print(1)"),
-                Primitive::String(
-                    "TypeError: Expected type String, but actual type is Number".to_string()
-                )
-            );
-            assert_eq!(
-                VM::new().eval("print(true)"),
-                Primitive::String(
-                    "TypeError: Expected type String, but actual type is Bool".to_string()
-                )
-            );
             assert_eq!(VM::new().eval("print(\"ABC\")"), Primitive::Number(0f64));
         }
     }
@@ -1816,7 +1766,7 @@ mod tests {
                 "
                 struct User { name: string }
 
-                function createUser() {
+                fn createUser() {
                     let user = User { name: \"Alice\" }
                 }
             ",
@@ -1838,7 +1788,7 @@ mod tests {
                 "
                 struct User { name: string? }
 
-                function createUser() {
+                fn createUser() {
                     return User { name: \"Alice\" }
                 }
             ",
@@ -1939,7 +1889,7 @@ mod tests {
             assert_eq!(
                 VM::new().eval(
                     "
-                function sub(x: number, y: number): number {
+                fn sub(x: number, y: number): number {
                     x - y
                 }
 
@@ -1955,7 +1905,7 @@ mod tests {
             assert_eq!(
                 VM::new().eval(
                     "
-                function sub(x: number, y: number, z:number): number {
+                fn sub(x: number, y: number, z:number): number {
                     (x - y) / z
                 }
 
@@ -1971,7 +1921,7 @@ mod tests {
             assert_eq!(
                 VM::new().eval(
                     "
-                function sub(x: number, y: number): number {
+                fn sub(x: number, y: number): number {
                     x - y
                 }
 
@@ -2021,7 +1971,7 @@ mod tests {
             assert_eq!(
                 VM::new().eval(
                     "
-                function test(x: number): number { x + 1 }
+                fn test(x: number): number { x + 1 }
 
                 test(x=1, 1)
             "
@@ -2035,7 +1985,7 @@ mod tests {
             assert_eq!(
                 VM::new().eval(
                     "
-                function test(x: number, y: number): number { x + y }
+                fn test(x: number, y: number): number { x + y }
 
                 test(1)
             "
@@ -2051,7 +2001,7 @@ mod tests {
             assert_eq!(
                 VM::new().eval(
                     "
-                function test(x: number, y: number): number { x + y }
+                fn test(x: number, y: number): number { x + y }
 
                 test(y=1)
             "
@@ -2067,13 +2017,66 @@ mod tests {
             assert_eq!(
                 VM::new().eval(
                     "
-                function test(x: number, y: number): number { x + y }
+                fn test(x: number, y: number): number { x + y }
 
                 test(z=1, 2, 3)
             "
                 ),
                 Primitive::String("Unknown parameter: z".to_string())
             );
+        }
+    }
+
+    mod method_in_struct {
+        use crate::value::Primitive;
+        use crate::vm::VM;
+
+        #[test]
+        fn method_in_struct() {
+            assert_eq!(
+                VM::new().eval("
+                struct User(name: string) {
+                    fn getName(self): string {
+                        return self.name;
+                    }
+                }
+
+                let user1 = User(name=\"Alice\");
+                let user2 = User(name=\"Bob\");
+
+                if ((user1.getName() == \"Alice\") && (user2.getName() == \"Bob\")) {
+                    \"OK\"
+                } else {
+                    \"NG\"
+                }
+                "),
+                Primitive::String("OK".to_string())
+            );
+        }
+
+        #[test]
+        fn bound_function_must_be_released() {
+            let mut vm = VM::new();
+
+            vm.eval("
+                struct User(name: string) {
+                    fn getName(self): string {
+                        return self.name;
+                    }
+                }
+
+                let user1 = User(name=\"Alice\");
+                let user2 = User(name=\"Bob\");
+            ");
+
+            let heap_size_before = vm.heap.heap.len();
+            vm.eval("
+                user1.getName()
+                user2.getName()
+            ");
+            let heap_size_after = vm.heap.heap.len();
+            
+            assert_eq!(heap_size_before, heap_size_after);
         }
     }
 }

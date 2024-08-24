@@ -70,7 +70,7 @@ z = true
 関数を定義する。
 
 ```text
-function double(x:number):number {
+fn double(x:number):number {
     return x * 2
 }
 ```
@@ -84,13 +84,18 @@ function double(x:number):number {
 構造体を定義する。
 
 ```text
-struct User(id:number, name:string)
+struct User(id:number, name:string) {
+    fn getId(self) {
+        return self.id
+    }
+}
 ```
 
 - 定義した構造体は関数呼び出しと同じ文法で初期化することができる
 
     ```text
     let user = User(id=1, name="Alice")
+    user.getId();  // 1
     ``` 
 
 ### 式

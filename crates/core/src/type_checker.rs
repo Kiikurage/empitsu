@@ -125,18 +125,18 @@ impl TypeChecker {
                     return_type: Box::new(return_type),
                 }))
             }
-            Node::StructDeclaration(name, parameter_declarations) => {
+            Node::StructDeclaration(struct_) => {
                 let mut property_definitions = vec![];
 
-                for property_declarations in parameter_declarations {
+                for property in struct_.properties.iter() {
                     property_definitions.push(StructPropertyDefinition {
-                        name: property_declarations.name.clone(),
-                        type_: self.eval_type_expression(&property_declarations.type_),
+                        name: property.name.clone(),
+                        type_: self.eval_type_expression(&property.type_),
                     });
                 }
 
                 Ok(Type::StructDefinition(StructDefinitionType {
-                    name: name.clone(),
+                    name: struct_.name.clone(),
                     properties: property_definitions,
                 }))
             }
@@ -344,10 +344,10 @@ impl TypeChecker {
 
                 Ok(())
             }
-            Node::StructDeclaration(name, parameter_declarations) => {
-                self.declare_symbol(name, Type::StructDefinition(StructDefinitionType {
-                    name: name.clone(),
-                    properties: parameter_declarations.iter().map(|declaration| {
+            Node::StructDeclaration(struct_) => {
+                self.declare_symbol(struct_.name.as_str(), Type::StructDefinition(StructDefinitionType {
+                    name: struct_.name.clone(),
+                    properties: struct_.properties.iter().map(|declaration| {
                         StructPropertyDefinition {
                             name: declaration.name.clone(),
                             type_: self.eval_type_expression(&declaration.type_),
@@ -622,7 +622,7 @@ mod test {
     #[test]
     fn function_parameter() {
         assert_eq!(
-            TypeChecker::new().check("function f(x: number):number { x } f(true)").unwrap_err(),
+            TypeChecker::new().check("fn f(x: number):number { x } f(true)").unwrap_err(),
             "TypeError: Expected type Number, but actual type is Bool".to_string()
         );
     }
@@ -630,7 +630,7 @@ mod test {
     #[test]
     fn return_value() {
         assert_eq!(
-            TypeChecker::new().check("function f(): string { return \"test\" } let x: number = f()").unwrap_err(),
+            TypeChecker::new().check("fn f(): string { return \"test\" } let x: number = f()").unwrap_err(),
             "TypeError: Type String is not assignable into Number".to_string()
         );
     }
@@ -639,7 +639,7 @@ mod test {
     fn return_value_with_inferred_type() {
         assert_eq!(
             TypeChecker::new().check("
-                function f(): string { return \"test\" }
+                fn f(): string { return \"test\" }
                 let x = 0
                 x = f()
             ").unwrap_err(),
@@ -682,4 +682,130 @@ mod test {
             "TypeError: Expected type Number, but actual type is String".to_string()
         );
    }
+
+    mod if_statement {
+        use crate::type_checker::TypeChecker;
+
+        #[test]
+        fn if_statement() {
+            assert_eq!(
+                TypeChecker::new().check("
+                    if (0) {
+                        print(\"true\")
+                    } else {
+                        print(\"false\")
+                    }
+                "
+                ).unwrap_err(),
+                "TypeError: If-statement condition must be a Bool, but actual type is Number".to_string()
+            );
+        }
+    }
+    
+    mod builtin_functions {
+        use crate::type_checker::TypeChecker;
+
+        #[test]
+        fn print() {
+            assert_eq!(
+                TypeChecker::new().check("print(1)").unwrap_err(),
+                "TypeError: Expected type String, but actual type is Number".to_string()
+            );
+            assert_eq!(
+                TypeChecker::new().check("print(true)").unwrap_err(),
+                "TypeError: Expected type String, but actual type is Bool".to_string()
+            );
+        }
+    }
+
+    mod reference {
+        use crate::type_checker::TypeChecker;
+
+        #[test]
+        fn resolve_member_of_primitive() {
+            assert_eq!(
+                TypeChecker::new().check("
+                let obj = 1
+                obj.id
+                ").unwrap_err(),
+                "Expected struct type, but got Number".to_string()
+            );
+        }
+
+        #[test]
+        fn resolve_member_of_undefined_object() {
+            assert_eq!(
+                TypeChecker::new().check("obj.id").unwrap_err(),
+                "Undefined symbol: obj".to_string()
+            );
+        }
+    }
+
+    mod expression {
+        use crate::type_checker::TypeChecker;
+
+        #[test]
+        fn greater_than() {
+            assert_eq!(
+                TypeChecker::new().check("true > false").unwrap_err(),
+                "TypeError: Expected type Number, but actual type is Bool".to_string()
+            );
+            assert_eq!(
+                TypeChecker::new().check("\"a\" > \"a\"").unwrap_err(),
+                "TypeError: Expected type Number, but actual type is String".to_string()
+            );
+            assert_eq!(
+                TypeChecker::new().check("\"0.0\" > \"1.0\"").unwrap_err(),
+                "TypeError: Expected type Number, but actual type is String".to_string()
+            );
+        }
+
+        #[test]
+        fn greater_than_or_equal() {
+            assert_eq!(
+                TypeChecker::new().check("true >= false").unwrap_err(),
+                "TypeError: Expected type Number, but actual type is Bool".to_string()
+            );
+            assert_eq!(
+                TypeChecker::new().check("\"a\" >= \"a\"").unwrap_err(),
+                "TypeError: Expected type Number, but actual type is String".to_string()
+            );
+            assert_eq!(
+                TypeChecker::new().check("\"0.0\" >= \"1.0\"").unwrap_err(),
+                "TypeError: Expected type Number, but actual type is String".to_string()
+            );
+        }
+
+        #[test]
+        fn less_than() {
+            assert_eq!(
+                TypeChecker::new().check("true < false").unwrap_err(),
+                "TypeError: Expected type Number, but actual type is Bool".to_string()
+            );
+            assert_eq!(
+                TypeChecker::new().check("\"a\" < \"a\"").unwrap_err(),
+                "TypeError: Expected type Number, but actual type is String".to_string()
+            );
+            assert_eq!(
+                TypeChecker::new().check("\"0.0\" < \"1.0\"").unwrap_err(),
+                "TypeError: Expected type Number, but actual type is String".to_string()
+            );
+        }
+
+        #[test]
+        fn less_than_or_equal() {
+            assert_eq!(
+                TypeChecker::new().check("true < false").unwrap_err(),
+                "TypeError: Expected type Number, but actual type is Bool".to_string()
+            );
+            assert_eq!(
+                TypeChecker::new().check("\"a\" < \"a\"").unwrap_err(),
+                "TypeError: Expected type Number, but actual type is String".to_string()
+            );
+            assert_eq!(
+                TypeChecker::new().check("\"0.0\" < \"1.0\"").unwrap_err(),
+                "TypeError: Expected type Number, but actual type is String".to_string()
+            );
+        }
+    }
 }

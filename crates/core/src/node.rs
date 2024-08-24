@@ -10,7 +10,7 @@ pub enum Node {
     ForStatement(String, Box<Node>, Box<Node>), // variable, iterator, body
     VariableDeclaration(String, Option<TypeExpression>, Option<Box<Node>>), // name, type, initial_value
     FunctionDeclaration(FunctionNode), // name, parameters, body
-    StructDeclaration(String, Vec<StructPropertyDeclaration>), // name, properties
+    StructDeclaration(StructDeclarationNode), // name, properties
 
     // Expressions
     ReturnExpression(Option<Box<Node>>), // return value
@@ -30,6 +30,19 @@ pub enum Node {
 
     // temporary
     RangeIterator(Box<Node>, Box<Node>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StructDeclarationNode {
+    pub name: String,
+    pub properties: Vec<StructPropertyDeclaration>,
+    pub functions: Vec<FunctionNode>,
+}
+
+impl StructDeclarationNode {
+    pub fn new(name: String, properties: Vec<StructPropertyDeclaration>, functions: Vec<FunctionNode>) -> Self {
+        Self { name, properties, functions }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
