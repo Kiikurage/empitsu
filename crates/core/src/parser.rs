@@ -287,14 +287,21 @@ fn parse_struct_declaration(tokens: &mut TokenIterator) -> Result<Node, Error> {
     }
     assert_punctuation!(tokens.next(), RightParen)?;
 
-    let mut functions = vec![];
+    let mut instance_methods = vec![];
+    let mut static_methods = vec![];
     if assert_punctuation!(tokens.peek(), LeftBrace).is_ok() {
         tokens.next();
 
         while assert_punctuation!(tokens.peek(), RightBrace).is_err() {
             let position = tokens.get_position().clone();
             match parse_function_declaration(tokens)? {
-                Node::FunctionDeclaration(function) => functions.push(function),
+                Node::FunctionDeclaration(function) => {
+                    if matches!(function.parameters.first(), Some(FunctionParameterDeclaration { name, .. }) if name == "self") {
+                        instance_methods.push(function);
+                    } else {
+                        static_methods.push(function);
+                    }
+                }
                 _ => return Err(Error::unexpected_token(position, "function")),
             }
         }
@@ -302,7 +309,10 @@ fn parse_struct_declaration(tokens: &mut TokenIterator) -> Result<Node, Error> {
     }
 
     Ok(Node::StructDeclaration(StructDeclarationNode {
-        name, properties, functions,
+        name,
+        properties,
+        instance_methods,
+        static_methods,
     }))
 }
 
@@ -948,6 +958,7 @@ mod tests {
                                 },
                             ],
                             vec![],
+                            vec![],
                         )),
                     ])
                 );
@@ -960,6 +971,7 @@ mod tests {
                     Node::Program(vec![
                         Node::StructDeclaration(StructDeclarationNode::new(
                             "User".to_string(),
+                            vec![],
                             vec![],
                             vec![],
                         )),
@@ -1926,7 +1938,7 @@ mod tests {
                 assert_eq!(
                     parse("struct Obj(); Obj()").node,
                     Node::Program(vec![
-                        Node::StructDeclaration(StructDeclarationNode::new("Obj".to_string(), vec![], vec![])),
+                        Node::StructDeclaration(StructDeclarationNode::new("Obj".to_string(), vec![], vec![], vec![], )),
                         Node::CallExpression(Box::new(Node::Identifier("Obj".to_string())), vec![]),
                     ])
                 );
@@ -1949,7 +1961,8 @@ mod tests {
                                     type_: TypeExpression::Identifier("string".to_string()),
                                 },
                             ],
-                            vec![]
+                            vec![],
+                            vec![],
                         )),
                         Node::CallExpression(
                             Box::new(Node::Identifier("Obj".to_string())),
@@ -1983,7 +1996,8 @@ mod tests {
                                     type_: TypeExpression::Identifier("string".to_string()),
                                 },
                             ],
-                            vec![]
+                            vec![],
+                            vec![],
                         )),
                         Node::StructDeclaration(StructDeclarationNode::new(
                             "Obj2".to_string(),
@@ -1993,7 +2007,8 @@ mod tests {
                                     type_: TypeExpression::Identifier("number".to_string()),
                                 },
                             ],
-                            vec![]
+                            vec![],
+                            vec![],
                         )),
                         Node::CallExpression(
                             Box::new(Node::Identifier("Obj1".to_string())),
@@ -2033,7 +2048,8 @@ mod tests {
                                     type_: TypeExpression::Identifier("number".to_string()),
                                 },
                             ],
-                            vec![]
+                            vec![],
+                            vec![],
                         )),
                         Node::AssignmentExpression(
                             Box::new(Node::Identifier("x".to_string())),

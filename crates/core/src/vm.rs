@@ -441,21 +441,35 @@ impl VM {
                     properties.push(property.name.clone());
                 }
 
-                let mut functions = HashMap::new();
-                for function in struct_.functions.iter() {
-                    let function_ref = self.heap.allocate(Object::Function(FunctionValue {
-                        name: function.name.clone(),
-                        parameters: function.parameters.iter().map(|p| p.name.clone()).collect(),
-                        body: Rc::new(function.body.clone()),
-                        closure: self.stack.frames.len() - 1,
-                    }));
-                    functions.insert(function.name.clone(), function_ref);
+                let mut instance_methods = HashMap::new();
+                for function in struct_.instance_methods.iter() {
+                    instance_methods.insert(function.name.clone(), self.heap.allocate(
+                        Object::Function(FunctionValue {
+                            name: function.name.clone(),
+                            parameters: function.parameters.iter().map(|p| p.name.clone()).collect(),
+                            body: Rc::new(function.body.clone()),
+                            closure: self.stack.frames.len() - 1,
+                        })
+                    ));
+                }
+
+                let mut static_methods = HashMap::new();
+                for function in struct_.static_methods.iter() {
+                    static_methods.insert(function.name.clone(), self.heap.allocate(
+                        Object::Function(FunctionValue {
+                            name: function.name.clone(),
+                            parameters: function.parameters.iter().map(|p| p.name.clone()).collect(),
+                            body: Rc::new(function.body.clone()),
+                            closure: self.stack.frames.len() - 1,
+                        })
+                    ));
                 }
 
                 let struct_ref = self.heap.allocate(Object::StructDefinition(StructDefinitionValue {
                     name: struct_.name.clone(),
                     properties,
-                    functions,
+                    instance_methods,
+                    static_methods,
                 }));
                 self.stack.declare_variable(struct_.name.clone(), struct_ref);
 
@@ -766,23 +780,32 @@ impl VM {
                 };
 
                 match object {
-                    Object::StructInstance(struct_value) => {
-                        if let Some(value) = struct_value.properties.get(property) {
+                    Object::StructInstance(struct_) => {
+                        if let Some(value) = struct_.properties.get(property) {
                             return ControlFlow::Continue(value.clone());
                         }
 
-                        let struct_definition = match self.heap.dereference(&struct_value.definition) {
+                        let struct_definition = match self.heap.dereference(&struct_.definition) {
                             Ok(Object::StructDefinition(struct_definition)) => struct_definition,
                             Err(message) => return ControlFlow::Break(BreakResult::Error(Primitive::String(message))),
                             _ => return ControlFlow::Break(BreakResult::Error(Primitive::String("Undefined struct definition".to_string()))),
                         };
-                        if let Some(function_address) = struct_definition.functions.get(property) {
+                        if let Some(function_address) = struct_definition.instance_methods.get(property) {
                             let function_address = self.heap.allocate(
                                 Object::BoundFunction(BoundFunctionValue {
                                     function: function_address.clone(),
                                     receiver: object_ref,
                                 })
                             );
+                            return ControlFlow::Continue(function_address.clone());
+                        }
+
+                        ControlFlow::Break(BreakResult::Error(Primitive::String(
+                            format!("Undefined property: {}", property),
+                        )))
+                    }
+                    Object::StructDefinition(struct_) => {
+                        if let Some(function_address) = struct_.static_methods.get(property) {
                             return ControlFlow::Continue(function_address.clone());
                         }
 
@@ -2032,7 +2055,7 @@ mod tests {
         use crate::vm::VM;
 
         #[test]
-        fn method_in_struct() {
+        fn instance_method() {
             assert_eq!(
                 VM::new().eval("
                 struct User(name: string) {
@@ -2063,6 +2086,10 @@ mod tests {
                     fn getName(self): string {
                         return self.name;
                     }
+
+                    fn setName(name: string): null {
+                        self.name = name;
+                    }
                 }
 
                 let user1 = User(name=\"Alice\");
@@ -2075,8 +2102,37 @@ mod tests {
                 user2.getName()
             ");
             let heap_size_after = vm.heap.heap.len();
-            
+
             assert_eq!(heap_size_before, heap_size_after);
+        }
+
+        #[test]
+        fn static_method() {
+            assert_eq!(
+                VM::new().eval("
+                struct User(name: string) {
+                    fn getName(self): string {
+                        return self.name;
+                    }
+
+                    fn getName(): string {
+                        return \"User\";
+                    }
+                }
+
+                let user1 = User(name=\"Alice\");
+                let user2 = User(name=\"Bob\");
+
+                if ((user1.getName() == \"Alice\") &&
+                    (user2.getName() == \"Bob\") &&
+                    (User.getName() == \"User\")) {
+                    \"OK\"
+                } else {
+                    \"NG\"
+                }
+                "),
+                Primitive::String("OK".to_string())
+            );
         }
     }
 }

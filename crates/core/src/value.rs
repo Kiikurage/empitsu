@@ -100,7 +100,8 @@ pub struct StructDefinitionValue {
     pub properties: Vec<String>,
 
     // heap address of each method function
-    pub functions: HashMap<String, Primitive>,
+    pub instance_methods: HashMap<String, Primitive>,
+    pub static_methods: HashMap<String, Primitive>,
 }
 
 #[derive(Clone, PartialEq)]

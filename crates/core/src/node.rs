@@ -36,12 +36,16 @@ pub enum Node {
 pub struct StructDeclarationNode {
     pub name: String,
     pub properties: Vec<StructPropertyDeclaration>,
-    pub functions: Vec<FunctionNode>,
+    pub instance_methods: Vec<FunctionNode>,
+    pub static_methods: Vec<FunctionNode>,
 }
 
 impl StructDeclarationNode {
-    pub fn new(name: String, properties: Vec<StructPropertyDeclaration>, functions: Vec<FunctionNode>) -> Self {
-        Self { name, properties, functions }
+    pub fn new(name: String, 
+               properties: Vec<StructPropertyDeclaration>, 
+               instance_methods: Vec<FunctionNode>,
+               static_methods: Vec<FunctionNode>,) -> Self {
+        Self { name, properties, instance_methods, static_methods }
     }
 }
 
