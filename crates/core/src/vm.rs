@@ -576,7 +576,7 @@ impl VM {
                         } else {
                             self.dispatch(&left, "plus", vec![EvaluatedParameter { name: None, value: right }])
                         }
-                    },
+                    }
                     PunctuationKind::Minus => ControlFlow::Continue(Primitive::Number(
                         left.as_number().into_control_flow()?
                             - right.as_number().into_control_flow()?,
@@ -2237,5 +2237,25 @@ mod tests {
             let int2 = Int(value=2)
             (int1 + int2).value
         "#), Primitive::Number(3.0));
+    }
+
+    #[test]
+    fn invalid_syntax() {
+        assert_eq!(
+            VM::new().eval(r#"
+                struct User(
+                  id: number,
+                  name: string
+                ) {
+                  fn getName(self): string {
+                    return self.name;
+                  }
+                }
+
+                let user = User(10, 10)
+                user["name"]"#
+            ),
+            Primitive::Number(0f64)
+        )
     }
 }
