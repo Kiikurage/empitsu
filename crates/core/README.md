@@ -4,32 +4,6 @@ Empitsu言語の処理系コア
 
 ## TODO
 
-1. 構造体宣言時に構造体にインスタンスメソッドを生やす
-2. 構造体宣言時に構造体にスタティックメソッドを生やす
-3. すでに宣言されている構造体にインターフェースを実装する
-
-```text
-interface ToString {
-    fn toString(self): string
-}
-
-impl ToString for User {
-    fn toString(self): string {
-        return self.name
-    }
-}
-
-fn print(value: ToString) {
-    println(value.toString());
-}
-
-print(user);
-```
-
-```text
-}
-```
-- インターフェース機構
 - 演算子オーバーロード
 
 

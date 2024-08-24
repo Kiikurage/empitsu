@@ -163,7 +163,6 @@ pub struct VM {
 impl VM {
     pub fn new() -> Self {
         let mut vm = VM { stack: Stack::new(), heap: Heap::new() };
-
         vm.install_builtin_objects();
         vm
     }
@@ -568,10 +567,16 @@ impl VM {
                 let right = self.eval_node(right)?;
 
                 match operator {
-                    PunctuationKind::Plus => ControlFlow::Continue(Primitive::Number(
-                        left.as_number().into_control_flow()?
-                            + right.as_number().into_control_flow()?,
-                    )),
+                    PunctuationKind::Plus => {
+                        if matches!(left, Primitive::Number(..)) || matches!(right, Primitive::Number(..)) {
+                            ControlFlow::Continue(Primitive::Number(
+                                left.as_number().into_control_flow()?
+                                    + right.as_number().into_control_flow()?,
+                            ))
+                        } else {
+                            self.dispatch(&left, "plus", vec![EvaluatedParameter { name: None, value: right }])
+                        }
+                    },
                     PunctuationKind::Minus => ControlFlow::Continue(Primitive::Number(
                         left.as_number().into_control_flow()?
                             - right.as_number().into_control_flow()?,
@@ -658,55 +663,15 @@ impl VM {
 
                 match callee {
                     Object::Function(function) => {
-                        let parameters = match parse_parameters(evaluated_parameters, &function.parameters) {
-                            Ok(parameters) => parameters,
-                            Err(message) => {
-                                return ControlFlow::Break(BreakResult::Error(
-                                    Primitive::String(message),
-                                ))
-                            }
-                        };
-
-                        self.stack.enter_frame_with_closure(function.closure);
-
-                        for (parameter, parameter_name) in parameters.into_iter().zip(function.parameters.iter()) {
-                            self.stack.declare_variable(parameter_name.clone(), parameter);
-                        }
-                        let ret = self.eval_node(&function.body.clone());
-
-                        self.stack.frames.pop();
-
-                        match ret {
-                            ControlFlow::Break(BreakResult::Return(value)) => ControlFlow::Continue(value),
-                            others => others,
-                        }
+                        self.call_function(&callee_ref, evaluated_parameters)
                     }
                     Object::BoundFunction(bound_function) => {
-                        let function = match self.heap.dereference(&bound_function.function) {
-                            Ok(Object::Function(function)) => function,
-                            _ => return ControlFlow::Break(BreakResult::Error(Primitive::String("Undefined function".to_string()))),
-                        };
-
                         evaluated_parameters.insert(0, EvaluatedParameter {
                             name: Some("self".to_string()),
                             value: bound_function.receiver.clone(),
                         });
 
-                        let parameters = match parse_parameters(evaluated_parameters, &function.parameters) {
-                            Ok(parameters) => parameters,
-                            Err(message) => {
-                                return ControlFlow::Break(BreakResult::Error(
-                                    Primitive::String(message),
-                                ))
-                            }
-                        };
-
-                        self.stack.enter_frame_with_closure(function.closure);
-                        for (parameter, parameter_name) in parameters.into_iter().zip(function.parameters.iter()) {
-                            self.stack.declare_variable(parameter_name.clone(), parameter);
-                        }
-                        let ret = self.eval_node(&function.body.clone());
-                        self.stack.exit_frame();
+                        let ret = self.call_function(&bound_function.function.clone(), evaluated_parameters);
 
                         if let Err(message) = self.heap.release(&callee_ref) {
                             return ControlFlow::Break(BreakResult::Error(Primitive::String(message)));
@@ -852,6 +817,60 @@ impl VM {
         }));
 
         self.stack.declare_variable(name.to_string(), ref_);
+    }
+
+    fn call_function(&mut self, function: &Primitive, parameters: Vec<EvaluatedParameter>) -> ControlFlow<BreakResult, Primitive> {
+        let function = match self.heap.dereference(function) {
+            Ok(Object::Function(function)) => function,
+            _ => return ControlFlow::Break(BreakResult::Error(Primitive::String("Undefined function".to_string()))),
+        };
+
+        let parameters = match parse_parameters(parameters, &function.parameters) {
+            Ok(parameters) => parameters,
+            Err(message) => {
+                return ControlFlow::Break(BreakResult::Error(
+                    Primitive::String(message),
+                ))
+            }
+        };
+
+        self.stack.enter_frame_with_closure(function.closure);
+        for (parameter, parameter_name) in parameters.into_iter().zip(function.parameters.iter()) {
+            self.stack.declare_variable(parameter_name.clone(), parameter);
+        }
+        let ret = self.eval_node(&function.body.clone());
+        self.stack.frames.pop();
+
+        match ret {
+            ControlFlow::Break(BreakResult::Return(value)) => ControlFlow::Continue(value),
+            others => others,
+        }
+    }
+
+    fn dispatch(&mut self, receiver: &Primitive, method: &str, mut parameters: Vec<EvaluatedParameter>) -> ControlFlow<BreakResult, Primitive> {
+        let struct_ = match self.heap.dereference(receiver) {
+            Ok(Object::StructInstance(struct_)) => struct_,
+            Err(message) => return ControlFlow::Break(BreakResult::Error(Primitive::String(message))),
+            _ => return ControlFlow::Break(BreakResult::Error(Primitive::String("Undefined struct definition".to_string()))),
+        };
+
+        let struct_definition = match self.heap.dereference(&struct_.definition) {
+            Ok(Object::StructDefinition(struct_definition)) => struct_definition,
+            Err(message) => return ControlFlow::Break(BreakResult::Error(Primitive::String(message))),
+            _ => return ControlFlow::Break(BreakResult::Error(Primitive::String("Undefined struct definition".to_string()))),
+        };
+
+        let function_address = match struct_definition.instance_methods.get(method) {
+            Some(function_address) => function_address,
+            None => return ControlFlow::Break(BreakResult::Error(Primitive::String(format!("Undefined method: {}", method)))),
+        };
+
+        parameters.insert(0, EvaluatedParameter {
+            name: Some("self".to_string()),
+            value: receiver.clone(),
+        });
+
+        self.call_function(&function_address.clone(), parameters)
     }
 }
 
@@ -2201,5 +2220,22 @@ mod tests {
                 user.toString()
             "), Primitive::String("Alice".to_string()));
         }
+    }
+
+    #[test]
+    fn operator_overload() {
+        assert_eq!(VM::new().eval(r#"
+            struct Int(value: number)
+
+            impl Plus for Int {
+                fn plus(self, other: Int): Int {
+                    return Int(value=self.value + other.value)
+                }
+            }
+
+            let int1 = Int(value=1)
+            let int2 = Int(value=2)
+            (int1 + int2).value
+        "#), Primitive::Number(3.0));
     }
 }

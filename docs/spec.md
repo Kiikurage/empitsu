@@ -79,7 +79,7 @@ fn double(x:number):number {
 - 戻り値の型は省略可能であり、省略した場合は戻り値がないことを示す
 - 戻り値はreturn文で明示的に指定する必要がある
 
-#### 構造体定義
+#### 構造体
 
 構造体を定義する。
 
@@ -91,12 +91,34 @@ struct User(id:number, name:string) {
 }
 ```
 
-- 定義した構造体は関数呼び出しと同じ文法で初期化することができる
+#### インターフェース
 
-    ```text
-    let user = User(id=1, name="Alice")
-    user.getId();  // 1
-    ``` 
+インターフェースを定義する。
+
+```text
+interface Printable {
+    fn print(self)
+}
+```
+
+定義したインターフェースは宣言済みの構造体にあとから実装することができる。
+
+```text
+impl Printable for User {
+    fn print(self) {
+        print(self.name)
+    }
+}
+```
+
+インターフェースは型名として使用できる
+
+```text
+fn printLog(value:Printable) {
+    print("log:")
+    value.print()
+}
+```
 
 ### 式
 
@@ -120,7 +142,7 @@ x || y  // logical or
 -x      // unary minus
 ```
 
-#### If文
+#### If式
 
 ```text
 let x = if (flag) { 1 } else { 2 }
@@ -170,7 +192,6 @@ let callback = function(x:number) { return x * 2 }
 - 引数の型は省略できない
 - 戻り値の型は省略可能である
 
-
 ### その他
 
 #### コメント
@@ -182,7 +203,6 @@ let callback = function(x:number) { return x * 2 }
 // コード例
 let x:number = /* ブロックコメント */ 1
 ```
-
 
 #### セミコロンの省略
 
