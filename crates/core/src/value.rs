@@ -35,13 +35,13 @@ impl Primitive {
         }
     }
 
-    pub fn into_string(self) -> Result<String, String> {
+    pub fn into_string(self) -> String {
         match self {
-            Primitive::String(value) => Ok(value.clone()),
-            Primitive::Number(value) => Ok(value.to_string()),
-            Primitive::Bool(value) => Ok(value.to_string()),
-            Primitive::Ref(address) => Ok(format!("ref {}", address)),
-            Primitive::Null => Ok("null".to_string()),
+            Primitive::String(value) => value.clone(),
+            Primitive::Number(value) => value.to_string(),
+            Primitive::Bool(value) => value.to_string(),
+            Primitive::Ref(address) => format!("ref {}", address),
+            Primitive::Null => "null".to_string(),
         }
     }
 }

@@ -1,0 +1,8 @@
+{
+  "name": "empitsu",
+  "version": "1.0.0",
+  "workspaces": [
+    "playground",
+    "crates/*/pkg"
+  ]
+}

@@ -1,6 +1,6 @@
 .idea
 /target
-/build
+build
 /.gradle
 idea-flex.skeleton
 jflex-*.jar

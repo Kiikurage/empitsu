@@ -1,0 +1,62 @@
+name: Deploy Playground
+
+on:
+  push:
+    branches:
+      - "master"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-playground
+  cancel-in-progress: true
+
+jobs:
+  build:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Use Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: wasm32-unknown-unknown
+
+      - name: Use Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Install wasm-pack
+        run: bun install -g wasm-pack
+
+      - name: Test Rust code
+        run: RUSTFLAGS="$RUSTFLAGS -A unused" cargo test
+
+      - name: Build wasm library
+        run: cd ./crates/wasm && RUSTFLAGS="$RUSTFLAGS -A unused" wasm-pack build
+
+      - name: Install npm dependencies
+        run: echo $PWD && bun install
+
+      - name: Build the playground
+        run: cd ./playground && bun run build
+
+      - uses: actions/upload-pages-artifact@v1
+        with:
+          path: playground/build
+
+  deploy:
+    needs: build
+    permissions:
+      id-token: write
+      pages: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/deploy-pages@v2
+        id: deployment

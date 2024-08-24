@@ -218,7 +218,7 @@ impl VM {
                     )))
                 }
             };
-            println!("{}", value.clone().into_string().into_control_flow()?);
+            println!("{}", value.clone().into_string());
             ControlFlow::Continue(Primitive::Number(0.0))
         });
         self.install_native_function("debug", vec!["value".to_string()], |vm| {
@@ -455,14 +455,14 @@ impl VM {
                 // TODO
                 ControlFlow::Continue(Primitive::Null)
             }
-            Node::ImplStatement(implStatement) => {
-                let struct_ref = match self.stack.get_variable(&implStatement.struct_name) {
+            Node::ImplStatement(impl_statement) => {
+                let struct_ref = match self.stack.get_variable(&impl_statement.struct_name) {
                     Some(struct_ref) => struct_ref,
                     None => return ControlFlow::Break(BreakResult::Error(Primitive::String("Undefined struct".to_string()))),
                 };
 
                 let mut methods = Vec::new();
-                for instance_method in implStatement.instance_methods.iter() {
+                for instance_method in impl_statement.instance_methods.iter() {
                     methods.push((
                         instance_method.interface.name.clone(),
                         self.heap.allocate(Object::Function(FunctionValue {
