@@ -164,21 +164,18 @@ impl VM {
     pub fn new() -> Self {
         let mut vm = VM { stack: Stack::new(), heap: Heap::new() };
 
-        vm.install_native_function("number", vec!["value".to_string()], |args, _vm| {
-            let value = match args.first() {
-                Some(value) => value,
-                None => {
-                    return ControlFlow::Break(BreakResult::Error(Primitive::String(
-                        "Expected parameter".to_string(),
-                    )))
-                }
-            };
-            match value {
-                Primitive::Number(value) => ControlFlow::Continue(Primitive::Number(*value)),
-                Primitive::Bool(value) => {
+        vm.install_builtin_objects();
+        vm
+    }
+
+    fn install_builtin_objects(&mut self) {
+        self.install_native_function("number", vec!["value".to_string()], |vm| {
+            match vm.stack.get_variable("value") {
+                Some(Primitive::Number(value)) => ControlFlow::Continue(Primitive::Number(*value)),
+                Some(Primitive::Bool(value)) => {
                     ControlFlow::Continue(Primitive::Number(if *value { 1.0 } else { 0.0 }))
                 }
-                Primitive::String(value) => match value.parse::<f64>() {
+                Some(Primitive::String(value)) => match value.parse::<f64>() {
                     Ok(value) => ControlFlow::Continue(Primitive::Number(if value.is_nan() {
                         0.0
                     } else {
@@ -186,61 +183,35 @@ impl VM {
                     })),
                     Err(_) => ControlFlow::Continue(Primitive::Number(0.0)),
                 },
-                _ => ControlFlow::Break(BreakResult::Error(Primitive::String(format!(
-                    "Failed to cast {:?} to Number",
-                    value
-                )))),
+                _ => ControlFlow::Break(BreakResult::Error(Primitive::String("Failed to cast to Number".to_string()))),
             }
         });
-        vm.install_native_function("bool", vec!["value".to_string()], |args, _vm| {
-            let value = match args.first() {
-                Some(value) => value,
-                None => {
-                    return ControlFlow::Break(BreakResult::Error(Primitive::String(
-                        "Expected parameter".to_string(),
-                    )))
-                }
-            };
-            match value {
-                Primitive::Number(value) => ControlFlow::Continue(Primitive::Bool(*value != 0.0)),
-                Primitive::Bool(value) => ControlFlow::Continue(Primitive::Bool(*value)),
-                Primitive::String(value) => {
+        self.install_native_function("bool", vec!["value".to_string()], |vm| {
+            match vm.stack.get_variable("value") {
+                Some(Primitive::Number(value)) => ControlFlow::Continue(Primitive::Bool(*value != 0.0)),
+                Some(Primitive::Bool(value)) => ControlFlow::Continue(Primitive::Bool(*value)),
+                Some(Primitive::String(value)) => {
                     ControlFlow::Continue(Primitive::Bool(value != "false"))
                 }
-                _ => ControlFlow::Break(BreakResult::Error(Primitive::String(format!(
-                    "Failed to cast {:?} to Bool",
-                    value
-                )))),
+                _ => ControlFlow::Break(BreakResult::Error(Primitive::String("Failed to cast to Bool".to_string()))),
             }
         });
-        vm.install_native_function("string", vec!["value".to_string()], |args, _vm| {
-            let value = match args.first() {
-                Some(value) => value,
-                None => {
-                    return ControlFlow::Break(BreakResult::Error(Primitive::String(
-                        "Expected parameter".to_string(),
-                    )))
-                }
-            };
-            match value {
-                Primitive::Number(value) => {
+        self.install_native_function("string", vec!["value".to_string()], |vm| {
+            match vm.stack.get_variable("value") {
+                Some(Primitive::Number(value)) => {
                     ControlFlow::Continue(Primitive::String(value.to_string()))
                 }
-                Primitive::Bool(value) => {
+                Some(Primitive::Bool(value)) => {
                     ControlFlow::Continue(Primitive::String(value.to_string()))
                 }
-                Primitive::String(value) => ControlFlow::Continue(Primitive::String(value.clone())),
-                Primitive::Ref(address) => {
-                    ControlFlow::Continue(Primitive::String(address.to_string()))
+                Some(Primitive::String(value)) => ControlFlow::Continue(Primitive::String(value.clone())),
+                _ => {
+                    ControlFlow::Continue(vm.eval("value.toString()"))
                 }
-                _ => ControlFlow::Break(BreakResult::Error(Primitive::String(format!(
-                    "Failed to cast {:?} to Bool",
-                    value
-                )))),
             }
         });
-        vm.install_native_function("print", vec!["value".to_string()], |args, _vm| {
-            let value = match args.first() {
+        self.install_native_function("print", vec!["value".to_string()], |vm| {
+            let value = match vm.stack.get_variable("value") {
                 Some(value) => value,
                 None => {
                     return ControlFlow::Break(BreakResult::Error(Primitive::String(
@@ -251,8 +222,8 @@ impl VM {
             println!("{}", value.clone().into_string().into_control_flow()?);
             ControlFlow::Continue(Primitive::Number(0.0))
         });
-        vm.install_native_function("debug", vec!["value".to_string()], |args, _vm| {
-            let value = match args.first() {
+        self.install_native_function("debug", vec!["value".to_string()], |vm| {
+            let value = match vm.stack.get_variable("value") {
                 Some(value) => value,
                 None => {
                     return ControlFlow::Break(BreakResult::Error(Primitive::String(
@@ -273,7 +244,13 @@ impl VM {
             ControlFlow::Continue(Primitive::Number(0.0))
         });
 
-        vm
+        self.eval(
+            r#"
+            interface ToString {
+                fn toString(self): string
+            }
+            "#,
+        );
     }
 
     pub fn eval(&mut self, input: &str) -> Primitive {
@@ -421,17 +398,17 @@ impl VM {
             }
             Node::FunctionDeclaration(function_node) => {
                 let mut parameters = vec![];
-                for parameter_declaration in function_node.parameters.iter() {
+                for parameter_declaration in function_node.interface.parameters.iter() {
                     parameters.push(parameter_declaration.name.clone());
                 }
 
                 let function_ref = self.heap.allocate(Object::Function(FunctionValue {
-                    name: function_node.name.clone(),
+                    name: function_node.interface.name.clone(),
                     parameters,
                     body: Rc::new(function_node.body.clone()),
                     closure: self.stack.frames.len() - 1,
                 }));
-                self.stack.declare_variable(function_node.name.clone(), function_ref);
+                self.stack.declare_variable(function_node.interface.name.clone(), function_ref);
 
                 ControlFlow::Continue(Primitive::Null)
             }
@@ -443,10 +420,10 @@ impl VM {
 
                 let mut instance_methods = HashMap::new();
                 for function in struct_.instance_methods.iter() {
-                    instance_methods.insert(function.name.clone(), self.heap.allocate(
+                    instance_methods.insert(function.interface.name.clone(), self.heap.allocate(
                         Object::Function(FunctionValue {
-                            name: function.name.clone(),
-                            parameters: function.parameters.iter().map(|p| p.name.clone()).collect(),
+                            name: function.interface.name.clone(),
+                            parameters: function.interface.parameters.iter().map(|p| p.name.clone()).collect(),
                             body: Rc::new(function.body.clone()),
                             closure: self.stack.frames.len() - 1,
                         })
@@ -455,10 +432,10 @@ impl VM {
 
                 let mut static_methods = HashMap::new();
                 for function in struct_.static_methods.iter() {
-                    static_methods.insert(function.name.clone(), self.heap.allocate(
+                    static_methods.insert(function.interface.name.clone(), self.heap.allocate(
                         Object::Function(FunctionValue {
-                            name: function.name.clone(),
-                            parameters: function.parameters.iter().map(|p| p.name.clone()).collect(),
+                            name: function.interface.name.clone(),
+                            parameters: function.interface.parameters.iter().map(|p| p.name.clone()).collect(),
                             body: Rc::new(function.body.clone()),
                             closure: self.stack.frames.len() - 1,
                         })
@@ -475,16 +452,50 @@ impl VM {
 
                 ControlFlow::Continue(Primitive::Null)
             }
+            Node::InterfaceDeclaration(..) => {
+                // TODO
+                ControlFlow::Continue(Primitive::Null)
+            }
+            Node::ImplStatement(implStatement) => {
+                let struct_ref = match self.stack.get_variable(&implStatement.struct_name) {
+                    Some(struct_ref) => struct_ref,
+                    None => return ControlFlow::Break(BreakResult::Error(Primitive::String("Undefined struct".to_string()))),
+                };
+
+                let mut methods = Vec::new();
+                for instance_method in implStatement.instance_methods.iter() {
+                    methods.push((
+                        instance_method.interface.name.clone(),
+                        self.heap.allocate(Object::Function(FunctionValue {
+                            name: instance_method.interface.name.clone(),
+                            parameters: instance_method.interface.parameters.iter().map(|p| p.name.clone()).collect(),
+                            body: Rc::new(instance_method.body.clone()),
+                            closure: self.stack.frames.len() - 1,
+                        }))
+                    ));
+                }
+
+                let struct_ = match self.heap.dereference_mut(&struct_ref) {
+                    Ok(Object::StructDefinition(struct_)) => struct_,
+                    _ => return ControlFlow::Break(BreakResult::Error(Primitive::String("Undefined struct".to_string()))),
+                };
+
+                for (name, fn_ptr) in methods {
+                    struct_.instance_methods.insert(name, fn_ptr);
+                }
+
+                ControlFlow::Continue(Primitive::Null)
+            }
 
             // Expression
             Node::FunctionExpression(function_node) => {
                 let mut parameters = vec![];
-                for parameter_declaration in function_node.parameters.iter() {
+                for parameter_declaration in function_node.interface.parameters.iter() {
                     parameters.push(parameter_declaration.name.clone());
                 }
 
                 let function_ref = self.heap.allocate(Object::Function(FunctionValue {
-                    name: function_node.name.clone(),
+                    name: function_node.interface.name.clone(),
                     parameters,
                     body: Rc::new(function_node.body.clone()),
                     closure: self.stack.frames.len() - 1,
@@ -661,14 +672,14 @@ impl VM {
                         for (parameter, parameter_name) in parameters.into_iter().zip(function.parameters.iter()) {
                             self.stack.declare_variable(parameter_name.clone(), parameter);
                         }
-                        let ret = match self.eval_node(&function.body.clone()) {
-                            ControlFlow::Continue(value) => value,
-                            ControlFlow::Break(BreakResult::Return(value)) => value,
-                            others => return others,
-                        };
+                        let ret = self.eval_node(&function.body.clone());
 
                         self.stack.frames.pop();
-                        ControlFlow::Continue(ret)
+
+                        match ret {
+                            ControlFlow::Break(BreakResult::Return(value)) => ControlFlow::Continue(value),
+                            others => others,
+                        }
                     }
                     Object::BoundFunction(bound_function) => {
                         let function = match self.heap.dereference(&bound_function.function) {
@@ -718,10 +729,17 @@ impl VM {
 
                         self.stack.enter_frame_with_closure(0);
 
-                        let ret = (function.body)(&parameters, self);
+                        for (parameter, parameter_name) in parameters.into_iter().zip(function.parameters.iter()) {
+                            self.stack.declare_variable(parameter_name.clone(), parameter);
+                        }
+                        let ret = (function.body)(self);
 
                         self.stack.frames.pop();
-                        ret
+
+                        match ret {
+                            ControlFlow::Break(BreakResult::Return(value)) => ControlFlow::Continue(value),
+                            others => others,
+                        }
                     }
                     Object::StructDefinition(struct_) => {
                         let mut properties = HashMap::new();
@@ -1696,6 +1714,26 @@ mod tests {
         }
 
         #[test]
+        fn stringify_custom_struct() {
+            assert_eq!(
+                VM::new().eval(r#"
+                struct User(id: number, name: string)
+
+                // ToString is built-in interface
+                impl ToString for User {
+                    fn toString(self): string {
+                        return self.name
+                    }
+                }
+
+                let user = User(id=1, name="Alice")
+                string(user)
+                "#),
+                Primitive::String("Alice".to_string())
+            );
+        }
+
+        #[test]
         fn print() {
             assert_eq!(VM::new().eval("print(\"ABC\")"), Primitive::Number(0f64));
         }
@@ -2133,6 +2171,35 @@ mod tests {
                 "),
                 Primitive::String("OK".to_string())
             );
+        }
+    }
+
+    mod impl_statement {
+        use crate::value::Primitive;
+        use crate::vm::VM;
+
+        #[test]
+        fn impl_statement() {
+            assert_eq!(VM::new().eval("
+                struct User(name: string) {
+                    fn getName(self): string {
+                        return self.name;
+                    }
+                }
+
+                interface ToString {
+                    fn toString(self): string
+                }
+
+                impl ToString for User {
+                    fn toString(self): string {
+                        return self.getName();
+                    }
+                }
+
+                let user = User(name=\"Alice\");
+                user.toString()
+            "), Primitive::String("Alice".to_string()));
         }
     }
 }

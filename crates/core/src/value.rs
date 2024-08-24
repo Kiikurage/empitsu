@@ -5,7 +5,7 @@ use std::fmt::{Debug, Error, Formatter};
 use std::ops::ControlFlow;
 use std::rc::Rc;
 
-pub type NativeFunction = fn(&Vec<Primitive>, &mut VM) -> ControlFlow<BreakResult, Primitive>;
+pub type NativeFunction = fn(&mut VM) -> ControlFlow<BreakResult, Primitive>;
 
 #[derive(Clone, PartialEq)]
 pub enum Primitive {
@@ -72,7 +72,7 @@ pub struct FunctionValue {
     pub name: String,
     pub parameters: Vec<String>,
 
-    // Required to be wrapped by Rc since VM requires 
+    // Required to be wrapped by Rc since VM requires
     // its reference to execute, while VM itself stores it
     #[allow(clippy::redundant_allocation)]
     pub body: Rc<Box<Node>>,

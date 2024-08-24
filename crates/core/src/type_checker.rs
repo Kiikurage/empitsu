@@ -111,14 +111,14 @@ impl TypeChecker {
             }
             Node::FunctionDeclaration(function_node) => {
                 let mut parameter_definitions = vec![];
-                for declaration in function_node.parameters.iter() {
+                for declaration in function_node.interface.parameters.iter() {
                     parameter_definitions.push(FunctionParameterDefinition {
                         name: declaration.name.clone(),
                         type_: self.eval_type_expression(&declaration.type_),
                     });
                 }
 
-                let return_type = self.eval_type_expression(&function_node.return_type);
+                let return_type = self.eval_type_expression(&function_node.interface.return_type);
 
                 Ok(Type::Function(FunctionType {
                     parameters: parameter_definitions,
@@ -140,6 +140,8 @@ impl TypeChecker {
                     properties: property_definitions,
                 }))
             }
+            Node::InterfaceDeclaration(..) => Err(format!("Cannot evaluate type of {:?}", node)),
+            Node::ImplStatement(..) => Err(format!("Cannot evaluate type of {:?}", node)),
 
             // Expression
             Node::ReturnExpression(value) => {
@@ -151,14 +153,14 @@ impl TypeChecker {
             Node::BreakExpression => Err(format!("Cannot evaluate type of {:?}", node)),
             Node::FunctionExpression(function_node) => {
                 let mut parameter_definitions = vec![];
-                for declaration in function_node.parameters.iter() {
+                for declaration in function_node.interface.parameters.iter() {
                     parameter_definitions.push(FunctionParameterDefinition {
                         name: declaration.name.clone(),
                         type_: self.eval_type_expression(&declaration.type_),
                     });
                 }
 
-                let return_type = self.eval_type_expression(&function_node.return_type);
+                let return_type = self.eval_type_expression(&function_node.interface.return_type);
 
                 Ok(Type::Function(FunctionType {
                     parameters: parameter_definitions,
@@ -323,17 +325,17 @@ impl TypeChecker {
                 }));
                 self.environments.push(env);
 
-                for declaration in function_node.parameters.iter() {
+                for declaration in function_node.interface.parameters.iter() {
                     self.declare_symbol(&declaration.name, self.eval_type_expression(&declaration.type_));
                 }
-                let return_type = self.eval_type_expression(&function_node.return_type);
+                let return_type = self.eval_type_expression(&function_node.interface.return_type);
 
                 self.check_node(&function_node.body)?;
 
                 self.environments.pop();
 
-                self.declare_symbol(&function_node.name, Type::Function(FunctionType {
-                    parameters: function_node.parameters.iter().map(|declaration| {
+                self.declare_symbol(&function_node.interface.name, Type::Function(FunctionType {
+                    parameters: function_node.interface.parameters.iter().map(|declaration| {
                         FunctionParameterDefinition {
                             name: declaration.name.clone(),
                             type_: self.eval_type_expression(&declaration.type_),
@@ -357,6 +359,8 @@ impl TypeChecker {
 
                 Ok(())
             }
+            Node::InterfaceDeclaration(..) => Err(format!("Cannot evaluate type of {:?}", node)),
+            Node::ImplStatement(..) => Err(format!("Cannot evaluate type of {:?}", node)),
 
             // Expression
             Node::ReturnExpression(value) => {
@@ -379,7 +383,7 @@ impl TypeChecker {
                 }));
                 self.environments.push(env);
 
-                for declaration in function_node.parameters.iter() {
+                for declaration in function_node.interface.parameters.iter() {
                     self.declare_symbol(&declaration.name, self.eval_type_expression(&declaration.type_));
                 }
 
@@ -701,7 +705,7 @@ mod test {
             );
         }
     }
-    
+
     mod builtin_functions {
         use crate::type_checker::TypeChecker;
 

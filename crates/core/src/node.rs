@@ -9,8 +9,10 @@ pub enum Node {
     IfStatement(Box<Node>, Box<Node>, Option<Box<Node>>), // condition, true-branch, false-branch
     ForStatement(String, Box<Node>, Box<Node>), // variable, iterator, body
     VariableDeclaration(String, Option<TypeExpression>, Option<Box<Node>>), // name, type, initial_value
-    FunctionDeclaration(FunctionNode), // name, parameters, body
-    StructDeclaration(StructDeclarationNode), // name, properties
+    FunctionDeclaration(FunctionNode),
+    StructDeclaration(StructDeclarationNode),
+    InterfaceDeclaration(InterfaceDeclarationNode),
+    ImplStatement(ImplStatementNode),
 
     // Expressions
     ReturnExpression(Option<Box<Node>>), // return value
@@ -41,8 +43,8 @@ pub struct StructDeclarationNode {
 }
 
 impl StructDeclarationNode {
-    pub fn new(name: String, 
-               properties: Vec<StructPropertyDeclaration>, 
+    pub fn new(name: String,
+               properties: Vec<StructPropertyDeclaration>,
                instance_methods: Vec<FunctionNode>,
                static_methods: Vec<FunctionNode>,) -> Self {
         Self { name, properties, instance_methods, static_methods }
@@ -50,10 +52,28 @@ impl StructDeclarationNode {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct FunctionNode {
+pub struct InterfaceDeclarationNode {
+    pub name: String,
+    pub instance_methods: Vec<FunctionInterfaceNode>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImplStatementNode {
+    pub struct_name: String,
+    pub interface_name: String,
+    pub instance_methods: Vec<FunctionNode>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FunctionInterfaceNode {
     pub name: String,
     pub parameters: Vec<FunctionParameterDeclaration>,
     pub return_type: Box<TypeExpression>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct FunctionNode {
+    pub interface: FunctionInterfaceNode,
     pub body: Box<Node>,
 }
 
