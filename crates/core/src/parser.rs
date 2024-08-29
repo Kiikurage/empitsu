@@ -208,7 +208,7 @@ fn parse_for_statement(tokens: &mut TokenIterator) -> Result<Node, Error> {
 
     let body = parse_statement(tokens)?;
 
-    Ok(Node::ForStatement(variable, Box::new(iterable), Box::new(body)))
+    Ok(Node::for_statement(variable, iterable, body))
 }
 
 fn parse_variable_declaration(tokens: &mut TokenIterator) -> Result<Node, Error> {
@@ -579,7 +579,7 @@ fn parse_block_expression(tokens: &mut TokenIterator) -> Result<Node, Error> {
 
     assert_punctuation!(tokens.next(), RightBrace)?;
 
-    Ok(Node::BlockExpression(statements))
+    Ok(Node::block(statements))
 }
 
 fn parse_return_expression(tokens: &mut TokenIterator) -> Result<Node, Error> {
@@ -784,8 +784,6 @@ fn parse_primary_type(tokens: &mut TokenIterator) -> Result<TypeExpression, Erro
 
 #[cfg(test)]
 mod tests {
-    use crate::parser::parse;
-
     mod if_statement {
         use crate::node::Node;
         use crate::parser::parse;
@@ -847,7 +845,7 @@ mod tests {
             assert_eq!(
                 parse("{1; 2}").node,
                 Node::Program(vec![
-                    Node::BlockExpression(vec![
+                    Node::block(vec![
                         Node::Number(1f64),
                         Node::Number(2f64),
                     ]),
@@ -860,8 +858,8 @@ mod tests {
             assert_eq!(
                 parse("{{1+2}}").node,
                 Node::Program(vec![
-                    Node::BlockExpression(vec![
-                        Node::BlockExpression(vec![
+                    Node::block(vec![
+                        Node::block(vec![
                             Node::BinaryExpression(
                                 Box::new(Node::Number(1f64)),
                                 PunctuationKind::Plus,
@@ -924,10 +922,10 @@ mod tests {
             assert_eq!(
                 parse("for (i in range) 1").node,
                 Node::Program(vec![
-                    Node::ForStatement(
+                    Node::for_statement(
                         "i".to_string(),
-                        Box::new(Node::Identifier("range".to_string())),
-                        Box::new(Node::Number(1f64)),
+                        Node::Identifier("range".to_string()),
+                        Node::Number(1f64),
                     ),
                 ])
             );
@@ -988,12 +986,12 @@ mod tests {
             assert_eq!(
                 parse("for (i in range) { 1 }").node,
                 Node::Program(vec![
-                    Node::ForStatement(
+                    Node::for_statement(
                         "i".to_string(),
-                        Box::new(Node::Identifier("range".to_string())),
-                        Box::new(Node::BlockExpression(vec![
+                        Node::Identifier("range".to_string()),
+                        Node::block(vec![
                             Node::Number(1f64),
-                        ])),
+                        ]),
                     ),
                 ])
             );
@@ -1103,8 +1101,8 @@ mod tests {
                         interface_name: "ToString".to_string(),
                         struct_name: "User".to_string(),
                         instance_methods: vec![
-                            FunctionNode {
-                                interface: FunctionInterfaceNode {
+                            FunctionNode::new(
+                                FunctionInterfaceNode {
                                     name: "toString".to_string(),
                                     parameters: vec![
                                         FunctionParameterDeclaration {
@@ -1114,15 +1112,15 @@ mod tests {
                                     ],
                                     return_type: Box::new(TypeExpression::Identifier("string".to_string())),
                                 },
-                                body: Box::new(Node::BlockExpression(vec![
+                                Node::block(vec![
                                     Node::ReturnExpression(
                                         Some(Box::new(Node::MemberExpression(
                                             Box::new(Node::Identifier("user".to_string())),
                                             "name".to_string(),
                                         )))
                                     ),
-                                ])),
-                            }
+                                ]),
+                            )
                         ]
                     }),
                 ])
@@ -1203,8 +1201,8 @@ mod tests {
                     Node::VariableDeclaration(
                         "x".to_string(),
                         None,
-                        Some(Box::new(Node::FunctionExpression(FunctionNode {
-                            interface: FunctionInterfaceNode {
+                        Some(Box::new(Node::FunctionExpression(FunctionNode::new(
+                            FunctionInterfaceNode {
                                 name: "(anonymous)".to_string(),
                                 parameters: vec![
                                     FunctionParameterDeclaration {
@@ -1214,14 +1212,14 @@ mod tests {
                                 ],
                                 return_type: Box::new(TypeExpression::Identifier("number".to_string())),
                             },
-                            body: Box::new(Node::BlockExpression(vec![
+                            Node::block(vec![
                                 Node::BinaryExpression(
                                     Box::new(Node::Identifier("y".to_string())),
                                     PunctuationKind::Asterisk,
                                     Box::new(Node::Number(2f64)),
                                 ),
-                            ])),
-                        }))),
+                            ]),
+                        )))),
                     )
                 ])
             );
@@ -2035,13 +2033,13 @@ mod tests {
             assert_eq!(
                 parse("for(x in 0 to 10) 1").node,
                 Node::Program(vec![
-                    Node::ForStatement(
+                    Node::for_statement(
                         "x".to_string(),
-                        Box::new(Node::RangeIterator(
+                        Node::RangeIterator(
                             Box::new(Node::Number(0f64)),
                             Box::new(Node::Number(10f64)),
-                        )),
-                        Box::new(Node::Number(1f64)),
+                        ),
+                        Node::Number(1f64),
                     ),
                 ])
             );
@@ -2052,17 +2050,17 @@ mod tests {
             assert_eq!(
                 parse("for(x in y to 1+2) 1").node,
                 Node::Program(vec![
-                    Node::ForStatement(
+                    Node::for_statement(
                         "x".to_string(),
-                        Box::new(Node::RangeIterator(
+                        Node::RangeIterator(
                             Box::new(Node::Identifier("y".to_string())),
                             Box::new(Node::BinaryExpression(
                                 Box::new(Node::Number(1f64)),
                                 PunctuationKind::Plus,
                                 Box::new(Node::Number(2f64)),
                             )),
-                        )),
-                        Box::new(Node::Number(1f64)),
+                        ),
+                        Node::Number(1f64),
                     ),
                 ])
             );

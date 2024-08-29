@@ -15,5 +15,5 @@ extern {
 
 #[wasm_bindgen]
 pub fn evaluate(input: &str) -> String {
-    VM::new().eval(input).into_string()
+    VM::new().eval(input).to_string()
 }

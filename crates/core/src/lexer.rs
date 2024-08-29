@@ -281,7 +281,7 @@ fn scan_token(chars: &mut CharIterator) -> Result<Token, Error> {
         Some('"') => scan_string(chars),
         Some('a'..='z' | 'A'..='Z' | '_') => scan_identifier(chars),
         Some(other) => {
-            let other = other.clone();
+            let other = *other;
             chars.next();
             Err(Error::unexpected_token(position, other))
         },

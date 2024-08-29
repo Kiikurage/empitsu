@@ -7,7 +7,7 @@ pub enum Node {
     // Statements
     EmptyStatement,
     IfStatement(Box<Node>, Box<Node>, Option<Box<Node>>), // condition, true-branch, false-branch
-    ForStatement(String, Box<Node>, Box<Node>), // variable, iterator, body
+    ForStatement(ForNode),
     VariableDeclaration(String, Option<TypeExpression>, Option<Box<Node>>), // name, type, initial_value
     FunctionDeclaration(FunctionNode),
     StructDeclaration(StructDeclarationNode),
@@ -19,7 +19,7 @@ pub enum Node {
     BreakExpression,
     FunctionExpression(FunctionNode), // name, parameters, body
     IfExpression(Box<Node>, Box<Node>, Box<Node>), // condition, true-branch, false-branch
-    BlockExpression(Vec<Node>),
+    BlockExpression(BlockNode),
     AssignmentExpression(Box<Node>, Box<Node>),
     BinaryExpression(Box<Node>, PunctuationKind, Box<Node>),
     UnaryExpression(PunctuationKind, Box<Node>),
@@ -34,19 +34,42 @@ pub enum Node {
     RangeIterator(Box<Node>, Box<Node>),
 }
 
+impl Node {
+    pub fn block(nodes: Vec<Node>) -> Node {
+        Node::BlockExpression(BlockNode {
+            nodes,
+        })
+    }
+
+    pub fn for_statement(variable: String, iterable: Node, body: Node) -> Node {
+        Node::ForStatement(ForNode {
+            variable,
+            iterable: Box::new(iterable),
+            body: Box::new(body),
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ForNode {
+    pub variable: String,
+    pub iterable: Box<Node>,
+    pub body: Box<Node>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct StructDeclarationNode {
     pub name: String,
     pub properties: Vec<StructPropertyDeclaration>,
-    pub instance_methods: Vec<FunctionNode>,
-    pub static_methods: Vec<FunctionNode>,
+    pub instance_methods: Vec<FunctionNode>, // TODO: InstanceMethodNodeとかに変える
+    pub static_methods: Vec<FunctionNode>, // TODO: StaticMethodNodeとかに変える
 }
 
 impl StructDeclarationNode {
     pub fn new(name: String,
                properties: Vec<StructPropertyDeclaration>,
                instance_methods: Vec<FunctionNode>,
-               static_methods: Vec<FunctionNode>,) -> Self {
+               static_methods: Vec<FunctionNode>, ) -> Self {
         Self { name, properties, instance_methods, static_methods }
     }
 }
@@ -75,6 +98,17 @@ pub struct FunctionInterfaceNode {
 pub struct FunctionNode {
     pub interface: FunctionInterfaceNode,
     pub body: Box<Node>,
+}
+
+impl FunctionNode {
+    pub fn new(interface: FunctionInterfaceNode, body: Node) -> Self {
+        Self { interface, body: Box::new(body) }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct BlockNode {
+    pub nodes: Vec<Node>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
