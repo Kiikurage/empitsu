@@ -1,17 +1,35 @@
+use crate::ast::block::Block;
+use crate::ast::break_expression::BreakExpression;
+use crate::ast::for_statement::ForStatement;
+use crate::ast::function_interface::FunctionInterface;
+use crate::ast::function::Function;
+use crate::ast::identifier::Identifier;
+use crate::ast::if_expression::IfExpression;
+use crate::ast::if_statement::IfStatement;
+use crate::ast::impl_statement::ImplStatement;
+use crate::ast::interface_declaration::InterfaceDeclaration;
+use crate::ast::node::Node;
+use crate::ast::parameter_declaration::ParameterDeclaration;
+use crate::ast::parameter::Parameter;
+use crate::ast::program::Program;
+use crate::ast::return_expression::ReturnExpression;
+use crate::ast::struct_declaration::StructDeclaration;
+use crate::ast::traits::GetPosition;
+use crate::ast::type_expression::TypeExpression;
+use crate::ast::variable_declaration::VariableDeclaration;
 use crate::error::Error;
-use crate::node::{FunctionInterfaceNode, FunctionNode, FunctionParameterDeclaration, ImplStatementNode, InterfaceDeclarationNode, Node, Parameter, StructDeclarationNode, StructPropertyDeclaration, TypeExpression};
 use crate::punctuation_kind::PunctuationKind;
-use crate::token::{Token, TokenKind};
+use crate::token::{IdentifierToken, PunctuationToken, Token};
 use crate::token_iterator::TokenIterator;
 
 pub struct ParseResult {
-    pub node: Node,
+    pub program: Program,
     pub errors: Vec<Error>,
 }
 
 impl ParseResult {
-    pub fn new(node: Node, errors: Vec<Error>) -> Self {
-        Self { node, errors }
+    pub fn new(program: Program, errors: Vec<Error>) -> Self {
+        Self { program, errors }
     }
 }
 
@@ -23,24 +41,24 @@ fn is_reserved(word: &str) -> bool {
     )
 }
 
-fn assert_keyword(token: &Result<Token, Error>, expected: &str) -> Result<(), Error> {
+fn assert_keyword(token: &Result<Token, Error>, expected: &str) -> Result<IdentifierToken, Error> {
     match token {
-        Ok(Token { kind: TokenKind::Identifier(ref keyword), .. }) if keyword == expected => Ok(()),
-        Ok(token) => Err(Error::unexpected_token(token.position.clone(), expected)),
+        Ok(Token::Identifier(identifier)) if identifier.text == expected => Ok(identifier.clone()),
+        Ok(token) => Err(Error::unexpected_token(token.position().clone(), expected)),
         Err(err) => Err(err.clone()),
     }
 }
 
-fn assert_non_reserved_word(token: &Result<Token, Error>) -> Result<String, Error> {
+fn assert_non_reserved_identifier(token: &Result<Token, Error>) -> Result<Identifier, Error> {
     match token {
-        Ok(Token { position, kind: TokenKind::Identifier(word), .. }) => {
-            if is_reserved(word) {
-                Err(Error::reserved_word(position.clone(), word.clone()))
+        Ok(Token::Identifier(identifier)) => {
+            if is_reserved(&identifier.text) {
+                Err(Error::reserved_word(identifier.position.clone(), identifier.text.clone()))
             } else {
-                Ok(word.clone())
+                Ok(Node::identifier(identifier.position.clone(), identifier.text.clone()))
             }
         }
-        Ok(token) => Err(Error::unexpected_token(token.position.clone(), "identifier")),
+        Ok(token) => Err(Error::unexpected_token(token.position().clone(), "identifier")),
         Err(err) => Err(err.clone()),
     }
 }
@@ -48,31 +66,33 @@ fn assert_non_reserved_word(token: &Result<Token, Error>) -> Result<String, Erro
 macro_rules! assert_punctuation {
     ($token:expr, $expected:ident) => {
         match $token {
-            Ok(Token { kind: TokenKind::Punctuation(ref kind @ PunctuationKind::$expected), .. }) => Ok(kind),
-            Ok(token) => Err(Error::unexpected_token(token.position.clone(), PunctuationKind::$expected.get_text())),
+            Ok(Token::Punctuation(token @ PunctuationToken { value: PunctuationKind::$expected, .. })) => Ok(token),
+            Ok(token) => Err(Error::unexpected_token(token.position().clone(), PunctuationKind::$expected.text())),
             Err(err) => Err(err.clone()),
         }
     };
     ($token:expr, $($expected:ident),+) => {
         match $token {
-            Ok(Token { kind: TokenKind::Punctuation(ref kind @ ($(PunctuationKind::$expected)|+)), .. }) => Ok(kind),
+            Ok(Token::Punctuation(token @ PunctuationToken { value: $(PunctuationKind::$expected)|+, .. })) => Ok(token),
             Ok(token) => {
-                let expected_tokens = [$(PunctuationKind::$expected.get_text()),+].join(", ");
-                Err(Error::unexpected_token(token.position.clone(), expected_tokens))
+                let expected_tokens = [$(PunctuationKind::$expected.text()),+].join(", ");
+                Err(Error::unexpected_token(token.position().clone(), expected_tokens))
             }
             Err(err) => Err(err.clone()),
         }
     };
 }
 
-type Parser = fn(tokens: &mut TokenIterator) -> Result<Node, Error>;
-
 pub fn parse(input: &str) -> ParseResult {
     let mut iter = TokenIterator::new(input);
     parse_program(&mut iter)
 }
 
-fn parse_one_of(tokens: &mut TokenIterator, parsers: Vec<Parser>, expected_node: &str) -> Result<Node, Error> {
+fn parse_one_of<T>(
+    tokens: &mut TokenIterator,
+    parsers: Vec<fn(tokens: &mut TokenIterator) -> Result<T, Error>>,
+    expected_node: &str,
+) -> Result<T, Error> {
     let current = tokens.raw_offset;
     let mut best_result = parsers.first().unwrap()(tokens);
     let mut best_current = tokens.raw_offset;
@@ -89,7 +109,7 @@ fn parse_one_of(tokens: &mut TokenIterator, parsers: Vec<Parser>, expected_node:
     }
 
     if best_current == current {
-        Err(Error::unexpected_token(tokens.get_position().clone(), expected_node))
+        Err(Error::unexpected_token(tokens.position().clone(), expected_node))
     } else {
         tokens.raw_offset = best_current;
         best_result
@@ -107,33 +127,12 @@ fn parse_program(tokens: &mut TokenIterator) -> ParseResult {
             }
             Err(err) => {
                 errors.push(err);
-
-                // Skip until the next statement
-                let mut block_depth = 0;
-                while tokens.has_next() {
-                    match tokens.raw_next() {
-                        Ok(Token { kind: TokenKind::Punctuation(PunctuationKind::SemiColon), .. }) |
-                        Ok(Token { kind: TokenKind::LineTerminator, .. }) => {
-                            break;
-                        }
-                        Ok(Token { kind: TokenKind::Punctuation(PunctuationKind::LeftBrace), .. }) => {
-                            block_depth += 1;
-                        }
-                        Ok(Token { kind: TokenKind::Punctuation(PunctuationKind::RightBrace), .. }) => {
-                            block_depth -= 1;
-                            if block_depth == 0 {
-                                break;
-                            }
-                        }
-                        Ok(..) => (),
-                        Err(err) => errors.push(err.clone()),
-                    }
-                }
+                break;
             }
         }
     }
 
-    ParseResult::new(Node::Program(statements), errors)
+    ParseResult::new(Node::program(statements), errors)
 }
 
 // Statement
@@ -141,25 +140,25 @@ fn parse_program(tokens: &mut TokenIterator) -> ParseResult {
 fn parse_statement(tokens: &mut TokenIterator) -> Result<Node, Error> {
     parse_semicolon(tokens);
     let ret = parse_one_of(tokens, vec![
-        parse_if_statement,
-        parse_block_statement,
-        parse_return_statement,
-        parse_break_statement,
-        parse_for_statement,
-        parse_variable_declaration,
-        parse_function_declaration,
-        parse_struct_declaration,
-        parse_interface_declaration,
-        parse_impl_statement,
-        parse_expression_statement,
+        |tokens| parse_if_statement(tokens).map(Into::into),
+        |tokens| parse_block_statement(tokens).map(Into::into),
+        |tokens| parse_return_statement(tokens).map(Into::into),
+        |tokens| parse_break_statement(tokens).map(Into::into),
+        |tokens| parse_for_statement(tokens).map(Into::into),
+        |tokens| parse_variable_declaration(tokens).map(Into::into),
+        |tokens| parse_function_declaration(tokens).map(|f| Node::FunctionDeclarationNode(f)),
+        |tokens| parse_struct_declaration(tokens).map(Into::into),
+        |tokens| parse_interface_declaration(tokens).map(Into::into),
+        |tokens| parse_impl_statement(tokens).map(Into::into),
+        |tokens| parse_expression_statement(tokens),
     ], "statement");
     parse_semicolon(tokens);
 
     ret
 }
 
-fn parse_if_statement(tokens: &mut TokenIterator) -> Result<Node, Error> {
-    assert_keyword(tokens.next(), "if")?;
+fn parse_if_statement(tokens: &mut TokenIterator) -> Result<IfStatement, Error> {
+    let if_keyword = assert_keyword(tokens.next(), "if")?;
 
     assert_punctuation!(tokens.next(), LeftParen)?;
     let condition = parse_expression(tokens)?;
@@ -168,52 +167,51 @@ fn parse_if_statement(tokens: &mut TokenIterator) -> Result<Node, Error> {
     let true_branch = parse_statement(tokens)?;
     let false_branch = if assert_keyword(tokens.peek(), "else").is_ok() {
         tokens.next();
-        Some(Box::new(parse_statement(tokens)?))
+        Some(parse_statement(tokens)?)
     } else {
         None
     };
 
-    Ok(Node::IfStatement(Box::new(condition), Box::new(true_branch), false_branch))
+    Ok(Node::if_statement(if_keyword.position, condition, true_branch, false_branch))
 }
 
-fn parse_block_statement(tokens: &mut TokenIterator) -> Result<Node, Error> {
+fn parse_block_statement(tokens: &mut TokenIterator) -> Result<Block, Error> {
     let block_expression = parse_block_expression(tokens)?;
-    parse_statement_end(tokens)?;
 
     Ok(block_expression)
 }
 
-fn parse_return_statement(tokens: &mut TokenIterator) -> Result<Node, Error> {
+fn parse_return_statement(tokens: &mut TokenIterator) -> Result<ReturnExpression, Error> {
     let return_expression = parse_return_expression(tokens)?;
     parse_statement_end(tokens)?;
 
     Ok(return_expression)
 }
 
-fn parse_break_statement(tokens: &mut TokenIterator) -> Result<Node, Error> {
+fn parse_break_statement(tokens: &mut TokenIterator) -> Result<BreakExpression, Error> {
     let break_expression = parse_break_expression(tokens)?;
     parse_statement_end(tokens)?;
 
     Ok(break_expression)
 }
 
-fn parse_for_statement(tokens: &mut TokenIterator) -> Result<Node, Error> {
-    assert_keyword(tokens.next(), "for")?;
+fn parse_for_statement(tokens: &mut TokenIterator) -> Result<ForStatement, Error> {
+    let for_keyword = assert_keyword(tokens.next(), "for")?;
 
     assert_punctuation!(tokens.next(), LeftParen)?;
-    let variable = assert_non_reserved_word(tokens.next())?;
+    let variable = assert_non_reserved_identifier(tokens.next())?;
     assert_keyword(tokens.next(), "in")?;
     let iterable = parse_expression(tokens)?;
     assert_punctuation!(tokens.next(), RightParen)?;
 
     let body = parse_statement(tokens)?;
 
-    Ok(Node::for_statement(variable, iterable, body))
+    Ok(Node::for_statement(for_keyword.position, variable, iterable, body))
 }
 
-fn parse_variable_declaration(tokens: &mut TokenIterator) -> Result<Node, Error> {
-    assert_keyword(tokens.next(), "let")?;
-    let name = assert_non_reserved_word(tokens.next())?;
+fn parse_variable_declaration(tokens: &mut TokenIterator) -> Result<VariableDeclaration, Error> {
+    let let_keyword = assert_keyword(tokens.next(), "let")?;
+    let name = assert_non_reserved_identifier(tokens.next())?;
 
     let type_ = if assert_punctuation!(tokens.peek(), Colon).is_ok() {
         tokens.next();
@@ -222,43 +220,49 @@ fn parse_variable_declaration(tokens: &mut TokenIterator) -> Result<Node, Error>
         None
     };
 
-    let initial_value = if assert_punctuation!(tokens.peek(), Equal).is_ok() {
+    let initializer = if assert_punctuation!(tokens.peek(), Equal).is_ok() {
         tokens.next();
-        Some(Box::new(parse_expression(tokens)?))
+        Some(parse_expression(tokens)?)
     } else {
         None
     };
 
+    if type_.is_none() && initializer.is_none() {
+        return Err(Error::unexpected_token(tokens.position().clone(), "type or initializer"));
+    }
+
     parse_statement_end(tokens)?;
 
-    Ok(Node::VariableDeclaration(name, type_, initial_value))
+    Ok(Node::variable_declaration(let_keyword.position, name, type_, initializer))
 }
 
-fn parse_function_declaration(tokens: &mut TokenIterator) -> Result<Node, Error> {
+fn parse_function_declaration(tokens: &mut TokenIterator) -> Result<Function, Error> {
     let interface = parse_function_interface(tokens)?;
-    let body = parse_block_expression(tokens)?;
 
-    Ok(Node::FunctionDeclaration(FunctionNode {
-        interface,
-        body: Box::new(body),
-    }))
+    assert_punctuation!(tokens.next(), LeftBrace)?;
+    let mut body = Vec::new();
+    while assert_punctuation!(tokens.peek(), RightBrace).is_err() {
+        body.push(parse_statement(tokens)?);
+    }
+    assert_punctuation!(tokens.next(), RightBrace)?;
+
+    Ok(Node::function(interface, body))
 }
 
-fn parse_function_interface(tokens: &mut TokenIterator) -> Result<FunctionInterfaceNode, Error> {
-    assert_keyword(tokens.next(), "fn")?;
-    let name = assert_non_reserved_word(tokens.next())?;
+fn parse_function_interface(tokens: &mut TokenIterator) -> Result<FunctionInterface, Error> {
+    let fn_keyword = assert_keyword(tokens.next(), "fn")?;
+    let name = assert_non_reserved_identifier(tokens.next())?;
 
     assert_punctuation!(tokens.next(), LeftParen)?;
     let mut parameters = vec![];
     while assert_punctuation!(tokens.peek(), RightParen).is_err() {
-        let name = assert_non_reserved_word(tokens.next())?;
-        let parameter = if name == "self" {
-            FunctionParameterDeclaration { name, type_: TypeExpression::Identifier("self".to_string()) }
+        let name = assert_non_reserved_identifier(tokens.next())?;
+        let parameter = if name.name == "self" {
+            Node::parameter_declaration(name, TypeExpression::identifier("self"))
         } else {
             assert_punctuation!(tokens.next(), Colon)?;
             let type_ = parse_type_expression(tokens)?;
-
-            FunctionParameterDeclaration { name, type_ }
+            Node::parameter_declaration(name, type_)
         };
         parameters.push(parameter);
 
@@ -273,24 +277,20 @@ fn parse_function_interface(tokens: &mut TokenIterator) -> Result<FunctionInterf
     assert_punctuation!(tokens.next(), Colon)?;
     let return_type = parse_type_expression(tokens)?;
 
-    Ok(FunctionInterfaceNode {
-        name,
-        parameters,
-        return_type: Box::new(return_type),
-    })
+    Ok(Node::function_interface(fn_keyword.position, Some(name), parameters, return_type))
 }
 
-fn parse_struct_declaration(tokens: &mut TokenIterator) -> Result<Node, Error> {
-    assert_keyword(tokens.next(), "struct")?;
-    let name = assert_non_reserved_word(tokens.next())?;
+fn parse_struct_declaration(tokens: &mut TokenIterator) -> Result<StructDeclaration, Error> {
+    let struct_keyword = assert_keyword(tokens.next(), "struct")?;
+    let name = assert_non_reserved_identifier(tokens.next())?;
 
     assert_punctuation!(tokens.next(), LeftParen)?;
     let mut properties = vec![];
     while assert_punctuation!(tokens.peek(), RightParen).is_err() {
-        let name = assert_non_reserved_word(tokens.next())?;
+        let name = assert_non_reserved_identifier(tokens.next())?;
         assert_punctuation!(tokens.next(), Colon)?;
         let type_ = parse_type_expression(tokens)?;
-        properties.push(StructPropertyDeclaration { name, type_ });
+        properties.push(Node::property_declaration(name, type_));
 
         if assert_punctuation!(tokens.peek(), Comma).is_ok() {
             tokens.next();
@@ -306,32 +306,22 @@ fn parse_struct_declaration(tokens: &mut TokenIterator) -> Result<Node, Error> {
         tokens.next();
 
         while assert_punctuation!(tokens.peek(), RightBrace).is_err() {
-            let position = tokens.get_position().clone();
-            match parse_function_declaration(tokens)? {
-                Node::FunctionDeclaration(function) => {
-                    if matches!(function.interface.parameters.first(), Some(FunctionParameterDeclaration { name, .. }) if name == "self") {
-                        instance_methods.push(function);
-                    } else {
-                        static_methods.push(function);
-                    }
-                }
-                _ => return Err(Error::unexpected_token(position, "function")),
+            let function = parse_function_declaration(tokens)?;
+            if matches!(function.interface.parameters.first(), Some(ParameterDeclaration { name, .. }) if name.name == "self") {
+                instance_methods.push(function);
+            } else {
+                static_methods.push(function);
             }
         }
         assert_punctuation!(tokens.next(), RightBrace)?;
     }
 
-    Ok(Node::StructDeclaration(StructDeclarationNode {
-        name,
-        properties,
-        instance_methods,
-        static_methods,
-    }))
+    Ok(Node::struct_declaration(struct_keyword.position, name, properties, instance_methods, static_methods))
 }
 
-fn parse_interface_declaration(tokens: &mut TokenIterator) -> Result<Node, Error> {
-    assert_keyword(tokens.next(), "interface")?;
-    let name = assert_non_reserved_word(tokens.next())?;
+fn parse_interface_declaration(tokens: &mut TokenIterator) -> Result<InterfaceDeclaration, Error> {
+    let interface_keyword = assert_keyword(tokens.next(), "interface")?;
+    let name = assert_non_reserved_identifier(tokens.next())?;
 
     let mut instance_methods = vec![];
     if assert_punctuation!(tokens.peek(), LeftBrace).is_ok() {
@@ -343,40 +333,28 @@ fn parse_interface_declaration(tokens: &mut TokenIterator) -> Result<Node, Error
         assert_punctuation!(tokens.next(), RightBrace)?;
     }
 
-    Ok(Node::InterfaceDeclaration(InterfaceDeclarationNode {
-        name,
-        instance_methods,
-    }))
+    Ok(Node::interface_declaration(interface_keyword.position, name, instance_methods))
 }
 
-fn parse_impl_statement(tokens: &mut TokenIterator) -> Result<Node, Error> {
-    assert_keyword(tokens.next(), "impl")?;
-    let interface_name = assert_non_reserved_word(tokens.next())?;
+fn parse_impl_statement(tokens: &mut TokenIterator) -> Result<ImplStatement, Error> {
+    let impl_keyword = assert_keyword(tokens.next(), "impl")?;
+    let interface_name = assert_non_reserved_identifier(tokens.next())?;
 
     assert_keyword(tokens.next(), "for")?;
-    let struct_name = assert_non_reserved_word(tokens.next())?;
+    let struct_name = assert_non_reserved_identifier(tokens.next())?;
 
     let mut instance_methods = vec![];
     if assert_punctuation!(tokens.peek(), LeftBrace).is_ok() {
         tokens.next();
 
         while assert_punctuation!(tokens.peek(), RightBrace).is_err() {
-            let position = tokens.get_position().clone();
-            match parse_function_declaration(tokens)? {
-                Node::FunctionDeclaration(function) => {
-                    instance_methods.push(function);
-                }
-                _ => return Err(Error::unexpected_token(position, "function")),
-            }
+            let function = parse_function_declaration(tokens)?;
+            instance_methods.push(function);
         }
         assert_punctuation!(tokens.next(), RightBrace)?;
     }
 
-    Ok(Node::ImplStatement(ImplStatementNode {
-        interface_name,
-        struct_name,
-        instance_methods,
-    }))
+    Ok(Node::impl_statement(impl_keyword.position, interface_name, struct_name, instance_methods))
 }
 
 fn parse_expression_statement(tokens: &mut TokenIterator) -> Result<Node, Error> {
@@ -388,16 +366,17 @@ fn parse_expression_statement(tokens: &mut TokenIterator) -> Result<Node, Error>
 
 fn parse_statement_end(tokens: &mut TokenIterator) -> Result<(), Error> {
     match tokens.raw_peek() {
-        Ok(Token { kind: TokenKind::Punctuation(PunctuationKind::SemiColon), .. }) |
-        Ok(Token { kind: TokenKind::LineTerminator, .. }) => {
+        Ok(Token::Punctuation(PunctuationToken { value: PunctuationKind::SemiColon, .. })) |
+        Ok(Token::LineTerminator(..)) => {
             tokens.raw_next();
             Ok(())
         }
-        Ok(Token { kind: TokenKind::Punctuation(PunctuationKind::RightBrace), .. }) |
-        Ok(Token { kind: TokenKind::EndOfInput, .. }) => {
+        Ok(Token::Punctuation(PunctuationToken { value: PunctuationKind::RightBrace, .. })) |
+        Ok(Token::Punctuation(PunctuationToken { value: PunctuationKind::LeftBrace, .. })) |
+        Ok(Token::EndOfInput(..)) => {
             Ok(())
         }
-        Ok(other) => Err(Error::unexpected_token(other.position.clone(), ";")),
+        Ok(other) => Err(Error::unexpected_token(other.position().clone(), ";")),
         Err(err) => Err(err.clone()),
     }
 }
@@ -413,7 +392,6 @@ fn parse_semicolon(tokens: &mut TokenIterator) {
 fn parse_expression(tokens: &mut TokenIterator) -> Result<Node, Error> {
     parse_one_of(tokens, vec![
         parse_assignment_expression,
-        parse_range_expression,
         parse_logical_or_expression,
     ], "expression")
 }
@@ -423,15 +401,7 @@ fn parse_assignment_expression(tokens: &mut TokenIterator) -> Result<Node, Error
     assert_punctuation!(tokens.next(), Equal)?;
     let rhs = parse_expression(tokens)?;
 
-    Ok(Node::AssignmentExpression(Box::new(lhs), Box::new(rhs)))
-}
-
-fn parse_range_expression(tokens: &mut TokenIterator) -> Result<Node, Error> {
-    let start = parse_logical_or_expression(tokens)?;
-    assert_keyword(tokens.next(), "to")?;
-    let end = parse_logical_or_expression(tokens)?;
-
-    Ok(Node::RangeIterator(Box::new(start), Box::new(end)))
+    Ok(Node::binary_expression(lhs, PunctuationKind::Equal, rhs).into())
 }
 
 fn parse_logical_or_expression(tokens: &mut TokenIterator) -> Result<Node, Error> {
@@ -444,7 +414,7 @@ fn parse_logical_or_expression(tokens: &mut TokenIterator) -> Result<Node, Error
         tokens.next();
 
         let rhs = parse_logical_and_expression(tokens)?;
-        lhs = Node::BinaryExpression(Box::new(lhs), operator, Box::new(rhs));
+        lhs = Node::binary_expression(lhs, operator.value, rhs).into();
     }
 
     Ok(lhs)
@@ -460,7 +430,7 @@ fn parse_logical_and_expression(tokens: &mut TokenIterator) -> Result<Node, Erro
         tokens.next();
 
         let rhs = parse_equality_expression(tokens)?;
-        lhs = Node::BinaryExpression(Box::new(lhs), operator, Box::new(rhs));
+        lhs = Node::binary_expression(lhs, operator.value, rhs).into();
     }
 
     Ok(lhs)
@@ -476,7 +446,7 @@ fn parse_equality_expression(tokens: &mut TokenIterator) -> Result<Node, Error> 
         tokens.next();
 
         let rhs = parse_relational_expression(tokens)?;
-        lhs = Node::BinaryExpression(Box::new(lhs), operator, Box::new(rhs));
+        lhs = Node::binary_expression(lhs, operator.value, rhs).into();
     }
 
     Ok(lhs)
@@ -492,7 +462,7 @@ fn parse_relational_expression(tokens: &mut TokenIterator) -> Result<Node, Error
         tokens.next();
 
         let rhs = parse_additive_expression(tokens)?;
-        lhs = Node::BinaryExpression(Box::new(lhs), operator, Box::new(rhs));
+        lhs = Node::binary_expression(lhs, operator.value, rhs).into();
     }
 
     Ok(lhs)
@@ -506,7 +476,7 @@ fn parse_additive_expression(tokens: &mut TokenIterator) -> Result<Node, Error> 
         tokens.next();
 
         let rhs = parse_multiplicative_expression(tokens)?;
-        lhs = Node::BinaryExpression(Box::new(lhs), operator, Box::new(rhs));
+        lhs = Node::binary_expression(lhs, operator.value, rhs).into();
     }
 
     Ok(lhs)
@@ -520,7 +490,7 @@ fn parse_multiplicative_expression(tokens: &mut TokenIterator) -> Result<Node, E
         tokens.next();
 
         let rhs = parse_unary_expression(tokens)?;
-        lhs = Node::BinaryExpression(Box::new(lhs), operator, Box::new(rhs));
+        lhs = Node::binary_expression(lhs, operator.value, rhs).into();
     }
 
     Ok(lhs)
@@ -528,35 +498,34 @@ fn parse_multiplicative_expression(tokens: &mut TokenIterator) -> Result<Node, E
 
 fn parse_unary_expression(tokens: &mut TokenIterator) -> Result<Node, Error> {
     let operator = match tokens.peek() {
-        Ok(Token { kind: TokenKind::Punctuation(PunctuationKind::Plus), .. }) => PunctuationKind::Plus,
-        Ok(Token { kind: TokenKind::Punctuation(PunctuationKind::Minus), .. }) => PunctuationKind::Minus,
-        Ok(Token { kind: TokenKind::Punctuation(PunctuationKind::Exclamation), .. }) => PunctuationKind::Exclamation,
+        Ok(Token::Punctuation(operator @ PunctuationToken { value: PunctuationKind::Plus, .. })) |
+        Ok(Token::Punctuation(operator @ PunctuationToken { value: PunctuationKind::Minus, .. })) |
+        Ok(Token::Punctuation(operator @ PunctuationToken { value: PunctuationKind::Exclamation, .. })) => operator.clone(),
         _ => return parse_statement_expression(tokens),
     };
     tokens.next();
 
-    let position = tokens.get_position().clone();
     let operand = parse_unary_expression(tokens)?;
-    if matches!(operand, Node::UnaryExpression(..)) {
-        return Err(Error::unexpected_token(position, "expression"));
+    if matches!(operand, Node::UnaryExpressionNode(..)) {
+        return Err(Error::unexpected_token(operand.position().clone(), "expression"));
     }
 
-    Ok(Node::UnaryExpression(operator, Box::new(operand)))
+    Ok(Node::unary_expression(operator.position.clone(), operator.value.clone(), operand).into())
 }
 
 fn parse_statement_expression(tokens: &mut TokenIterator) -> Result<Node, Error> {
     parse_one_of(tokens, vec![
-        parse_if_expression,
-        parse_block_expression,
-        parse_return_expression,
-        parse_break_expression,
-        parse_function_expression,
-        parse_call_expression,
+        |tokens| parse_if_expression(tokens).map(IfExpression::into),
+        |tokens| parse_block_expression(tokens).map(Block::into),
+        |tokens| parse_return_expression(tokens).map(ReturnExpression::into),
+        |tokens| parse_break_expression(tokens).map(BreakExpression::into),
+        |tokens| parse_function_expression(tokens).map(|f| Node::FunctionExpressionNode(f)),
+        |tokens| parse_call_expression(tokens),
     ], "expression")
 }
 
-fn parse_if_expression(tokens: &mut TokenIterator) -> Result<Node, Error> {
-    assert_keyword(tokens.next(), "if")?;
+fn parse_if_expression(tokens: &mut TokenIterator) -> Result<IfExpression, Error> {
+    let if_keyword = assert_keyword(tokens.next(), "if")?;
 
     assert_punctuation!(tokens.next(), LeftParen)?;
     let condition = parse_expression(tokens)?;
@@ -566,11 +535,16 @@ fn parse_if_expression(tokens: &mut TokenIterator) -> Result<Node, Error> {
     assert_keyword(tokens.next(), "else")?;
     let false_branch = parse_expression(tokens)?;
 
-    Ok(Node::IfExpression(Box::new(condition), Box::new(true_branch), Box::new(false_branch)))
+    Ok(Node::if_expression(
+        if_keyword.position.clone(),
+        condition,
+        true_branch,
+        false_branch,
+    ).into())
 }
 
-fn parse_block_expression(tokens: &mut TokenIterator) -> Result<Node, Error> {
-    assert_punctuation!(tokens.next(), LeftBrace)?;
+fn parse_block_expression(tokens: &mut TokenIterator) -> Result<Block, Error> {
+    let left_brace = assert_punctuation!(tokens.next(), LeftBrace)?.clone();
 
     let mut statements = Vec::new();
     while assert_punctuation!(tokens.peek(), RightBrace).is_err() {
@@ -579,11 +553,11 @@ fn parse_block_expression(tokens: &mut TokenIterator) -> Result<Node, Error> {
 
     assert_punctuation!(tokens.next(), RightBrace)?;
 
-    Ok(Node::block(statements))
+    Ok(Node::block(left_brace.position.clone(), statements))
 }
 
-fn parse_return_expression(tokens: &mut TokenIterator) -> Result<Node, Error> {
-    assert_keyword(tokens.next(), "return")?;
+fn parse_return_expression(tokens: &mut TokenIterator) -> Result<ReturnExpression, Error> {
+    let return_keyword = assert_keyword(tokens.next(), "return")?;
 
     let current = tokens.raw_offset;
     let expression = match parse_expression(tokens) {
@@ -594,25 +568,25 @@ fn parse_return_expression(tokens: &mut TokenIterator) -> Result<Node, Error> {
         }
     };
 
-    Ok(Node::ReturnExpression(expression.map(Box::new)))
+    Ok(Node::return_expression(return_keyword.position, expression))
 }
 
-fn parse_break_expression(tokens: &mut TokenIterator) -> Result<Node, Error> {
-    assert_keyword(tokens.next(), "break")?;
+fn parse_break_expression(tokens: &mut TokenIterator) -> Result<BreakExpression, Error> {
+    let break_keyword = assert_keyword(tokens.next(), "break")?;
 
-    Ok(Node::BreakExpression)
+    Ok(Node::break_expression(break_keyword.position))
 }
 
-fn parse_function_expression(tokens: &mut TokenIterator) -> Result<Node, Error> {
-    assert_keyword(tokens.next(), "fn")?;
+fn parse_function_expression(tokens: &mut TokenIterator) -> Result<Function, Error> {
+    let fn_keyword = assert_keyword(tokens.next(), "fn")?;
 
     assert_punctuation!(tokens.next(), LeftParen)?;
     let mut parameters = vec![];
     while assert_punctuation!(tokens.peek(), RightParen).is_err() {
-        let name = assert_non_reserved_word(tokens.next())?;
+        let name = assert_non_reserved_identifier(tokens.next())?;
         assert_punctuation!(tokens.next(), Colon)?;
         let type_ = parse_type_expression(tokens)?;
-        parameters.push(FunctionParameterDeclaration { name, type_ });
+        parameters.push(Node::parameter_declaration(name, type_));
 
         if assert_punctuation!(tokens.peek(), Comma).is_ok() {
             tokens.next();
@@ -625,16 +599,22 @@ fn parse_function_expression(tokens: &mut TokenIterator) -> Result<Node, Error> 
     assert_punctuation!(tokens.next(), Colon)?;
     let return_type = parse_type_expression(tokens)?;
 
-    let body = parse_block_expression(tokens)?;
+    assert_punctuation!(tokens.next(), LeftBrace)?;
+    let mut body = Vec::new();
+    while assert_punctuation!(tokens.peek(), RightBrace).is_err() {
+        body.push(parse_statement(tokens)?);
+    }
+    assert_punctuation!(tokens.next(), RightBrace)?;
 
-    Ok(Node::FunctionExpression(FunctionNode {
-        interface: FunctionInterfaceNode {
-            name: "(anonymous)".to_string(),
+    Ok(Node::function(
+        Node::function_interface(
+            fn_keyword.position,
+            None,
             parameters,
-            return_type: Box::new(return_type),
-        },
-        body: Box::new(body),
-    }))
+            return_type,
+        ),
+        body,
+    ))
 }
 
 fn parse_call_expression(tokens: &mut TokenIterator) -> Result<Node, Error> {
@@ -657,7 +637,7 @@ fn parse_call_expression(tokens: &mut TokenIterator) -> Result<Node, Error> {
     }
     assert_punctuation!(tokens.next(), RightParen)?;
 
-    Ok(Node::CallExpression(Box::new(callee), parameters))
+    Ok(Node::call_expression(callee, parameters).into())
 }
 
 fn parse_parameter(tokens: &mut TokenIterator) -> Result<Parameter, Error> {
@@ -668,15 +648,15 @@ fn parse_parameter(tokens: &mut TokenIterator) -> Result<Parameter, Error> {
     }
 
     let value = parse_expression(tokens)?;
-    Ok(Parameter::new(None, value))
+    Ok(Node::parameter(None, value))
 }
 
 fn parse_named_parameter(tokens: &mut TokenIterator) -> Result<Parameter, Error> {
-    let name = assert_non_reserved_word(tokens.next())?;
+    let name = assert_non_reserved_identifier(tokens.next())?;
     assert_punctuation!(tokens.next(), Equal)?;
     let value = parse_expression(tokens)?;
 
-    Ok(Parameter::new(Some(name), value))
+    Ok(Node::parameter(Some(name), value))
 }
 
 fn parse_left_hand_side_expression(tokens: &mut TokenIterator) -> Result<Node, Error> {
@@ -689,9 +669,9 @@ fn parse_member_expression(tokens: &mut TokenIterator) -> Result<Node, Error> {
     while assert_punctuation!(tokens.peek(), Dot).is_ok() {
         tokens.next();
 
-        let name = assert_non_reserved_word(tokens.next())?;
+        let name = assert_non_reserved_identifier(tokens.next())?;
 
-        object = Node::MemberExpression(Box::new(object), name);
+        object = Node::member_expression(object, name).into();
     }
 
     Ok(object)
@@ -699,22 +679,22 @@ fn parse_member_expression(tokens: &mut TokenIterator) -> Result<Node, Error> {
 
 fn parse_primary_expression(tokens: &mut TokenIterator) -> Result<Node, Error> {
     match tokens.next() {
-        Ok(Token { kind: TokenKind::Number(value), .. }) => Ok(Node::Number(*value)),
-        Ok(Token { kind: TokenKind::Bool(value), .. }) => Ok(Node::Bool(*value)),
-        Ok(Token { kind: TokenKind::String(value), .. }) => Ok(Node::String(value.clone())),
-        Ok(Token { position, kind: TokenKind::Identifier(name), .. }) => {
-            if is_reserved(name) {
-                return Err(Error::reserved_word(position.clone(), name.clone()));
+        Ok(Token::Number(number)) => Ok(Node::number_literal(number.position.clone(), number.value).into()),
+        Ok(Token::Bool(bool)) => Ok(Node::bool_literal(bool.position.clone(), bool.value).into()),
+        Ok(Token::String(string)) => Ok(Node::string_literal(string.position.clone(), string.value.clone()).into()),
+        Ok(Token::Identifier(identifier)) => {
+            if is_reserved(&identifier.text) {
+                return Err(Error::reserved_word(identifier.position.clone(), identifier.text.clone()));
             }
 
-            Ok(Node::Identifier(name.clone()))
+            Ok(Node::identifier(identifier.position.clone(), identifier.text.clone()).into())
         }
-        Ok(Token { kind: TokenKind::Punctuation(PunctuationKind::LeftParen), .. }) => {
+        Ok(Token::Punctuation(PunctuationToken { value: PunctuationKind::LeftParen, .. })) => {
             let expression = parse_expression(tokens)?;
             assert_punctuation!(tokens.next(), RightParen)?;
             Ok(expression)
         }
-        Ok(other) => Err(Error::unexpected_token(other.position.clone(), "expression")),
+        Ok(other) => Err(Error::unexpected_token(other.position().clone(), "expression")),
         Err(err) => Err(err.clone()),
     }
 }
@@ -736,7 +716,7 @@ fn parse_union_type(tokens: &mut TokenIterator) -> Result<TypeExpression, Error>
     if types.len() == 1 {
         Ok(types.pop().unwrap())
     } else {
-        Ok(TypeExpression::Union(types))
+        Ok(TypeExpression::union(types))
     }
 }
 
@@ -745,7 +725,7 @@ fn parse_optional_type(tokens: &mut TokenIterator) -> Result<TypeExpression, Err
 
     if assert_punctuation!(tokens.peek(), Question).is_ok() {
         tokens.next();
-        Ok(TypeExpression::Optional(Box::new(type_)))
+        Ok(TypeExpression::optional(type_))
     } else {
         Ok(type_)
     }
@@ -753,31 +733,31 @@ fn parse_optional_type(tokens: &mut TokenIterator) -> Result<TypeExpression, Err
 
 fn parse_primary_type(tokens: &mut TokenIterator) -> Result<TypeExpression, Error> {
     match tokens.peek() {
-        Ok(Token { kind: TokenKind::Punctuation(PunctuationKind::LeftParen), .. }) => {
+        Ok(Token::Punctuation(PunctuationToken { value: PunctuationKind::LeftParen, .. })) => {
             tokens.next();
             let type_ = parse_type_expression(tokens)?;
             assert_punctuation!(tokens.next(), RightParen)?;
             Ok(type_)
         }
-        Ok(Token { position, kind: TokenKind::Identifier(name), .. }) => {
-            match name.as_str() {
+        Ok(Token::Identifier(identifier)) => {
+            match identifier.text.as_str() {
                 "number" | "string" | "bool" | "null" => {
-                    let name = name.clone();
+                    let name = identifier.text.clone();
                     tokens.next();
-                    Ok(TypeExpression::Identifier(name))
+                    Ok(TypeExpression::identifier(name))
                 }
                 _ => {
-                    if is_reserved(name) {
-                        Err(Error::reserved_word(position.clone(), name.clone()))
+                    if is_reserved(&identifier.text) {
+                        Err(Error::reserved_word(identifier.position.clone(), identifier.text.clone()))
                     } else {
-                        let name = name.clone();
+                        let name = identifier.text.clone();
                         tokens.next();
-                        Ok(TypeExpression::Identifier(name))
+                        Ok(TypeExpression::identifier(name))
                     }
                 }
             }
         }
-        Ok(Token { position, .. }) => Err(Error::unexpected_token(position.clone(), "type")),
+        Ok(token) => Err(Error::unexpected_token(token.position().clone(), "type")),
         Err(err) => Err(err.clone()),
     }
 }
@@ -785,18 +765,19 @@ fn parse_primary_type(tokens: &mut TokenIterator) -> Result<TypeExpression, Erro
 #[cfg(test)]
 mod tests {
     mod if_statement {
-        use crate::node::Node;
+        use crate::ast::node::Node;
         use crate::parser::parse;
 
         #[test]
         fn if_statement() {
             assert_eq!(
-                parse("if (1) 2; else 3").node,
-                Node::Program(vec![
-                    Node::IfStatement(
-                        Box::new(Node::Number(1f64)),
-                        Box::new(Node::Number(2f64)),
-                        Some(Box::new(Node::Number(3f64))),
+                parse("if (1) 2; else 3").program,
+                Node::program(vec![
+                    Node::if_statement(
+                        (0, 0),
+                        Node::number_literal((0, 4), 1f64),
+                        Node::number_literal((0, 7), 2f64),
+                        Some(Node::number_literal((0, 15), 3f64)),
                     ),
                 ])
             );
@@ -805,12 +786,13 @@ mod tests {
         #[test]
         fn if_statement_without_false_branch() {
             assert_eq!(
-                parse("if (1) 2").node,
-                Node::Program(vec![
-                    Node::IfStatement(
-                        Box::new(Node::Number(1f64)),
-                        Box::new(Node::Number(2f64)),
-                        None,
+                parse("if (1) 2").program,
+                Node::program(vec![
+                    Node::if_statement(
+                        (0, 0),
+                        Node::number_literal((0, 4), 1f64),
+                        Node::number_literal((0, 7), 2f64),
+                        None::<Node>,
                     ),
                 ])
             );
@@ -819,16 +801,18 @@ mod tests {
         #[test]
         fn chained_if() {
             assert_eq!(
-                parse("if (1) 2; else if (3) 4; else 5").node,
-                Node::Program(vec![
-                    Node::IfStatement(
-                        Box::new(Node::Number(1f64)),
-                        Box::new(Node::Number(2f64)),
-                        Some(Box::new(Node::IfStatement(
-                            Box::new(Node::Number(3f64)),
-                            Box::new(Node::Number(4f64)),
-                            Some(Box::new(Node::Number(5f64))),
-                        ))),
+                parse("if (1) 2; else if (3) 4; else 5").program,
+                Node::program(vec![
+                    Node::if_statement(
+                        (0, 0),
+                        Node::number_literal((0, 4), 1f64),
+                        Node::number_literal((0, 7), 2f64),
+                        Some(Node::if_statement(
+                            (0, 15),
+                            Node::number_literal((0, 19), 3f64),
+                            Node::number_literal((0, 22), 4f64),
+                            Some(Node::number_literal((0, 30), 5f64)),
+                        )),
                     ),
                 ])
             );
@@ -836,18 +820,18 @@ mod tests {
     }
 
     mod block_statement {
-        use crate::node::Node;
+        use crate::ast::node::Node;
         use crate::parser::parse;
         use crate::punctuation_kind::PunctuationKind;
 
         #[test]
         fn block() {
             assert_eq!(
-                parse("{1; 2}").node,
-                Node::Program(vec![
-                    Node::block(vec![
-                        Node::Number(1f64),
-                        Node::Number(2f64),
+                parse("{1; 2}").program,
+                Node::program(vec![
+                    Node::block((0, 0), vec![
+                        Node::number_literal((0, 1), 1f64),
+                        Node::number_literal((0, 4), 2f64),
                     ]),
                 ])
             );
@@ -856,14 +840,14 @@ mod tests {
         #[test]
         fn nested_block() {
             assert_eq!(
-                parse("{{1+2}}").node,
-                Node::Program(vec![
-                    Node::block(vec![
-                        Node::block(vec![
-                            Node::BinaryExpression(
-                                Box::new(Node::Number(1f64)),
+                parse("{{1+2}}").program,
+                Node::program(vec![
+                    Node::block((0, 0), vec![
+                        Node::block((0, 1), vec![
+                            Node::binary_expression(
+                                Node::number_literal((0, 2), 1f64),
                                 PunctuationKind::Plus,
-                                Box::new(Node::Number(2f64)),
+                                Node::number_literal((0, 4), 2f64),
                             ),
                         ]),
                     ]),
@@ -873,15 +857,21 @@ mod tests {
     }
 
     mod variable_declaration {
-        use crate::node::{Node, TypeExpression};
+        use crate::ast::node::Node;
+        use crate::ast::type_expression::TypeExpression;
         use crate::parser::parse;
 
         #[test]
         fn variable_declaration() {
             assert_eq!(
-                parse("let x").node,
-                Node::Program(vec![
-                    Node::VariableDeclaration("x".to_string(), None, None),
+                parse("let x:number = 0").program,
+                Node::program(vec![
+                    Node::variable_declaration(
+                        (0, 0),
+                        Node::identifier((0, 4), "x"),
+                        Some(TypeExpression::identifier("number")),
+                        Some(Node::number_literal((0, 15), 0f64)),
+                    )
                 ])
             );
         }
@@ -889,9 +879,14 @@ mod tests {
         #[test]
         fn with_initial_value() {
             assert_eq!(
-                parse("let x = 1").node,
-                Node::Program(vec![
-                    Node::VariableDeclaration("x".to_string(), None, Some(Box::new(Node::Number(1.0f64)))),
+                parse("let x = 1").program,
+                Node::program(vec![
+                    Node::variable_declaration(
+                        (0, 0),
+                        Node::identifier((0, 4), "x"),
+                        None,
+                        Some(Node::number_literal((0, 8), 1.0f64)),
+                    ),
                 ])
             );
         }
@@ -899,33 +894,39 @@ mod tests {
         #[test]
         fn with_type_annotation() {
             assert_eq!(
-                parse("let x: number = 1").node,
-                Node::Program(vec![
-                    Node::VariableDeclaration(
-                        "x".to_string(),
-                        Some(TypeExpression::Identifier("number".to_string())),
-                        Some(Box::new(Node::Number(1.0f64)))
+                parse("let x: number = 1").program,
+                Node::program(vec![
+                    Node::variable_declaration(
+                        (0, 0),
+                        Node::identifier((0, 4), "x"),
+                        Some(TypeExpression::identifier("number")),
+                        Some(Node::number_literal((0, 16), 1.0f64)),
                     ),
                 ])
             );
         }
+
+        #[test]
+        fn no_type_annotation_nor_initial_value() {
+            assert!(parse("let x").errors.len() > 0);
+        }
     }
 
     mod for_statement {
+        use crate::ast::node::Node;
         use crate::error::Error;
-        use crate::node::Node;
         use crate::parser::parse;
-        use crate::position::Position;
 
         #[test]
         fn for_statement() {
             assert_eq!(
-                parse("for (i in range) 1").node,
-                Node::Program(vec![
+                parse("for (i in range) 1").program,
+                Node::program(vec![
                     Node::for_statement(
-                        "i".to_string(),
-                        Node::Identifier("range".to_string()),
-                        Node::Number(1f64),
+                        (0, 0),
+                        Node::identifier((0, 5), "i"),
+                        Node::identifier((0, 10), "range"),
+                        Node::number_literal((0, 17), 1f64),
                     ),
                 ])
             );
@@ -936,7 +937,7 @@ mod tests {
             assert_eq!(
                 parse("for i in range) 1").errors,
                 vec![
-                    Error::unexpected_token(Position::new(0, 4), "(")
+                    Error::unexpected_token((0, 4), "(")
                 ]
             );
         }
@@ -946,7 +947,7 @@ mod tests {
             assert_eq!(
                 parse("for (i range) 1").errors,
                 vec![
-                    Error::unexpected_token(Position::new(0, 7), "in")
+                    Error::unexpected_token((0, 7), "in")
                 ]
             );
         }
@@ -956,7 +957,7 @@ mod tests {
             assert_eq!(
                 parse("for (i in) 1").errors,
                 vec![
-                    Error::unexpected_token(Position::new(0, 9), "expression")
+                    Error::unexpected_token((0, 9), "expression")
                 ]
             );
         }
@@ -966,7 +967,7 @@ mod tests {
             assert_eq!(
                 parse("for (i in range 1").errors,
                 vec![
-                    Error::unexpected_token(Position::new(0, 16), ")")
+                    Error::unexpected_token((0, 16), ")")
                 ]
             );
         }
@@ -976,7 +977,7 @@ mod tests {
             assert_eq!(
                 parse("for (i in range)").errors,
                 vec![
-                    Error::unexpected_token(Position::new(0, 16), "statement")
+                    Error::unexpected_token((0, 16), "statement")
                 ]
             );
         }
@@ -984,13 +985,14 @@ mod tests {
         #[test]
         fn with_block() {
             assert_eq!(
-                parse("for (i in range) { 1 }").node,
-                Node::Program(vec![
+                parse("for (i in range) { 1 }").program,
+                Node::program(vec![
                     Node::for_statement(
-                        "i".to_string(),
-                        Node::Identifier("range".to_string()),
-                        Node::block(vec![
-                            Node::Number(1f64),
+                        (0, 0),
+                        Node::identifier((0, 5), "i"),
+                        Node::identifier((0, 10), "range"),
+                        Node::block((0, 17), vec![
+                            Node::number_literal((0, 19), 1f64),
                         ]),
                     ),
                 ])
@@ -999,31 +1001,32 @@ mod tests {
     }
 
     mod struct_declaration {
+        use crate::ast::node::Node;
+        use crate::ast::type_expression::TypeExpression;
         use crate::error::Error;
-        use crate::node::{Node, StructDeclarationNode, StructPropertyDeclaration, TypeExpression};
         use crate::parser::parse;
-        use crate::position::Position;
 
         #[test]
         fn struct_declaration() {
             assert_eq!(
-                parse("struct User(name: string, id: number)").node,
-                Node::Program(vec![
-                    Node::StructDeclaration(StructDeclarationNode::new(
-                        "User".to_string(),
+                parse("struct User(name: string, id: number)").program,
+                Node::program(vec![
+                    Node::struct_declaration(
+                        (0, 0),
+                        Node::identifier((0, 7), "User"),
                         vec![
-                            StructPropertyDeclaration {
-                                name: "name".to_string(),
-                                type_: TypeExpression::Identifier("string".to_string()),
-                            },
-                            StructPropertyDeclaration {
-                                name: "id".to_string(),
-                                type_: TypeExpression::Identifier("number".to_string()),
-                            },
+                            Node::property_declaration(
+                                Node::identifier((0, 12), "name"),
+                                TypeExpression::identifier("string")
+                            ),
+                            Node::property_declaration(
+                                Node::identifier((0, 26), "id"),
+                                TypeExpression::identifier("number")
+                            ),
                         ],
                         vec![],
                         vec![],
-                    )),
+                    )
                 ])
             );
         }
@@ -1031,14 +1034,15 @@ mod tests {
         #[test]
         fn struct_declaration_without_properties() {
             assert_eq!(
-                parse("struct User()").node,
-                Node::Program(vec![
-                    Node::StructDeclaration(StructDeclarationNode::new(
-                        "User".to_string(),
+                parse("struct User()").program,
+                Node::program(vec![
+                    Node::struct_declaration(
+                        (0, 0),
+                        Node::identifier((0, 7), "User"),
                         vec![],
                         vec![],
                         vec![],
-                    )),
+                    ),
                 ])
             );
         }
@@ -1048,106 +1052,113 @@ mod tests {
             assert_eq!(
                 parse("struct {}").errors,
                 vec![
-                    Error::unexpected_token(Position::new(0, 7), "identifier")
+                    Error::unexpected_token((0, 7), "identifier")
                 ]
             );
         }
     }
 
     mod interface_declaration {
-        use crate::node::{FunctionInterfaceNode, FunctionParameterDeclaration, InterfaceDeclarationNode, Node, TypeExpression};
+        use crate::ast::node::Node;
+        use crate::ast::type_expression::TypeExpression;
         use crate::parser::parse;
 
         #[test]
         fn interface_declaration() {
             assert_eq!(
-                parse("interface ToString { fn toString(self): string }").node,
-                Node::Program(vec![
-                    Node::InterfaceDeclaration(InterfaceDeclarationNode {
-                        name: "ToString".to_string(),
-                        instance_methods: vec![
-                            FunctionInterfaceNode {
-                                name: "toString".to_string(),
-                                parameters: vec![
-                                    FunctionParameterDeclaration {
-                                        name: "self".to_string(),
-                                        type_: TypeExpression::Identifier("self".to_string()),
-                                    },
+                parse("interface ToString { fn toString(self): string }").program,
+                Node::program(vec![
+                    Node::interface_declaration(
+                        (0, 0),
+                        Node::identifier((0, 10), "ToString"),
+                        vec![
+                            Node::function_interface(
+                                (0, 21),
+                                Some(Node::identifier((0, 24), "toString")),
+                                vec![
+                                    Node::parameter_declaration(
+                                        Node::identifier((0, 33), "self"),
+                                        TypeExpression::identifier("self")
+                                    ),
                                 ],
-                                return_type: Box::new(TypeExpression::Identifier("string".to_string())),
-                            }
-                        ]
-                    }),
+                                TypeExpression::identifier("string"),
+                            ),
+                        ],
+                    ),
                 ])
             );
         }
     }
 
     mod impl_statement {
-        use crate::node::{FunctionInterfaceNode, FunctionNode, FunctionParameterDeclaration, ImplStatementNode, Node, TypeExpression};
+        use crate::ast::node::Node;
+        use crate::ast::type_expression::TypeExpression;
         use crate::parser::parse;
 
         #[test]
         fn impl_statement() {
             assert_eq!(
-                parse("
+                parse(r#"
                 impl ToString for User {
                     fn toString(self): string {
                         return user.name
                     }
-                }").node,
-                Node::Program(vec![
-                    Node::ImplStatement(ImplStatementNode {
-                        interface_name: "ToString".to_string(),
-                        struct_name: "User".to_string(),
-                        instance_methods: vec![
-                            FunctionNode::new(
-                                FunctionInterfaceNode {
-                                    name: "toString".to_string(),
-                                    parameters: vec![
-                                        FunctionParameterDeclaration {
-                                            name: "self".to_string(),
-                                            type_: TypeExpression::Identifier("self".to_string()),
-                                        },
+                }"#).program,
+                Node::program(vec![
+                    Node::impl_statement(
+                        (1, 16),
+                        Node::identifier((1, 21), "ToString"),
+                        Node::identifier((1, 34), "User"),
+                        vec![
+                            Node::function(
+                                Node::function_interface(
+                                    (2, 20),
+                                    Some(Node::identifier((2, 23), "toString")),
+                                    vec![
+                                        Node::parameter_declaration(
+                                            Node::identifier((2, 32), "self"),
+                                            TypeExpression::identifier("self"),
+                                        ),
                                     ],
-                                    return_type: Box::new(TypeExpression::Identifier("string".to_string())),
-                                },
-                                Node::block(vec![
-                                    Node::ReturnExpression(
-                                        Some(Box::new(Node::MemberExpression(
-                                            Box::new(Node::Identifier("user".to_string())),
-                                            "name".to_string(),
-                                        )))
+                                    TypeExpression::identifier("string"),
+                                ),
+                                vec![
+                                    Node::return_expression(
+                                        (3, 24),
+                                        Some(Node::member_expression(
+                                            Node::identifier((3, 31), "user"),
+                                            Node::identifier((3, 36), "name"),
+                                        )),
                                     ),
-                                ]),
-                            )
-                        ]
-                    }),
+                                ],
+                            ),
+                        ],
+                    ),
                 ])
             );
         }
     }
 
     mod if_expression {
+        use crate::ast::node::Node;
         use crate::error::Error;
-        use crate::node::Node;
         use crate::parser::parse;
-        use crate::position::Position;
         use crate::punctuation_kind::PunctuationKind;
 
         #[test]
         fn if_expression() {
             assert_eq!(
-                parse("1 + if (1) 2 else 3").node,
-                Node::Program(vec![
-                    Node::BinaryExpression(
-                        Box::new(Node::Number(1f64)),
+                parse("1 + if (1) 2 else 3").program,
+                Node::program(vec![
+                    Node::binary_expression(
+                        Node::number_literal((0, 0), 1f64),
                         PunctuationKind::Plus,
-                        Box::new(Node::IfExpression(
-                            Box::new(Node::Number(1f64)),
-                            Box::new(Node::Number(2f64)),
-                            Box::new(Node::Number(3f64)),
-                        )),
+                        Node::if_expression(
+                            (0, 4),
+                            Node::number_literal((0, 8), 1f64),
+                            Node::number_literal((0, 11), 2f64),
+                            Node::number_literal((0, 18), 3f64),
+                        ),
                     )
                 ])
             );
@@ -1158,7 +1169,7 @@ mod tests {
             assert_eq!(
                 parse("1 + if (1) 2").errors,
                 vec![
-                    Error::unexpected_token(Position::new(0, 12), "else")
+                    Error::unexpected_token((0, 12), "else")
                 ]
             );
         }
@@ -1166,20 +1177,22 @@ mod tests {
         #[test]
         fn chained_if() {
             assert_eq!(
-                parse("1 + if (2) 3 else if (4) 5 else 6").node,
-                Node::Program(vec![
-                    Node::BinaryExpression(
-                        Box::new(Node::Number(1f64)),
+                parse("1 + if (2) 3 else if (4) 5 else 6").program,
+                Node::program(vec![
+                    Node::binary_expression(
+                        Node::number_literal((0, 0), 1f64),
                         PunctuationKind::Plus,
-                        Box::new(Node::IfExpression(
-                            Box::new(Node::Number(2f64)),
-                            Box::new(Node::Number(3f64)),
-                            Box::new(Node::IfExpression(
-                                Box::new(Node::Number(4f64)),
-                                Box::new(Node::Number(5f64)),
-                                Box::new(Node::Number(6f64)),
-                            )),
-                        )),
+                        Node::if_expression(
+                            (0, 4),
+                            Node::number_literal((0, 8), 2f64),
+                            Node::number_literal((0, 11), 3f64),
+                            Node::if_expression(
+                                (0, 18),
+                                Node::number_literal((0, 22), 4f64),
+                                Node::number_literal((0, 25), 5f64),
+                                Node::number_literal((0, 32), 6f64)
+                            ),
+                        ),
                     ),
                 ])
             );
@@ -1187,8 +1200,9 @@ mod tests {
     }
 
     mod function_expression {
+        use crate::ast::node::Node;
+        use crate::ast::type_expression::TypeExpression;
         use crate::error::Error;
-        use crate::node::{FunctionInterfaceNode, FunctionNode, FunctionParameterDeclaration, Node, TypeExpression};
         use crate::parser::parse;
         use crate::position::Position;
         use crate::punctuation_kind::PunctuationKind;
@@ -1196,30 +1210,32 @@ mod tests {
         #[test]
         fn function_expression() {
             assert_eq!(
-                parse("let x = fn(y: number): number { y * 2 }").node,
-                Node::Program(vec![
-                    Node::VariableDeclaration(
-                        "x".to_string(),
+                parse("let x = fn(y: number): number { y * 2 }").program,
+                Node::program(vec![
+                    Node::variable_declaration(
+                        (0, 0),
+                        Node::identifier((0, 4), "x"),
                         None,
-                        Some(Box::new(Node::FunctionExpression(FunctionNode::new(
-                            FunctionInterfaceNode {
-                                name: "(anonymous)".to_string(),
-                                parameters: vec![
-                                    FunctionParameterDeclaration {
-                                        name: "y".to_string(),
-                                        type_: TypeExpression::Identifier("number".to_string()),
-                                    },
+                        Some(Node::function_expression_node(
+                            Node::function_interface(
+                                (0, 8),
+                                None,
+                                vec![
+                                    Node::parameter_declaration(
+                                        Node::identifier((0, 11), "y"),
+                                        TypeExpression::identifier("number"),
+                                    ),
                                 ],
-                                return_type: Box::new(TypeExpression::Identifier("number".to_string())),
-                            },
-                            Node::block(vec![
-                                Node::BinaryExpression(
-                                    Box::new(Node::Identifier("y".to_string())),
+                                TypeExpression::identifier("number"),
+                            ),
+                            vec![
+                                Node::binary_expression(
+                                    Node::identifier((0, 32), "y"),
                                     PunctuationKind::Asterisk,
-                                    Box::new(Node::Number(2f64)),
+                                    Node::number_literal((0, 36), 2f64),
                                 ),
-                            ]),
-                        )))),
+                            ],
+                        )),
                     )
                 ])
             );
@@ -1237,17 +1253,19 @@ mod tests {
     }
 
     mod assignment_expression {
-        use crate::node::Node;
+        use crate::ast::node::Node;
         use crate::parser::parse;
+        use crate::punctuation_kind::PunctuationKind;
 
         #[test]
         fn assign() {
             assert_eq!(
-                parse("x = 1").node,
-                Node::Program(vec![
-                    Node::AssignmentExpression(
-                        Box::new(Node::Identifier("x".to_string())),
-                        Box::new(Node::Number(1f64))
+                parse("x = 1").program,
+                Node::program(vec![
+                    Node::binary_expression(
+                        Node::identifier((0, 0), "x"),
+                        PunctuationKind::Equal,
+                        Node::number_literal((0, 4), 1f64),
                     ),
                 ])
             );
@@ -1260,19 +1278,19 @@ mod tests {
     }
 
     mod logical_or_expression {
-        use crate::node::Node;
+        use crate::ast::node::Node;
         use crate::parser::parse;
         use crate::punctuation_kind::PunctuationKind;
 
         #[test]
         fn logical_or() {
             assert_eq!(
-                parse("true || false").node,
-                Node::Program(vec![
-                    Node::BinaryExpression(
-                        Box::new(Node::Bool(true)),
+                parse("true || false").program,
+                Node::program(vec![
+                    Node::binary_expression(
+                        Node::bool_literal((0, 0), true),
                         PunctuationKind::VerticalLineVerticalLine,
-                        Box::new(Node::Bool(false)),
+                        Node::bool_literal((0, 8), false),
                     )
                 ])
             );
@@ -1281,16 +1299,16 @@ mod tests {
         #[test]
         fn prioritize_logical_and_over_logical_or() {
             assert_eq!(
-                parse("true || false && true").node,
-                Node::Program(vec![
-                    Node::BinaryExpression(
-                        Box::new(Node::Bool(true)),
+                parse("true || false && true").program,
+                Node::program(vec![
+                    Node::binary_expression(
+                        Node::bool_literal((0, 0), true),
                         PunctuationKind::VerticalLineVerticalLine,
-                        Box::new(Node::BinaryExpression(
-                            Box::new(Node::Bool(false)),
+                        Node::binary_expression(
+                            Node::bool_literal((0, 8), false),
                             PunctuationKind::AndAnd,
-                            Box::new(Node::Bool(true)),
-                        )),
+                            Node::bool_literal((0, 17), true),
+                        ),
                     )
                 ])
             );
@@ -1298,19 +1316,19 @@ mod tests {
     }
 
     mod logical_and_expression {
-        use crate::node::Node;
+        use crate::ast::node::Node;
         use crate::parser::parse;
         use crate::punctuation_kind::PunctuationKind;
 
         #[test]
         fn logical_and() {
             assert_eq!(
-                parse("true && false").node,
-                Node::Program(vec![
-                    Node::BinaryExpression(
-                        Box::new(Node::Bool(true)),
+                parse("true && false").program,
+                Node::program(vec![
+                    Node::binary_expression(
+                        Node::bool_literal((0, 0), true),
                         PunctuationKind::AndAnd,
-                        Box::new(Node::Bool(false)),
+                        Node::bool_literal((0, 8), false),
                     )
                 ])
             );
@@ -1319,16 +1337,16 @@ mod tests {
         #[test]
         fn prioritize_additive_over_logical_and() {
             assert_eq!(
-                parse("true && false + 1").node,
-                Node::Program(vec![
-                    Node::BinaryExpression(
-                        Box::new(Node::Bool(true)),
+                parse("true && false + 1").program,
+                Node::program(vec![
+                    Node::binary_expression(
+                        Node::bool_literal((0, 0), true),
                         PunctuationKind::AndAnd,
-                        Box::new(Node::BinaryExpression(
-                            Box::new(Node::Bool(false)),
+                        Node::binary_expression(
+                            Node::bool_literal((0, 8), false),
                             PunctuationKind::Plus,
-                            Box::new(Node::Number(1f64)),
-                        )),
+                            Node::number_literal((0, 16), 1f64),
+                        ),
                     )
                 ])
             );
@@ -1336,19 +1354,19 @@ mod tests {
     }
 
     mod equality_expression {
-        use crate::node::Node;
+        use crate::ast::node::Node;
         use crate::parser::parse;
         use crate::punctuation_kind::PunctuationKind;
 
         #[test]
         fn equal() {
             assert_eq!(
-                parse("1==2").node,
-                Node::Program(vec![
-                    Node::BinaryExpression(
-                        Box::new(Node::Number(1f64)),
+                parse("1==2").program,
+                Node::program(vec![
+                    Node::binary_expression(
+                        Node::number_literal((0, 0), 1f64),
                         PunctuationKind::EqualEqual,
-                        Box::new(Node::Number(2f64)),
+                        Node::number_literal((0, 3), 2f64),
                     )
                 ])
             );
@@ -1357,12 +1375,12 @@ mod tests {
         #[test]
         fn not_equal() {
             assert_eq!(
-                parse("1!=2").node,
-                Node::Program(vec![
-                    Node::BinaryExpression(
-                        Box::new(Node::Number(1f64)),
+                parse("1!=2").program,
+                Node::program(vec![
+                    Node::binary_expression(
+                        Node::number_literal((0, 0), 1f64),
                         PunctuationKind::ExclamationEqual,
-                        Box::new(Node::Number(2f64)),
+                        Node::number_literal((0, 3), 2f64),
                     )
                 ])
             );
@@ -1371,16 +1389,16 @@ mod tests {
         #[test]
         fn not_equal_and_equal() {
             assert_eq!(
-                parse("1!=2==3").node,
-                Node::Program(vec![
-                    Node::BinaryExpression(
-                        Box::new(Node::BinaryExpression(
-                            Box::new(Node::Number(1f64)),
+                parse("1!=2==3").program,
+                Node::program(vec![
+                    Node::binary_expression(
+                        Node::binary_expression(
+                            Node::number_literal((0, 0), 1f64),
                             PunctuationKind::ExclamationEqual,
-                            Box::new(Node::Number(2f64)),
-                        )),
+                            Node::number_literal((0, 3), 2f64),
+                        ),
                         PunctuationKind::EqualEqual,
-                        Box::new(Node::Number(3f64)),
+                        Node::number_literal((0, 6), 3f64),
                     )
                 ])
             );
@@ -1389,20 +1407,20 @@ mod tests {
         #[test]
         fn equality_and_relational_expressions() {
             assert_eq!(
-                parse("1>2==3>4").node,
-                Node::Program(vec![
-                    Node::BinaryExpression(
-                        Box::new(Node::BinaryExpression(
-                            Box::new(Node::Number(1f64)),
+                parse("1>2==3>4").program,
+                Node::program(vec![
+                    Node::binary_expression(
+                        Node::binary_expression(
+                            Node::number_literal((0, 0), 1f64),
                             PunctuationKind::RightChevron,
-                            Box::new(Node::Number(2f64)),
-                        )),
+                            Node::number_literal((0, 2), 2f64),
+                        ),
                         PunctuationKind::EqualEqual,
-                        Box::new(Node::BinaryExpression(
-                            Box::new(Node::Number(3f64)),
+                        Node::binary_expression(
+                            Node::number_literal((0, 5), 3f64),
                             PunctuationKind::RightChevron,
-                            Box::new(Node::Number(4f64)),
-                        )),
+                            Node::number_literal((0, 7), 4f64),
+                        ),
                     )
                 ])
             );
@@ -1410,19 +1428,19 @@ mod tests {
     }
 
     mod relational_expression {
-        use crate::node::Node;
+        use crate::ast::node::Node;
         use crate::parser::parse;
         use crate::punctuation_kind::PunctuationKind;
 
         #[test]
         fn greater_than() {
             assert_eq!(
-                parse("1>2").node,
-                Node::Program(vec![
-                    Node::BinaryExpression(
-                        Box::new(Node::Number(1f64)),
+                parse("1>2").program,
+                Node::program(vec![
+                    Node::binary_expression(
+                        Node::number_literal((0, 0), 1f64),
                         PunctuationKind::RightChevron,
-                        Box::new(Node::Number(2f64)),
+                        Node::number_literal((0, 2), 2f64),
                     )
                 ])
             );
@@ -1431,12 +1449,12 @@ mod tests {
         #[test]
         fn greater_than_or_equal() {
             assert_eq!(
-                parse("1>=2").node,
-                Node::Program(vec![
-                    Node::BinaryExpression(
-                        Box::new(Node::Number(1f64)),
+                parse("1>=2").program,
+                Node::program(vec![
+                    Node::binary_expression(
+                        Node::number_literal((0, 0), 1f64),
                         PunctuationKind::RightChevronEqual,
-                        Box::new(Node::Number(2f64)),
+                        Node::number_literal((0, 3), 2f64),
                     )
                 ])
             );
@@ -1445,12 +1463,12 @@ mod tests {
         #[test]
         fn less_than() {
             assert_eq!(
-                parse("1<2").node,
-                Node::Program(vec![
-                    Node::BinaryExpression(
-                        Box::new(Node::Number(1f64)),
+                parse("1<2").program,
+                Node::program(vec![
+                    Node::binary_expression(
+                        Node::number_literal((0, 0), 1f64),
                         PunctuationKind::LeftChevron,
-                        Box::new(Node::Number(2f64)),
+                        Node::number_literal((0, 2), 2f64),
                     )
                 ])
             );
@@ -1459,12 +1477,12 @@ mod tests {
         #[test]
         fn less_than_or_equal() {
             assert_eq!(
-                parse("1<=2").node,
-                Node::Program(vec![
-                    Node::BinaryExpression(
-                        Box::new(Node::Number(1f64)),
+                parse("1<=2").program,
+                Node::program(vec![
+                    Node::binary_expression(
+                        Node::number_literal((0, 0), 1f64),
                         PunctuationKind::LeftChevronEqual,
-                        Box::new(Node::Number(2f64)),
+                        Node::number_literal((0, 3), 2f64),
                     )
                 ])
             );
@@ -1473,16 +1491,16 @@ mod tests {
         #[test]
         fn greater_than_expressions() {
             assert_eq!(
-                parse("1>2>3").node,
-                Node::Program(vec![
-                    Node::BinaryExpression(
-                        Box::new(Node::BinaryExpression(
-                            Box::new(Node::Number(1f64)),
+                parse("1>2>3").program,
+                Node::program(vec![
+                    Node::binary_expression(
+                        Node::binary_expression(
+                            Node::number_literal((0, 0), 1f64),
                             PunctuationKind::RightChevron,
-                            Box::new(Node::Number(2f64)),
-                        )),
+                            Node::number_literal((0, 2), 2f64),
+                        ),
                         PunctuationKind::RightChevron,
-                        Box::new(Node::Number(3f64)),
+                        Node::number_literal((0, 4), 3f64),
                     )
                 ])
             );
@@ -1491,20 +1509,20 @@ mod tests {
         #[test]
         fn greater_than_and_additive_expression() {
             assert_eq!(
-                parse("1+2>3+4").node,
-                Node::Program(vec![
-                    Node::BinaryExpression(
-                        Box::new(Node::BinaryExpression(
-                            Box::new(Node::Number(1f64)),
+                parse("1+2>3+4").program,
+                Node::program(vec![
+                    Node::binary_expression(
+                        Node::binary_expression(
+                            Node::number_literal((0, 0), 1f64),
                             PunctuationKind::Plus,
-                            Box::new(Node::Number(2f64)),
-                        )),
+                            Node::number_literal((0, 2), 2f64),
+                        ),
                         PunctuationKind::RightChevron,
-                        Box::new(Node::BinaryExpression(
-                            Box::new(Node::Number(3f64)),
+                        Node::binary_expression(
+                            Node::number_literal((0, 4), 3f64),
                             PunctuationKind::Plus,
-                            Box::new(Node::Number(4f64)),
-                        )),
+                            Node::number_literal((0, 6), 4f64),
+                        ),
                     )
                 ])
             );
@@ -1512,19 +1530,19 @@ mod tests {
     }
 
     mod additive_expression {
-        use crate::node::Node;
+        use crate::ast::node::Node;
         use crate::parser::parse;
         use crate::punctuation_kind::PunctuationKind;
 
         #[test]
         fn add() {
             assert_eq!(
-                parse("1+2").node,
-                Node::Program(vec![
-                    Node::BinaryExpression(
-                        Box::new(Node::Number(1f64)),
+                parse("1+2").program,
+                Node::program(vec![
+                    Node::binary_expression(
+                        Node::number_literal((0, 0), 1f64),
                         PunctuationKind::Plus,
-                        Box::new(Node::Number(2f64)),
+                        Node::number_literal((0, 2), 2f64),
                     )
                 ])
             );
@@ -1533,12 +1551,12 @@ mod tests {
         #[test]
         fn subtract() {
             assert_eq!(
-                parse("1-2").node,
-                Node::Program(vec![
-                    Node::BinaryExpression(
-                        Box::new(Node::Number(1f64)),
+                parse("1-2").program,
+                Node::program(vec![
+                    Node::binary_expression(
+                        Node::number_literal((0, 0), 1f64),
                         PunctuationKind::Minus,
-                        Box::new(Node::Number(2f64)),
+                        Node::number_literal((0, 2), 2f64),
                     )
                 ])
             );
@@ -1547,16 +1565,16 @@ mod tests {
         #[test]
         fn add_and_subtract() {
             assert_eq!(
-                parse("1+2-3").node,
-                Node::Program(vec![
-                    Node::BinaryExpression(
-                        Box::new(Node::BinaryExpression(
-                            Box::new(Node::Number(1f64)),
+                parse("1+2-3").program,
+                Node::program(vec![
+                    Node::binary_expression(
+                        Node::binary_expression(
+                            Node::number_literal((0, 0), 1f64),
                             PunctuationKind::Plus,
-                            Box::new(Node::Number(2f64)),
-                        )),
+                            Node::number_literal((0, 2), 2f64),
+                        ),
                         PunctuationKind::Minus,
-                        Box::new(Node::Number(3f64)),
+                        Node::number_literal((0, 4), 3f64),
                     )
                 ])
             );
@@ -1565,12 +1583,12 @@ mod tests {
         #[test]
         fn newline_at_middle() {
             assert_eq!(
-                parse("1\n+2").node,
-                Node::Program(vec![
-                    Node::BinaryExpression(
-                        Box::new(Node::Number(1f64)),
+                parse("1\n+2").program,
+                Node::program(vec![
+                    Node::binary_expression(
+                        Node::number_literal((0, 0), 1f64),
                         PunctuationKind::Plus,
-                        Box::new(Node::Number(2f64)),
+                        Node::number_literal((1, 1), 2f64),
                     )
                 ])
             );
@@ -1578,19 +1596,19 @@ mod tests {
     }
 
     mod multiplicative_expression {
-        use crate::node::Node;
+        use crate::ast::node::Node;
         use crate::parser::parse;
         use crate::punctuation_kind::PunctuationKind;
 
         #[test]
         fn multiply() {
             assert_eq!(
-                parse("1*2").node,
-                Node::Program(vec![
-                    Node::BinaryExpression(
-                        Box::new(Node::Number(1f64)),
+                parse("1*2").program,
+                Node::program(vec![
+                    Node::binary_expression(
+                        Node::number_literal((0, 0), 1f64),
                         PunctuationKind::Asterisk,
-                        Box::new(Node::Number(2f64)),
+                        Node::number_literal((0, 2), 2f64),
                     )
                 ])
             );
@@ -1599,12 +1617,12 @@ mod tests {
         #[test]
         fn divide() {
             assert_eq!(
-                parse("1/2").node,
-                Node::Program(vec![
-                    Node::BinaryExpression(
-                        Box::new(Node::Number(1f64)),
+                parse("1/2").program,
+                Node::program(vec![
+                    Node::binary_expression(
+                        Node::number_literal((0, 0), 1f64),
                         PunctuationKind::Slash,
-                        Box::new(Node::Number(2f64)),
+                        Node::number_literal((0, 2), 2f64),
                     )
                 ])
             );
@@ -1613,16 +1631,16 @@ mod tests {
         #[test]
         fn multiply_and_divide() {
             assert_eq!(
-                parse("1*2/3").node,
-                Node::Program(vec![
-                    Node::BinaryExpression(
-                        Box::new(Node::BinaryExpression(
-                            Box::new(Node::Number(1f64)),
+                parse("1*2/3").program,
+                Node::program(vec![
+                    Node::binary_expression(
+                        Node::binary_expression(
+                            Node::number_literal((0, 0), 1f64),
                             PunctuationKind::Asterisk,
-                            Box::new(Node::Number(2f64)),
-                        )),
+                            Node::number_literal((0, 2), 2f64),
+                        ),
                         PunctuationKind::Slash,
-                        Box::new(Node::Number(3f64)),
+                        Node::number_literal((0, 4), 3f64),
                     )
                 ])
             );
@@ -1631,16 +1649,16 @@ mod tests {
         #[test]
         fn multiply_after_add() {
             assert_eq!(
-                parse("1+2*3").node,
-                Node::Program(vec![
-                    Node::BinaryExpression(
-                        Box::new(Node::Number(1f64)),
+                parse("1+2*3").program,
+                Node::program(vec![
+                    Node::binary_expression(
+                        Node::number_literal((0, 0), 1f64),
                         PunctuationKind::Plus,
-                        Box::new(Node::BinaryExpression(
-                            Box::new(Node::Number(2f64)),
+                        Node::binary_expression(
+                            Node::number_literal((0, 2), 2f64),
                             PunctuationKind::Asterisk,
-                            Box::new(Node::Number(3f64)),
-                        )),
+                            Node::number_literal((0, 4), 3f64),
+                        ),
                     )
                 ])
             );
@@ -1649,16 +1667,16 @@ mod tests {
         #[test]
         fn add_after_multiply() {
             assert_eq!(
-                parse("1*2+3").node,
-                Node::Program(vec![
-                    Node::BinaryExpression(
-                        Box::new(Node::BinaryExpression(
-                            Box::new(Node::Number(1f64)),
+                parse("1*2+3").program,
+                Node::program(vec![
+                    Node::binary_expression(
+                        Node::binary_expression(
+                            Node::number_literal((0, 0), 1f64),
                             PunctuationKind::Asterisk,
-                            Box::new(Node::Number(2f64)),
-                        )),
+                            Node::number_literal((0, 2), 2f64),
+                        ),
                         PunctuationKind::Plus,
-                        Box::new(Node::Number(3f64)),
+                        Node::number_literal((0, 4), 3f64),
                     )
                 ])
             );
@@ -1667,20 +1685,20 @@ mod tests {
         #[test]
         fn add_multiplicative_expressions() {
             assert_eq!(
-                parse("1*2+3/4").node,
-                Node::Program(vec![
-                    Node::BinaryExpression(
-                        Box::new(Node::BinaryExpression(
-                            Box::new(Node::Number(1f64)),
+                parse("1*2+3/4").program,
+                Node::program(vec![
+                    Node::binary_expression(
+                        Node::binary_expression(
+                            Node::number_literal((0, 0), 1f64),
                             PunctuationKind::Asterisk,
-                            Box::new(Node::Number(2f64)),
-                        )),
+                            Node::number_literal((0, 2), 2f64),
+                        ),
                         PunctuationKind::Plus,
-                        Box::new(Node::BinaryExpression(
-                            Box::new(Node::Number(3f64)),
+                        Node::binary_expression(
+                            Node::number_literal((0, 4), 3f64),
                             PunctuationKind::Slash,
-                            Box::new(Node::Number(4f64)),
-                        )),
+                            Node::number_literal((0, 6), 4f64),
+                        ),
                     )
                 ])
             );
@@ -1688,20 +1706,20 @@ mod tests {
     }
 
     mod unary_expression {
+        use crate::ast::node::Node;
         use crate::error::Error;
-        use crate::node::Node;
         use crate::parser::parse;
-        use crate::position::Position;
         use crate::punctuation_kind::PunctuationKind;
 
         #[test]
         fn plus() {
             assert_eq!(
-                parse("+1").node,
-                Node::Program(vec![
-                    Node::UnaryExpression(
+                parse("+1").program,
+                Node::program(vec![
+                    Node::unary_expression(
+                        (0, 0),
                         PunctuationKind::Plus,
-                        Box::new(Node::Number(1f64)),
+                        Node::number_literal((0, 1), 1f64),
                     )
                 ])
             );
@@ -1710,11 +1728,12 @@ mod tests {
         #[test]
         fn minus() {
             assert_eq!(
-                parse("-1").node,
-                Node::Program(vec![
-                    Node::UnaryExpression(
+                parse("-1").program,
+                Node::program(vec![
+                    Node::unary_expression(
+                        (0, 0),
                         PunctuationKind::Minus,
-                        Box::new(Node::Number(1f64)),
+                        Node::number_literal((0, 1), 1f64),
                     )
                 ])
             );
@@ -1725,7 +1744,7 @@ mod tests {
             assert_eq!(
                 parse("--1").errors,
                 vec![
-                    Error::unexpected_token(Position::new(0, 1), "expression")
+                    Error::unexpected_token((0, 1), "expression")
                 ]
             );
         }
@@ -1733,15 +1752,16 @@ mod tests {
         #[test]
         fn unary_operator_in_additive_expression() {
             assert_eq!(
-                parse("1++1").node,
-                Node::Program(vec![
-                    Node::BinaryExpression(
-                        Box::new(Node::Number(1f64)),
+                parse("1++1").program,
+                Node::program(vec![
+                    Node::binary_expression(
+                        Node::number_literal((0, 0), 1f64),
                         PunctuationKind::Plus,
-                        Box::new(Node::UnaryExpression(
+                        Node::unary_expression(
+                            (0, 2),
                             PunctuationKind::Plus,
-                            Box::new(Node::Number(1f64)),
-                        )),
+                            Node::number_literal((0, 3), 1f64),
+                        ),
                     ),
                 ])
             );
@@ -1749,17 +1769,17 @@ mod tests {
     }
 
     mod call_expression {
-        use crate::node::{Node, Parameter};
+        use crate::ast::node::Node;
         use crate::parser::parse;
         use crate::punctuation_kind::PunctuationKind;
 
         #[test]
         fn without_parameters() {
             assert_eq!(
-                parse("func()").node,
-                Node::Program(vec![
-                    Node::CallExpression(
-                        Box::new(Node::Identifier("func".to_string())),
+                parse("func()").program,
+                Node::program(vec![
+                    Node::call_expression(
+                        Node::identifier((0, 0), "func"),
                         vec![],
                     )
                 ])
@@ -1769,14 +1789,14 @@ mod tests {
         #[test]
         fn with_parameters() {
             assert_eq!(
-                parse("func(1, 2, 3)").node,
-                Node::Program(vec![
-                    Node::CallExpression(
-                        Box::new(Node::Identifier("func".to_string())),
+                parse("func(1, 2, 3)").program,
+                Node::program(vec![
+                    Node::call_expression(
+                        Node::identifier((0, 0), "func"),
                         vec![
-                            Parameter::new(None, Node::Number(1f64)),
-                            Parameter::new(None, Node::Number(2f64)),
-                            Parameter::new(None, Node::Number(3f64)),
+                            Node::parameter(None, Node::number_literal((0, 5), 1f64)),
+                            Node::parameter(None, Node::number_literal((0, 8), 2f64)),
+                            Node::parameter(None, Node::number_literal((0, 11), 3f64)),
                         ],
                     )
                 ])
@@ -1786,20 +1806,20 @@ mod tests {
         #[test]
         fn complex_expression_in_parameter() {
             assert_eq!(
-                parse("func(1, 2*(3+4))").node,
-                Node::Program(vec![
-                    Node::CallExpression(
-                        Box::new(Node::Identifier("func".to_string())),
+                parse("func(1, 2*(3+4))").program,
+                Node::program(vec![
+                    Node::call_expression(
+                        Node::identifier((0, 0), "func"),
                         vec![
-                            Parameter::new(None, Node::Number(1f64)),
-                            Parameter::new(None, Node::BinaryExpression(
-                                Box::new(Node::Number(2f64)),
+                            Node::parameter(None, Node::number_literal((0, 5), 1f64)),
+                            Node::parameter(None, Node::binary_expression(
+                                Node::number_literal((0, 8), 2f64),
                                 PunctuationKind::Asterisk,
-                                Box::new(Node::BinaryExpression(
-                                    Box::new(Node::Number(3f64)),
+                                Node::binary_expression(
+                                    Node::number_literal((0, 11), 3f64),
                                     PunctuationKind::Plus,
-                                    Box::new(Node::Number(4f64)),
-                                )),
+                                    Node::number_literal((0, 13), 4f64),
+                                ),
                             )),
                         ],
                     )
@@ -1810,21 +1830,21 @@ mod tests {
         #[test]
         fn function_call_in_parameter() {
             assert_eq!(
-                parse("f(g(1), h(2))").node,
-                Node::Program(vec![
-                    Node::CallExpression(
-                        Box::new(Node::Identifier("f".to_string())),
+                parse("f(g(1), h(2))").program,
+                Node::program(vec![
+                    Node::call_expression(
+                        Node::identifier((0, 0), "f"),
                         vec![
-                            Parameter::new(None, Node::CallExpression(
-                                Box::new(Node::Identifier("g".to_string())),
+                            Node::parameter(None, Node::call_expression(
+                                Node::identifier((0, 2), "g"),
                                 vec![
-                                    Parameter::new(None, Node::Number(1f64)),
+                                    Node::parameter(None, Node::number_literal((0, 4), 1f64)),
                                 ],
                             )),
-                            Parameter::new(None, Node::CallExpression(
-                                Box::new(Node::Identifier("h".to_string())),
+                            Node::parameter(None, Node::call_expression(
+                                Node::identifier((0, 8), "h"),
                                 vec![
-                                    Parameter::new(None, Node::Number(2f64)),
+                                    Node::parameter(None, Node::number_literal((0, 10), 2f64)),
                                 ],
                             )),
                         ],
@@ -1835,21 +1855,21 @@ mod tests {
     }
 
     mod member_expression {
-        use crate::node::Node;
+        use crate::ast::node::Node;
         use crate::parser::parse;
         use crate::punctuation_kind::PunctuationKind;
 
         #[test]
         fn member_expression() {
             assert_eq!(
-                parse("x.y.z").node,
-                Node::Program(vec![
-                    Node::MemberExpression(
-                        Box::new(Node::MemberExpression(
-                            Box::new(Node::Identifier("x".to_string())),
-                            "y".to_string(),
-                        )),
-                        "z".to_string(),
+                parse("x.y.z").program,
+                Node::program(vec![
+                    Node::member_expression(
+                        Node::member_expression(
+                            Node::identifier((0, 0), "x"),
+                            Node::identifier((0, 2), "y"),
+                        ),
+                        Node::identifier((0, 4), "z"),
                     ),
                 ])
             );
@@ -1858,13 +1878,13 @@ mod tests {
         #[test]
         fn member_expression_with_call_expression() {
             assert_eq!(
-                parse("x.y()").node,
-                Node::Program(vec![
-                    Node::CallExpression(
-                        Box::new(Node::MemberExpression(
-                            Box::new(Node::Identifier("x".to_string())),
-                            "y".to_string(),
-                        )),
+                parse("x.y()").program,
+                Node::program(vec![
+                    Node::call_expression(
+                        Node::member_expression(
+                            Node::identifier((0, 0), "x"),
+                            Node::identifier((0, 2), "y"),
+                        ),
                         vec![],
                     ),
                 ])
@@ -1874,14 +1894,15 @@ mod tests {
         #[test]
         fn member_expression_with_unary_expression() {
             assert_eq!(
-                parse("-x.y").node,
-                Node::Program(vec![
-                    Node::UnaryExpression(
+                parse("-x.y").program,
+                Node::program(vec![
+                    Node::unary_expression(
+                        (0, 0),
                         PunctuationKind::Minus,
-                        Box::new(Node::MemberExpression(
-                            Box::new(Node::Identifier("x".to_string())),
-                            "y".to_string(),
-                        )),
+                        Node::member_expression(
+                            Node::identifier((0, 1), "x"),
+                            Node::identifier((0, 3), "y"),
+                        ),
                     ),
                 ])
             );
@@ -1889,18 +1910,17 @@ mod tests {
     }
 
     mod primary_expression {
+        use crate::ast::node::Node;
         use crate::error::Error;
-        use crate::node::{Node, Parameter};
         use crate::parser::parse;
-        use crate::position::Position;
         use crate::punctuation_kind::PunctuationKind;
 
         #[test]
         fn number() {
             assert_eq!(
-                parse("1").node,
-                Node::Program(vec![
-                    Node::Number(1f64),
+                parse("1").program,
+                Node::program(vec![
+                    Node::number_literal((0, 0), 1f64),
                 ])
             );
         }
@@ -1908,9 +1928,9 @@ mod tests {
         #[test]
         fn bool_true() {
             assert_eq!(
-                parse("true").node,
-                Node::Program(vec![
-                    Node::Bool(true),
+                parse("true").program,
+                Node::program(vec![
+                    Node::bool_literal((0, 0), true),
                 ])
             );
         }
@@ -1918,9 +1938,9 @@ mod tests {
         #[test]
         fn bool_false() {
             assert_eq!(
-                parse("false").node,
-                Node::Program(vec![
-                    Node::Bool(false),
+                parse("false").program,
+                Node::program(vec![
+                    Node::bool_literal((0, 0), false),
                 ])
             );
         }
@@ -1928,15 +1948,16 @@ mod tests {
         #[test]
         fn bool_in_expression() {
             assert_eq!(
-                parse("-true+false").node,
-                Node::Program(vec![
-                    Node::BinaryExpression(
-                        Box::new(Node::UnaryExpression(
+                parse("-true+false").program,
+                Node::program(vec![
+                    Node::binary_expression(
+                        Node::unary_expression(
+                            (0, 0),
                             PunctuationKind::Minus,
-                            Box::new(Node::Bool(true)),
-                        )),
+                            Node::bool_literal((0, 1), true),
+                        ),
                         PunctuationKind::Plus,
-                        Box::new(Node::Bool(false)),
+                        Node::bool_literal((0, 6), false),
                     ),
                 ])
             );
@@ -1945,12 +1966,12 @@ mod tests {
         #[test]
         fn string() {
             assert_eq!(
-                parse("print(\"hello\")").node,
-                Node::Program(vec![
-                    Node::CallExpression(
-                        Box::new(Node::Identifier("print".to_string())),
+                parse("print(\"hello\")").program,
+                Node::program(vec![
+                    Node::call_expression(
+                        Node::identifier((0, 0), "print"),
                         vec![
-                            Parameter::new(None, Node::String("hello".to_string())),
+                            Node::parameter(None, Node::string_literal((0, 6), "hello")),
                         ],
                     )
                 ])
@@ -1959,9 +1980,9 @@ mod tests {
         #[test]
         fn identifier() {
             assert_eq!(
-                parse("x").node,
-                Node::Program(vec![
-                    Node::Identifier("x".to_string()),
+                parse("x").program,
+                Node::program(vec![
+                    Node::identifier((0, 0), "x"),
                 ])
             );
         }
@@ -1969,9 +1990,9 @@ mod tests {
         #[test]
         fn number_with_paren() {
             assert_eq!(
-                parse("(1)").node,
-                Node::Program(vec![
-                    Node::Number(1f64),
+                parse("(1)").program,
+                Node::program(vec![
+                    Node::number_literal((0, 1), 1f64),
                 ])
             );
         }
@@ -1979,20 +2000,20 @@ mod tests {
         #[test]
         fn multiply_additive_expressions() {
             assert_eq!(
-                parse("(1+2)*(3+4)").node,
-                Node::Program(vec![
-                    Node::BinaryExpression(
-                        Box::new(Node::BinaryExpression(
-                            Box::new(Node::Number(1f64)),
+                parse("(1+2)*(3+4)").program,
+                Node::program(vec![
+                    Node::binary_expression(
+                        Node::binary_expression(
+                            Node::number_literal((0, 1), 1f64),
                             PunctuationKind::Plus,
-                            Box::new(Node::Number(2f64)),
-                        )),
+                            Node::number_literal((0, 3), 2f64),
+                        ),
                         PunctuationKind::Asterisk,
-                        Box::new(Node::BinaryExpression(
-                            Box::new(Node::Number(3f64)),
+                        Node::binary_expression(
+                            Node::number_literal((0, 7), 3f64),
                             PunctuationKind::Plus,
-                            Box::new(Node::Number(4f64)),
-                        )),
+                            Node::number_literal((0, 9), 4f64),
+                        ),
                     )
                 ])
             );
@@ -2001,12 +2022,12 @@ mod tests {
         #[test]
         fn nested_parens() {
             assert_eq!(
-                parse("((1+((2))))").node,
-                Node::Program(vec![
-                    Node::BinaryExpression(
-                        Box::new(Node::Number(1f64)),
+                parse("((1+((2))))").program,
+                Node::program(vec![
+                    Node::binary_expression(
+                        Node::number_literal((0, 2), 1f64),
                         PunctuationKind::Plus,
-                        Box::new(Node::Number(2f64)),
+                        Node::number_literal((0, 6), 2f64),
                     ),
                 ])
             );
@@ -2017,67 +2038,34 @@ mod tests {
             assert_eq!(
                 parse("(1+2").errors,
                 vec![
-                    Error::unexpected_token(Position::new(0, 4), ")")
+                    Error::unexpected_token((0, 4), ")")
                 ]
             );
         }
     }
 
-    mod range_iterator {
-        use crate::node::Node;
+    mod object_literal {
+        use crate::ast::node::Node;
+        use crate::ast::type_expression::TypeExpression;
         use crate::parser::parse;
         use crate::punctuation_kind::PunctuationKind;
 
         #[test]
-        fn range_iterator() {
-            assert_eq!(
-                parse("for(x in 0 to 10) 1").node,
-                Node::Program(vec![
-                    Node::for_statement(
-                        "x".to_string(),
-                        Node::RangeIterator(
-                            Box::new(Node::Number(0f64)),
-                            Box::new(Node::Number(10f64)),
-                        ),
-                        Node::Number(1f64),
-                    ),
-                ])
-            );
-        }
-
-        #[test]
-        fn complex_expression() {
-            assert_eq!(
-                parse("for(x in y to 1+2) 1").node,
-                Node::Program(vec![
-                    Node::for_statement(
-                        "x".to_string(),
-                        Node::RangeIterator(
-                            Box::new(Node::Identifier("y".to_string())),
-                            Box::new(Node::BinaryExpression(
-                                Box::new(Node::Number(1f64)),
-                                PunctuationKind::Plus,
-                                Box::new(Node::Number(2f64)),
-                            )),
-                        ),
-                        Node::Number(1f64),
-                    ),
-                ])
-            );
-        }
-    }
-
-    mod object_literal {
-        use crate::node::{Node, Parameter, StructDeclarationNode, StructPropertyDeclaration, TypeExpression};
-        use crate::parser::parse;
-
-        #[test]
         fn empty_object() {
             assert_eq!(
-                parse("struct Obj(); Obj()").node,
-                Node::Program(vec![
-                    Node::StructDeclaration(StructDeclarationNode::new("Obj".to_string(), vec![], vec![], vec![], )),
-                    Node::CallExpression(Box::new(Node::Identifier("Obj".to_string())), vec![]),
+                parse("struct Obj(); Obj()").program,
+                Node::program(vec![
+                    Node::struct_declaration_node(
+                        Node::identifier((0, 7), "Obj"),
+                        vec![],
+                        vec![],
+                        vec![],
+                        (0, 0),
+                    ),
+                    Node::call_expression_node(
+                        Node::identifier((0, 14), "Obj"),
+                        vec![],
+                    ),
                 ])
             );
         }
@@ -2085,28 +2073,35 @@ mod tests {
         #[test]
         fn object_having_properties() {
             assert_eq!(
-                parse("struct Obj(x: number, y: string); Obj(x=1, y=\"hello\")").node,
-                Node::Program(vec![
-                    Node::StructDeclaration(StructDeclarationNode::new(
-                        "Obj".to_string(),
+                parse("struct Obj(x: number, y: string); Obj(x=1, y=\"hello\")").program,
+                Node::program(vec![
+                    Node::struct_declaration_node(
+                        Node::identifier((0, 7), "Obj"),
                         vec![
-                            StructPropertyDeclaration {
-                                name: "x".to_string(),
-                                type_: TypeExpression::Identifier("number".to_string()),
-                            },
-                            StructPropertyDeclaration {
-                                name: "y".to_string(),
-                                type_: TypeExpression::Identifier("string".to_string()),
-                            },
+                            Node::property_declaration(
+                                Node::identifier((0, 11), "x"),
+                                TypeExpression::identifier("number"),
+                            ),
+                            Node::property_declaration(
+                                Node::identifier((0, 22), "y"),
+                                TypeExpression::identifier("string"),
+                            ),
                         ],
                         vec![],
                         vec![],
-                    )),
-                    Node::CallExpression(
-                        Box::new(Node::Identifier("Obj".to_string())),
+                        (0, 0),
+                    ),
+                    Node::call_expression_node(
+                        Node::identifier((0, 34), "Obj"),
                         vec![
-                            Parameter::new(Some("x".to_string()), Node::Number(1f64)),
-                            Parameter::new(Some("y".to_string()), Node::String("hello".to_string())),
+                            Node::parameter(
+                                Some(Node::identifier((0, 38), "x")),
+                                Node::number_literal((0, 40), 1f64),
+                            ),
+                            Node::parameter(
+                                Some(Node::identifier((0, 43), "y")),
+                                Node::string_literal((0, 45), "hello"),
+                            ),
                         ],
                     ),
                 ])
@@ -2120,52 +2115,54 @@ mod tests {
                     struct Obj1(x: Obj2, z: string)
                     struct Obj2(y: number)
                     Obj1(x=Obj2(y=1), z=\"hello\")
-                ").node,
-                Node::Program(vec![
-                    Node::StructDeclaration(StructDeclarationNode::new(
-                        "Obj1".to_string(),
+                ").program,
+                Node::program(vec![
+                    Node::struct_declaration_node(
+                        Node::identifier((1, 27), "Obj1"),
                         vec![
-                            StructPropertyDeclaration {
-                                name: "x".to_string(),
-                                type_: TypeExpression::Identifier("Obj2".to_string()),
-                            },
-                            StructPropertyDeclaration {
-                                name: "z".to_string(),
-                                type_: TypeExpression::Identifier("string".to_string()),
-                            },
+                            Node::property_declaration(
+                                Node::identifier((1, 32), "x"),
+                                TypeExpression::identifier("Obj2"),
+                            ),
+                            Node::property_declaration(
+                                Node::identifier((1, 41), "z"),
+                                TypeExpression::identifier("string"),
+                            ),
                         ],
                         vec![],
                         vec![],
-                    )),
-                    Node::StructDeclaration(StructDeclarationNode::new(
-                        "Obj2".to_string(),
+                        (1, 20),
+                    ),
+                    Node::struct_declaration_node(
+                        Node::identifier((2, 27), "Obj2"),
                         vec![
-                            StructPropertyDeclaration {
-                                name: "y".to_string(),
-                                type_: TypeExpression::Identifier("number".to_string()),
-                            },
+                            Node::property_declaration(
+                                Node::identifier((2, 32), "y"),
+                                TypeExpression::identifier("number"),
+                            ),
                         ],
                         vec![],
                         vec![],
-                    )),
-                    Node::CallExpression(
-                        Box::new(Node::Identifier("Obj1".to_string())),
+                        (2, 20),
+                    ),
+                    Node::call_expression_node(
+                        Node::identifier((3, 20), "Obj1"),
                         vec![
-                            Parameter::new(
-                                Some("x".to_string()),
-                                Node::CallExpression(
-                                    Box::new(Node::Identifier("Obj2".to_string())),
+                            Node::parameter(
+                                Some(Node::identifier((3, 25), "x")),
+                                Node::call_expression(
+                                    Node::identifier((3, 27), "Obj2"),
                                     vec![
-                                        Parameter::new(
-                                            Some("y".to_string()),
-                                            Node::Number(1f64)
+                                        Node::parameter(
+                                            Some(Node::identifier((3, 32), "y")),
+                                            Node::number_literal((3, 34), 1f64),
                                         ),
                                     ],
                                 ),
                             ),
-                            Parameter::new(
-                                Some("z".to_string()),
-                                Node::String("hello".to_string()),
+                            Node::parameter(
+                                Some(Node::identifier((3, 38), "z")),
+                                Node::string_literal((3, 40), "hello"),
                             ),
                         ]
                     ),
@@ -2176,30 +2173,32 @@ mod tests {
         #[test]
         fn assign_object_into_variable() {
             assert_eq!(
-                parse("struct Obj(y: number); x = Obj(y=1)").node,
-                Node::Program(vec![
-                    Node::StructDeclaration(StructDeclarationNode::new(
-                        "Obj".to_string(),
+                parse("struct Obj(y: number); x = Obj(y=1)").program,
+                Node::program(vec![
+                    Node::struct_declaration_node(
+                        Node::identifier((0, 7), "Obj"),
                         vec![
-                            StructPropertyDeclaration {
-                                name: "y".to_string(),
-                                type_: TypeExpression::Identifier("number".to_string()),
-                            },
+                            Node::property_declaration(
+                                Node::identifier((0, 11), "y"),
+                                TypeExpression::identifier("number"),
+                            ),
                         ],
                         vec![],
                         vec![],
-                    )),
-                    Node::AssignmentExpression(
-                        Box::new(Node::Identifier("x".to_string())),
-                        Box::new(Node::CallExpression(
-                            Box::new(Node::Identifier("Obj".to_string())),
+                        (0, 0),
+                    ),
+                    Node::binary_expression_node(
+                        Node::identifier((0, 23), "x"),
+                        PunctuationKind::Equal,
+                        Node::call_expression(
+                            Node::identifier((0, 27), "Obj"),
                             vec![
-                                Parameter::new(
-                                    Some("y".to_string()),
-                                    Node::Number(1f64),
+                                Node::parameter(
+                                    Some(Node::identifier((0, 31), "y")),
+                                    Node::number_literal((0, 33), 1f64),
                                 ),
                             ]
-                        )),
+                        ),
                     ),
                 ])
             );
@@ -2207,22 +2206,24 @@ mod tests {
     }
 
     mod union_type {
-        use crate::node::{Node, TypeExpression};
+        use crate::ast::node::Node;
+        use crate::ast::type_expression::TypeExpression;
         use crate::parser::parse;
 
         #[test]
         fn union_type() {
             assert_eq!(
-                parse("let x:T|U|V").node,
-                Node::Program(vec![
-                    Node::VariableDeclaration(
-                        "x".to_string(),
-                        Some(TypeExpression::Union(vec![
-                            TypeExpression::Identifier("T".to_string()),
-                            TypeExpression::Identifier("U".to_string()),
-                            TypeExpression::Identifier("V".to_string()),
+                parse("let x:T|U|V").program,
+                Node::program(vec![
+                    Node::variable_declaration(
+                        (0, 0),
+                        Node::identifier((0, 4), "x"),
+                        Some(TypeExpression::union(vec![
+                            TypeExpression::identifier("T"),
+                            TypeExpression::identifier("U"),
+                            TypeExpression::identifier("V"),
                         ])),
-                        None,
+                        None::<Node>,
                     ),
                 ])
             );
@@ -2231,18 +2232,19 @@ mod tests {
         #[test]
         fn wrapped_type() {
             assert_eq!(
-                parse("let x:(T|U)|V").node,
-                Node::Program(vec![
-                    Node::VariableDeclaration(
-                        "x".to_string(),
-                        Some(TypeExpression::Union(vec![
-                            TypeExpression::Union(vec![
-                                TypeExpression::Identifier("T".to_string()),
-                                TypeExpression::Identifier("U".to_string()),
+                parse("let x:(T|U)|V").program,
+                Node::program(vec![
+                    Node::variable_declaration(
+                        (0, 0),
+                        Node::identifier((0, 4), "x"),
+                        Some(TypeExpression::union(vec![
+                            TypeExpression::union(vec![
+                                TypeExpression::identifier("T"),
+                                TypeExpression::identifier("U"),
                             ]),
-                            TypeExpression::Identifier("V".to_string())
+                            TypeExpression::identifier("V")
                         ])),
-                        None,
+                        None::<Node>,
                     ),
                 ])
             );
@@ -2251,17 +2253,18 @@ mod tests {
         #[test]
         fn with_optional() {
             assert_eq!(
-                parse("let x:T|U?").node,
-                Node::Program(vec![
-                    Node::VariableDeclaration(
-                        "x".to_string(),
-                        Some(TypeExpression::Union(vec![
-                            TypeExpression::Identifier("T".to_string()),
-                            TypeExpression::Optional(
-                                Box::new(TypeExpression::Identifier("U".to_string()))
+                parse("let x:T|U?").program,
+                Node::program(vec![
+                    Node::variable_declaration(
+                        (0, 0),
+                        Node::identifier((0, 4), "x"),
+                        Some(TypeExpression::union(vec![
+                            TypeExpression::identifier("T"),
+                            TypeExpression::optional(
+                                TypeExpression::identifier("U")
                             ),
                         ])),
-                        None,
+                        None::<Node>,
                     ),
                 ])
             );
@@ -2269,20 +2272,22 @@ mod tests {
     }
 
     mod optional_type {
-        use crate::node::{Node, TypeExpression};
+        use crate::ast::node::Node;
+        use crate::ast::type_expression::TypeExpression;
         use crate::parser::parse;
 
         #[test]
         fn optional_type() {
             assert_eq!(
-                parse("let x:T?").node,
-                Node::Program(vec![
-                    Node::VariableDeclaration(
-                        "x".to_string(),
-                        Some(TypeExpression::Optional(
-                            Box::new(TypeExpression::Identifier("T".to_string()))
+                parse("let x:T?").program,
+                Node::program(vec![
+                    Node::variable_declaration(
+                        (0, 0),
+                        Node::identifier((0, 4), "x"),
+                        Some(TypeExpression::optional(
+                            TypeExpression::identifier("T")
                         )),
-                        None,
+                        None::<Node>,
                     ),
                 ])
             );
@@ -2291,14 +2296,15 @@ mod tests {
         #[test]
         fn optional_of_wrapped_type() {
             assert_eq!(
-                parse("let x:(T)?").node,
-                Node::Program(vec![
-                    Node::VariableDeclaration(
-                        "x".to_string(),
-                        Some(TypeExpression::Optional(
-                            Box::new(TypeExpression::Identifier("T".to_string()))
+                parse("let x:(T)?").program,
+                Node::program(vec![
+                    Node::variable_declaration(
+                        (0, 0),
+                        Node::identifier((0, 4), "x"),
+                        Some(TypeExpression::optional(
+                            TypeExpression::identifier("T")
                         )),
-                        None,
+                        None::<Node>,
                     ),
                 ])
             );
@@ -2306,18 +2312,20 @@ mod tests {
     }
 
     mod primary_type {
-        use crate::node::{Node, TypeExpression};
+        use crate::ast::node::Node;
+        use crate::ast::type_expression::TypeExpression;
         use crate::parser::parse;
 
         #[test]
         fn type_identifier() {
             assert_eq!(
-                parse("let x:T").node,
-                Node::Program(vec![
-                    Node::VariableDeclaration(
-                        "x".to_string(),
-                        Some(TypeExpression::Identifier("T".to_string())),
-                        None,
+                parse("let x:T").program,
+                Node::program(vec![
+                    Node::variable_declaration(
+                        (0, 0),
+                        Node::identifier((0, 4), "x"),
+                        Some(TypeExpression::identifier("T")),
+                        None::<Node>,
                     ),
                 ])
             );
@@ -2326,12 +2334,13 @@ mod tests {
         #[test]
         fn type_wrapped_by_paren() {
             assert_eq!(
-                parse("let x:(T)").node,
-                Node::Program(vec![
-                    Node::VariableDeclaration(
-                        "x".to_string(),
-                        Some(TypeExpression::Identifier("T".to_string())),
-                        None,
+                parse("let x:(T)").program,
+                Node::program(vec![
+                    Node::variable_declaration(
+                        (0, 0),
+                        Node::identifier((0, 4), "x"),
+                        Some(TypeExpression::identifier("T")),
+                        None::<Node>,
                     ),
                 ])
             );

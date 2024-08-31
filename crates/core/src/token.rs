@@ -2,78 +2,104 @@ use crate::position::Position;
 use crate::punctuation_kind::PunctuationKind;
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct Token {
-    pub kind: TokenKind,
-    pub position: Position,
-    pub text: String,
+pub enum Token {
+    Number(NumberToken),
+    Bool(BoolToken),
+    String(StringToken),
+    Identifier(IdentifierToken),
+    Punctuation(PunctuationToken),
+    LineTerminator(LineTerminatorToken),
+    EndOfInput(EndOfInputToken),
 }
 
 impl Token {
-    pub fn number(line: usize, column: usize, value: f64, text: impl Into<String>) -> Token {
-        Token {
-            kind: TokenKind::Number(value),
-            position: Position::new(line, column),
-            text: text.into(),
+    pub fn position(&self) -> &Position {
+        match self {
+            Token::Number(token) => &token.position,
+            Token::Bool(token) => &token.position,
+            Token::String(token) => &token.position,
+            Token::Identifier(token) => &token.position,
+            Token::Punctuation(token) => &token.position,
+            Token::LineTerminator(token) => &token.position,
+            Token::EndOfInput(token) => &token.position,
         }
     }
 
-    pub fn bool(line: usize, column: usize, value: bool, text: impl Into<String>) -> Token {
-        Token {
-            kind: TokenKind::Bool(value),
-            position: Position::new(line, column),
-            text: text.into(),
-        }
+    #[inline(always)]
+    pub fn number(position: impl Into<Position>, text: impl Into<String>, value: f64) -> Token {
+        Token::Number(NumberToken { position: position.into(), text: text.into(), value })
     }
 
-    pub fn string(line: usize, column: usize, value: impl Into<String>, text: impl Into<String>) -> Token {
-        Token {
-            kind: TokenKind::String(value.into()),
-            position: Position::new(line, column),
-            text: text.into(),
-        }
+    #[inline(always)]
+    pub fn bool(position: impl Into<Position>, text: impl Into<String>, value: bool) -> Token {
+        Token::Bool(BoolToken { position: position.into(), text: text.into(), value })
     }
 
-    pub fn identifier(line: usize, column: usize, value: impl Into<String>) -> Token {
-        let value = value.into();
-        Token {
-            kind: TokenKind::Identifier(value.clone()),
-            position: Position::new(line, column),
-            text: value,
-        }
+    #[inline(always)]
+    pub fn string(position: impl Into<Position>, text: impl Into<String>, value: impl Into<String>) -> Token {
+        Token::String(StringToken { position: position.into(), text: text.into(), value: value.into() })
     }
 
-    pub fn punctuation(line: usize, column: usize, value: PunctuationKind, text: impl Into<String>) -> Token {
-        Token {
-            kind: TokenKind::Punctuation(value),
-            position: Position::new(line, column),
-            text: text.into(),
-        }
+    #[inline(always)]
+    pub fn identifier(position: impl Into<Position>, text: impl Into<String>) -> Token {
+        Token::Identifier(IdentifierToken { position: position.into(), text: text.into() })
     }
 
-    pub fn line_terminator(line: usize, column: usize) -> Token {
-        Token {
-            kind: TokenKind::LineTerminator,
-            position: Position::new(line, column),
-            text: "\n".to_string(),
-        }
+    #[inline(always)]
+    pub fn punctuation(position: impl Into<Position>, value: PunctuationKind) -> Token {
+        Token::Punctuation(PunctuationToken { position: position.into(), value })
     }
-    
-    pub fn end_of_input(line: usize, column: usize) -> Token {
-        Token {
-            kind: TokenKind::EndOfInput,
-            position: Position::new(line, column),
-            text: "".to_string(),
-        }
+
+    #[inline(always)]
+    pub fn line_terminator(position: impl Into<Position>) -> Token {
+        Token::LineTerminator(LineTerminatorToken { position: position.into() })
+    }
+
+    #[inline(always)]
+    pub fn end_of_input(position: impl Into<Position>) -> Token {
+        Token::EndOfInput(EndOfInputToken { position: position.into() })
     }
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum TokenKind {
-    Number(f64),
-    Bool(bool),
-    String(String),
-    Identifier(String),
-    Punctuation(PunctuationKind),
-    LineTerminator,
-    EndOfInput,
+pub struct NumberToken {
+    pub position: Position,
+    pub text: String,
+    pub value: f64,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct BoolToken {
+    pub position: Position,
+    pub text: String,
+    pub value: bool,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct StringToken {
+    pub position: Position,
+    pub text: String,
+    pub value: String,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct IdentifierToken {
+    pub position: Position,
+    pub text: String,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct PunctuationToken {
+    pub position: Position,
+    pub value: PunctuationKind,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct LineTerminatorToken {
+    pub position: Position,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct EndOfInputToken {
+    pub position: Position,
 }

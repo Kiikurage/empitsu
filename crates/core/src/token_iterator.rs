@@ -1,7 +1,7 @@
 use crate::error::Error;
 use crate::lexer::scan;
 use crate::position::Position;
-use crate::token::{Token, TokenKind};
+use crate::token::Token;
 
 pub struct TokenIterator {
     tokens: Vec<Result<Token, Error>>,
@@ -19,7 +19,7 @@ impl TokenIterator {
     }
 
     pub fn next(&mut self) -> &Result<Token, Error> {
-        while let Ok(Token { kind: TokenKind::LineTerminator, .. }) = self.raw_peek() {
+        while let Ok(Token::LineTerminator(..)) = self.raw_peek() {
             self.raw_next();
         }
         self.raw_next()
@@ -28,13 +28,13 @@ impl TokenIterator {
     pub fn raw_next(&mut self) -> &Result<Token, Error> {
         // Safe to unwrap because EndOfInput token must be present
         let ret = self.tokens.get(self.raw_offset).unwrap();
-        if !matches!(ret, Ok(Token { kind: TokenKind::EndOfInput, .. })) {
+        if !matches!(ret, Ok(Token::EndOfInput(..))) {
             self.raw_offset += 1;
         }
 
         let position = match ret {
-            Ok(token) => &token.position,
-            Err(error) => &error.position,
+            Ok(token) => &token.position(),
+            Err(error) => &error.position(),
         };
         self.last_position.line = position.line;
         self.last_position.column = position.column;
@@ -43,12 +43,12 @@ impl TokenIterator {
     }
 
     pub fn has_next(&mut self) -> bool {
-        !matches!(self.peek(), Ok(Token { kind: TokenKind::EndOfInput, .. }))
+        !matches!(self.peek(), Ok(Token::EndOfInput(..)))
     }
 
     pub fn peek(&mut self) -> &Result<Token, Error> {
         let mut offset = self.raw_offset;
-        while let Some(Ok(Token { kind: TokenKind::LineTerminator, .. })) = self.tokens.get(offset) {
+        while let Some(Ok(Token::LineTerminator(..))) = self.tokens.get(offset) {
             offset += 1;
         }
 
@@ -60,11 +60,11 @@ impl TokenIterator {
         // Safe to unwrap because EndOfInput token must be present
         self.tokens.get(self.raw_offset).unwrap()
     }
-    
-    pub fn get_position(&mut self) -> &Position {
+
+    pub fn position(&mut self) -> &Position {
         match self.raw_peek() {
-            Ok(ref token) => &token.position,
-            Err(ref err) => &err.position
+            Ok(ref token) => &token.position(),
+            Err(ref err) => &err.position()
         }
     }
 }
@@ -79,35 +79,35 @@ mod test {
     fn next() {
         let mut iter = TokenIterator::new("a\nb\nc");
 
-        assert_eq!(iter.next(), &Ok(Token::identifier(0, 0, "a")));
-        assert_eq!(iter.next(), &Ok(Token::identifier(1, 0, "b")));
-        assert_eq!(iter.next(), &Ok(Token::identifier(2, 0, "c")));
-        assert_eq!(iter.next(), &Ok(Token::end_of_input(2, 1)));
-        assert_eq!(iter.next(), &Ok(Token::end_of_input(2, 1)));
+        assert_eq!(iter.next(), &Ok(Token::identifier((0, 0), "a")));
+        assert_eq!(iter.next(), &Ok(Token::identifier((1, 0), "b")));
+        assert_eq!(iter.next(), &Ok(Token::identifier((2, 0), "c")));
+        assert_eq!(iter.next(), &Ok(Token::end_of_input((2, 1))));
+        assert_eq!(iter.next(), &Ok(Token::end_of_input((2, 1))));
     }
 
     #[test]
     fn raw_next() {
         let mut iter = TokenIterator::new("a\nb\nc");
 
-        assert_eq!(iter.raw_next(), &Ok(Token::identifier(0, 0, "a")));
-        assert_eq!(iter.raw_next(), &Ok(Token::line_terminator(0, 1)));
-        assert_eq!(iter.raw_next(), &Ok(Token::identifier(1, 0, "b")));
-        assert_eq!(iter.raw_next(), &Ok(Token::line_terminator(1, 1)));
-        assert_eq!(iter.raw_next(), &Ok(Token::identifier(2, 0, "c")));
-        assert_eq!(iter.next(), &Ok(Token::end_of_input(2, 1)));
-        assert_eq!(iter.next(), &Ok(Token::end_of_input(2, 1)));
+        assert_eq!(iter.raw_next(), &Ok(Token::identifier((0, 0), "a")));
+        assert_eq!(iter.raw_next(), &Ok(Token::line_terminator((0, 1))));
+        assert_eq!(iter.raw_next(), &Ok(Token::identifier((1, 0), "b")));
+        assert_eq!(iter.raw_next(), &Ok(Token::line_terminator((1, 1))));
+        assert_eq!(iter.raw_next(), &Ok(Token::identifier((2, 0), "c")));
+        assert_eq!(iter.next(), &Ok(Token::end_of_input((2, 1))));
+        assert_eq!(iter.next(), &Ok(Token::end_of_input((2, 1))));
     }
 
     #[test]
     fn mix_next() {
         let mut iter = TokenIterator::new("a\nb\nc");
 
-        assert_eq!(iter.raw_next(), &Ok(Token::identifier(0, 0, "a")));
-        assert_eq!(iter.next(), &Ok(Token::identifier(1, 0, "b")));
-        assert_eq!(iter.next(), &Ok(Token::identifier(2, 0, "c")));
-        assert_eq!(iter.raw_next(), &Ok(Token::end_of_input(2, 1)));
-        assert_eq!(iter.next(), &Ok(Token::end_of_input(2, 1)));
+        assert_eq!(iter.raw_next(), &Ok(Token::identifier((0, 0), "a")));
+        assert_eq!(iter.next(), &Ok(Token::identifier((1, 0), "b")));
+        assert_eq!(iter.next(), &Ok(Token::identifier((2, 0), "c")));
+        assert_eq!(iter.raw_next(), &Ok(Token::end_of_input((2, 1))));
+        assert_eq!(iter.next(), &Ok(Token::end_of_input((2, 1))));
     }
 
     #[test]

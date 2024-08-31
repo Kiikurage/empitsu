@@ -1,38 +1,69 @@
-use crate::node::Node;
-use crate::punctuation_kind::PunctuationKind;
-use std::collections::HashMap;
-use std::ops::Deref;
+use crate::ast::node::Node;
+use crate::ast::program::Program;
+use crate::ast::traits::GetPosition;
+use crate::ast::type_expression::TypeExpression;
 use crate::bytecode::ByteCode;
+use crate::error::Error;
+use crate::punctuation_kind::PunctuationKind;
+use crate::util::AsU8Slice;
+use std::collections::{HashMap, HashSet};
+use std::ops::Deref;
+
+enum PrimitiveType {
+    Number,
+    Bool,
+}
+
+impl PrimitiveType {
+    fn size(&self) -> usize {
+        match self {
+            PrimitiveType::Number => size_of::<f64>(),
+            PrimitiveType::Bool => size_of::<bool>(),
+        }
+    }
+}
+
+struct Variable {
+    offset: usize,
+    type_: PrimitiveType,
+}
 
 struct StackFrame {
     stack_offset: usize,
+    stack_size: usize,
+
+    /// Instruction pointer of the start of this frame
     ip_start: usize,
 
     /// If this frame is breakable (i.e. frame made by for-loop)
     breakable: bool,
 
     /// Maps of variable names to their stack index in each scope
-    variables: HashMap<String, usize>,
+    variables: HashMap<String, Variable>,
 
     /// List of instruction pointer that requires to be patched with ip_end
     patch_ips: Vec<usize>,
+
+    /// Variables initialized in this scope
+    initialized: HashSet<String>,
 }
 
 impl StackFrame {
     fn new(offset: usize, breakable: bool) -> Self {
         Self {
             stack_offset: offset,
+            stack_size: 0,
             variables: HashMap::new(),
             breakable,
             ip_start: 0usize,
             patch_ips: vec![],
+            initialized: HashSet::new(),
         }
     }
 }
 
 struct CodeGenerator {
-    codes: Vec<ByteCode>,
-
+    codes: Vec<u8>,
     frames: Vec<StackFrame>,
 }
 
@@ -44,275 +75,366 @@ impl CodeGenerator {
         }
     }
 
-    fn generate_node(&mut self, node: &Node) {
+    fn patch_address(&mut self, ip: usize) {
+        let address = self.codes.len();
+        self.codes[ip..ip + size_of::<usize>()].copy_from_slice(address.as_u8_slice());
+    }
+
+    fn generate_node(&mut self, node: &Node) -> Result<(), Error> {
         match node {
-            Node::Program(nodes) => {
-                self.generate_nodes(nodes);
-            }
-            Node::IfStatement(condition, true_branch, false_branch) => {
-                self.generate_node(condition);
-
-                let ip_conditional_jump = self.codes.len();
-                self.write(ByteCode::JumpIfZero(/*dummy*/ 0));
-
-                self.generate_node(true_branch);
-
-                let ip_after_true_branch = self.codes.len();
-                if false_branch.is_some() {
-                    self.write(ByteCode::Jump(/*dummy*/ 0));
-                }
-                self.codes[ip_conditional_jump] = ByteCode::JumpIfZero(self.codes.len());
-
-                if let Some(false_branch) = false_branch {
-                    self.generate_node(false_branch);
-                    self.codes[ip_after_true_branch] = ByteCode::Jump(self.codes.len());
+            Node::ProgramNode(program) => {
+                for statement in program.statements.iter() {
+                    self.generate_node(statement)?;
                 }
             }
-            Node::EmptyStatement => {}
-            Node::ForStatement(for_) => {
-                self.enter_scope(true);
+            Node::IfStatementNode(if_statement) => {
+                self.generate_node(&if_statement.condition)?;
+                let ip_conditional_jump = self.write_jump_if_false(/*dummy*/ 0);
 
-                // initializer
-                self.write(ByteCode::Constant(0.0));
-                self.declare_variable(for_.variable.clone());
+                self.generate_node(&if_statement.true_branch)?;
 
-                // condition
-                let ip_condition_start = self.codes.len();
-                self.load(&for_.variable);
-                self.write(ByteCode::Constant(5.0));
-                self.write(ByteCode::LessThan);
-                let ip_conditional_jump = self.codes.len();
-                self.write(ByteCode::JumpIfZero(/*dummy*/ 0));
-
-                // body
-                self.generate_node(&for_.body);
-
-                // update
-                self.load(&for_.variable);
-                self.write(ByteCode::Constant(1.0));
-                self.write(ByteCode::Add);
-                self.store(&for_.variable);
-
-                // loop
-                self.write(ByteCode::Jump(ip_condition_start));
-                let ip_after_loop = self.codes.len();
-
-                self.codes[ip_conditional_jump] = ByteCode::JumpIfZero(ip_after_loop);
-                self.exit_scope();
-            }
-            Node::VariableDeclaration(name, _type, initializer) => {
-                match initializer {
-                    Some(initializer) => {
-                        self.declare_variable(name.clone());
-                        self.generate_node(initializer);
+                match &if_statement.false_branch {
+                    Some(false_branch) => {
+                        let ip_after_true_branch = self.write_jump(/*dummy*/ 0);
+                        self.patch_address(ip_conditional_jump);
+                        self.generate_node(false_branch)?;
+                        self.patch_address(ip_after_true_branch);
                     }
                     None => {
-                        // Use usize::MAX as a marker of "uninitialized" value
-                        self.declare_uninitialized_variable(name.clone());
+                        self.patch_address(ip_conditional_jump);
                     }
                 }
             }
-            Node::FunctionDeclaration(_) => unimplemented!("FunctionDeclaration"),
-            Node::StructDeclaration(_) => unimplemented!("StructDeclaration"),
-            Node::InterfaceDeclaration(_) => unimplemented!("InterfaceDeclaration"),
-            Node::ImplStatement(_) => unimplemented!("ImplStatement"),
-            Node::ReturnExpression(_) => unimplemented!("ReturnExpression"),
-            Node::BreakExpression => {
-                let ip_break = self.codes.len();
-                self.write(ByteCode::Jump(/*dummy*/ 0));
-                self.register_break_to_patch(ip_break);
-            }
-            Node::FunctionExpression(_) => unimplemented!("FunctionExpression"),
-            Node::IfExpression(condition, true_branch, false_branch) => {
-                self.generate_node(condition);
+            Node::ForStatementNode(for_) => {
+                self.enter_scope(true);
+                {
+                    // initializer
+                    self.write_constant_number(0.0);
+                    self.declare_variable(for_.variable.name.clone(), PrimitiveType::Number, true);
 
-                let ip_conditional_jump = self.codes.len();
-                self.write(ByteCode::JumpIfZero(/*dummy*/ 0));
+                    // condition
+                    let ip_condition_start = self.codes.len();
+                    self.enter_scope(true);
+                    {
+                        match self.load(&for_.variable.name) {
+                            Ok(()) => (),
+                            Err(message) => return Err(Error::syntax_error(for_.position.clone(), message)),
+                        }
+                        self.write_constant_number(5.0);
+                        self.write_code(ByteCode::LessThan);
+                        let ip_conditional_jump = self.write_jump_if_false(/*dummy*/ 0);
 
-                self.generate_node(true_branch);
+                        // body
+                        self.generate_node(&for_.body)?;
 
-                let ip_after_true_branch = self.codes.len();
-                self.write(ByteCode::Jump(/*dummy*/ 0));
+                        // update
+                        match self.load(&for_.variable.name) {
+                            Ok(()) => (),
+                            Err(message) => return Err(Error::syntax_error(for_.position.clone(), message)),
+                        }
+                        self.write_constant_number(1.0);
+                        self.write_code(ByteCode::Add);
+                        match self.store(&for_.variable.name) {
+                            Ok(()) => (),
+                            Err(message) => return Err(Error::syntax_error(for_.position.clone(), message)),
+                        }
 
-                self.codes[ip_conditional_jump] = ByteCode::JumpIfZero(self.codes.len());
-
-                self.generate_node(false_branch);
-
-                self.codes[ip_after_true_branch] = ByteCode::Jump(self.codes.len());
-            }
-            Node::BlockExpression(block) => {
-                self.enter_scope(false);
-                self.generate_nodes(&block.nodes);
+                        // loop
+                        self.write_jump(ip_condition_start);
+                        self.patch_address(ip_conditional_jump);
+                    }
+                    self.exit_scope();
+                }
                 self.exit_scope();
             }
-            Node::AssignmentExpression(lhs, rhs) => {
-                match lhs.deref() {
-                    Node::Identifier(name) => {
-                        self.generate_node(rhs);
-                        self.store(name);
+            Node::VariableDeclarationNode(ref variable_declaration) => {
+                match &variable_declaration.initializer {
+                    Some(initializer) => {
+                        self.generate_node(initializer)?;
+                        self.declare_variable(variable_declaration.name.name.clone(), PrimitiveType::Number, true);
                     }
-                    _ => unimplemented!("AssignmentExpression"),
+                    None => {
+                        match variable_declaration.type_ {
+                            Some(TypeExpression::Identifier(ref name)) => {
+                                match name.as_str() {
+                                    "number" => {
+                                        self.declare_variable(variable_declaration.name.name.clone(), PrimitiveType::Number, false)
+                                    }
+                                    "bool" => {
+                                        self.declare_variable(variable_declaration.name.name.clone(), PrimitiveType::Bool, false)
+                                    }
+                                    _ => return Err(Error::not_implemented(variable_declaration.position.clone(), format!("Unsupported type: {}", name))),
+                                }
+                            }
+                            Some(..) => return Err(Error::not_implemented(variable_declaration.position.clone(), "Only identifier type is supported")),
+                            None => return Err(Error::syntax_error(variable_declaration.position.clone(), "Type or initializer is required for variable declaration")),
+                        };
+                    }
                 }
             }
-            Node::BinaryExpression(lhs, op, rhs) => {
-                self.generate_node(lhs);
-                self.generate_node(rhs);
-                match op {
-                    PunctuationKind::Plus => self.write(ByteCode::Add),
-                    PunctuationKind::Minus => self.write(ByteCode::Subtract),
-                    PunctuationKind::Asterisk => self.write(ByteCode::Multiply),
-                    PunctuationKind::Slash => self.write(ByteCode::Divide),
-                    PunctuationKind::AndAnd => self.write(ByteCode::LogicalAnd),
-                    PunctuationKind::VerticalLineVerticalLine => self.write(ByteCode::LogicalOr),
-                    PunctuationKind::LeftChevron => self.write(ByteCode::LessThan),
-                    PunctuationKind::LeftChevronEqual => self.write(ByteCode::LessThanOrEqual),
-                    PunctuationKind::RightChevron => self.write(ByteCode::GreaterThan),
-                    PunctuationKind::RightChevronEqual => self.write(ByteCode::GreaterThanEqual),
-                    PunctuationKind::EqualEqual => self.write(ByteCode::Equal),
-                    PunctuationKind::ExclamationEqual => self.write(ByteCode::NotEqual),
-                    _ => panic!("Unsupported binary operator: {:?}", op),
+            Node::FunctionDeclarationNode(_) => return Err(Error::not_implemented(node.position().clone(), "FunctionDeclaration")),
+            Node::StructDeclarationNode(_) => return Err(Error::not_implemented(node.position().clone(), "StructDeclaration")),
+            Node::InterfaceDeclarationNode(_) => return Err(Error::not_implemented(node.position().clone(), "InterfaceDeclaration")),
+            Node::ImplStatementNode(_) => return Err(Error::not_implemented(node.position().clone(), "ImplStatement")),
+            Node::ReturnExpressionNode(_) => return Err(Error::not_implemented(node.position().clone(), "ReturnExpression")),
+            Node::BreakExpressionNode(..) => {
+                let ip_break = self.write_jump(/*dummy*/ 0);
+                match self.register_break_to_patch(ip_break) {
+                    Ok(()) => (),
+                    Err(message) => return Err(Error::syntax_error(node.position().clone(), message)),
                 }
             }
-            Node::UnaryExpression(operator, operand) => {
-                self.generate_node(operand);
-                match operator {
+            Node::FunctionExpressionNode(_) => return Err(Error::not_implemented(node.position().clone(), "FunctionExpression")),
+            Node::IfExpressionNode(if_expression) => {
+                self.generate_node(&if_expression.condition)?;
+                let ip_conditional_jump = self.write_jump_if_false(/*dummy*/ 0);
+
+                self.generate_node(&if_expression.true_branch)?;
+                let ip_after_true_branch = self.write_jump(/*dummy*/ 0);
+
+                self.patch_address(ip_conditional_jump);
+                self.generate_node(&if_expression.false_branch)?;
+
+                self.patch_address(ip_after_true_branch);
+            }
+            Node::BlockExpressionNode(block) => {
+                self.enter_scope(false);
+                for node in block.nodes.iter() {
+                    self.generate_node(node)?;
+                }
+                self.exit_scope();
+            }
+            Node::BinaryExpressionNode(expression) => {
+                if matches!(expression.operator, PunctuationKind::Equal) {
+                    match &expression.lhs.deref() {
+                        Node::IdentifierNode(name) => {
+                            self.generate_node(&expression.rhs)?;
+                            match self.store(&name.name) {
+                                Ok(()) => (),
+                                Err(message) => return Err(Error::syntax_error(node.position().clone(), message)),
+                            }
+                        }
+                        _ => return Err(Error::not_implemented(node.position().clone(), "Assign to complex target is not supported")),
+                    }
+                } else {
+                    self.generate_node(&expression.lhs)?;
+                    self.generate_node(&expression.rhs)?;
+                    match &expression.operator {
+                        PunctuationKind::Plus => self.write_code(ByteCode::Add),
+                        PunctuationKind::Minus => self.write_code(ByteCode::Subtract),
+                        PunctuationKind::Asterisk => self.write_code(ByteCode::Multiply),
+                        PunctuationKind::Slash => self.write_code(ByteCode::Divide),
+                        PunctuationKind::AndAnd => self.write_code(ByteCode::LogicalAnd),
+                        PunctuationKind::VerticalLineVerticalLine => self.write_code(ByteCode::LogicalOr),
+                        PunctuationKind::LeftChevron => self.write_code(ByteCode::LessThan),
+                        PunctuationKind::LeftChevronEqual => self.write_code(ByteCode::LessThanOrEqual),
+                        PunctuationKind::RightChevron => self.write_code(ByteCode::GreaterThan),
+                        PunctuationKind::RightChevronEqual => self.write_code(ByteCode::GreaterThanEqual),
+                        PunctuationKind::EqualEqual => self.write_code(ByteCode::Equal),
+                        PunctuationKind::ExclamationEqual => self.write_code(ByteCode::NotEqual),
+                        _ => return Err(Error::not_implemented(
+                            node.position().clone(),
+                            format!("Unsupported binary operator: {:?}", expression.operator),
+                        )),
+                    }
+                }
+            }
+            Node::UnaryExpressionNode(expression) => {
+                self.generate_node(&expression.operand)?;
+                match &expression.operator {
                     PunctuationKind::Plus => (),
-                    PunctuationKind::Minus => self.write(ByteCode::Negative),
-                    PunctuationKind::Exclamation => self.write(ByteCode::LogicalNot),
-                    _ => panic!("Unsupported unary operator: {:?}", operator),
+                    PunctuationKind::Minus => self.write_code(ByteCode::Negative),
+                    PunctuationKind::Exclamation => self.write_code(ByteCode::LogicalNot),
+                    _ => return Err(Error::not_implemented(
+                        node.position().clone(),
+                        format!("Unsupported unary operator: {:?}", expression.operator),
+                    )),
                 }
             }
-            Node::CallExpression(_, _) => unimplemented!("CallExpression"),
-            Node::MemberExpression(_, _) => unimplemented!("MemberExpression"),
-            Node::Identifier(name) => {
-                self.write(ByteCode::Load(self.get_variable_index(name).unwrap()));
-            }
-            Node::Number(value) => {
-                self.write(ByteCode::Constant(*value));
-            }
-            Node::Bool(value) => {
-                self.write(ByteCode::Constant(if *value { 1.0 } else { 0.0 }));
-            }
-            Node::String(..) => unimplemented!("String"),
-            Node::RangeIterator(..) => unimplemented!("RangeIterator"),
-        }
-    }
-
-    fn generate_nodes(&mut self, nodes: &[Node]) {
-        for node in nodes.iter() {
-            self.generate_node(node);
-        }
-    }
-
-    fn write(&mut self, code: ByteCode) {
-        self.codes.push(code);
-    }
-
-    fn get_variable_index(&self, name: &str) -> Option<usize> {
-        for frame in self.frames.iter().rev() {
-            if let Some(index) = frame.variables.get(name) {
-                if index == &usize::MAX {
-                    // uninitialized variable
-                    return Some(usize::MAX);
+            Node::CallExpressionNode(_expression) =>
+                return Err(Error::not_implemented(node.position().clone(), "CallExpression")),
+            Node::MemberExpressionNode(_expression) =>
+                return Err(Error::not_implemented(node.position().clone(), "MemberExpression")),
+            Node::IdentifierNode(name) => {
+                match self.load(&name.name) {
+                    Ok(()) => (),
+                    Err(message) => return Err(Error::syntax_error(node.position().clone(), message)),
                 }
-
-                return Some(frame.stack_offset + index);
+            }
+            Node::NumberLiteralNode(value) => {
+                self.write_constant_number(value.value);
+            }
+            Node::BoolLiteralNode(value) => {
+                self.write_constant_bool(value.value);
+            }
+            Node::StringLiteralNode(..) => {
+                self.allocate();
             }
         }
-        None
+
+        Ok(())
     }
 
-    /// Peek a top value of stack, and store it to the variable
-    fn store(&mut self, name: &str) {
-        if let Some(index) = self.get_variable_index(name) {
-            if index == usize::MAX {
-                self.mark_variable_initialized(name.to_string());
-            } else {
-                self.write(ByteCode::Store(index));
+    fn write_bytes(&mut self, bytes: &[u8]) {
+        self.codes.extend(bytes);
+    }
+
+    fn write_code(&mut self, code: ByteCode) {
+        self.write_bytes(&code.as_u8_slice());
+    }
+
+    fn write_constant_number(&mut self, value: f64) {
+        self.write_code(ByteCode::ConstantNumber);
+        self.write_bytes(&value.as_u8_slice());
+    }
+
+    fn write_constant_bool(&mut self, value: bool) {
+        self.write_code(ByteCode::ConstantBool);
+        self.write_bytes(&value.as_u8_slice());
+    }
+
+    fn write_load_number(&mut self, offset: usize) {
+        self.write_code(ByteCode::LoadNumber);
+        self.write_bytes(&offset.as_u8_slice());
+    }
+
+    fn write_load_bool(&mut self, offset: usize) {
+        self.write_code(ByteCode::LoadBool);
+        self.write_bytes(&offset.as_u8_slice());
+    }
+
+    fn write_store_number(&mut self, offset: usize) {
+        self.write_code(ByteCode::StoreNumber);
+        self.write_bytes(&offset.as_u8_slice());
+    }
+
+    fn write_store_bool(&mut self, offset: usize) {
+        self.write_code(ByteCode::StoreBool);
+        self.write_bytes(&offset.as_u8_slice());
+    }
+
+    fn write_jump(&mut self, address: usize) -> usize {
+        self.write_code(ByteCode::Jump);
+        let ip = self.codes.len();
+        self.write_bytes(&address.as_u8_slice());
+        ip
+    }
+
+    fn write_jump_if_false(&mut self, address: usize) -> usize {
+        self.write_code(ByteCode::JumpIfFalse);
+        let ip = self.codes.len();
+        self.write_bytes(&address.as_u8_slice());
+        ip
+    }
+
+    fn write_flush(&mut self, expected_size: usize) {
+        self.write_code(ByteCode::Flush);
+        self.write_bytes(&expected_size.as_u8_slice());
+    }
+
+    /// Check if the given variable is initialized in the current scope
+    fn initialized(&mut self, name: &String) -> bool {
+        for frame in self.frames.iter_mut().rev() {
+            if frame.initialized.contains(name) {
+                return true;
             }
-            return;
+            if let Some(..) = frame.variables.get_mut(name) {
+                return false;
+            }
         }
-        panic!("Variable {} is not declared", name);
+
+        // Variable is not declared
+        false
+    }
+
+    fn store(&mut self, name: &String) -> Result<(), String> {
+        for frame in self.frames.iter_mut().rev() {
+            if let Some(mut variable) = frame.variables.get_mut(name) {
+                let offset = variable.offset.clone();
+                match variable.type_ {
+                    PrimitiveType::Number => self.write_store_number(offset),
+                    PrimitiveType::Bool => self.write_store_bool(offset),
+                }
+                return Ok(());
+            }
+        }
+
+        Err(format!("Variable {} is not declared", name))
     }
 
     /// Load a value from the variable and push it to the stack
-    fn load(&mut self, name: &str) {
-        if let Some(index) = self.get_variable_index(name) {
-            if index == usize::MAX {
-                panic!("Variable {} is not initialized", name);
-            }
-
-            self.write(ByteCode::Load(index));
-            return;
+    fn load(&mut self, name: &str) -> Result<(), String> {
+        if !self.initialized(&name.to_string()) {
+            return Err(format!("Variable \"{}\" is used before initialized", name));
         }
-        panic!("Variable {} is not declared", name);
+
+        for frame in self.frames.iter_mut().rev() {
+            if let Some(variable) = frame.variables.get(name) {
+                let offset = variable.offset.clone();
+                match variable.type_ {
+                    PrimitiveType::Number => self.write_load_number(offset),
+                    PrimitiveType::Bool => self.write_load_bool(offset),
+                }
+                return Ok(());
+            }
+        }
+
+        Err(format!("Variable {} is not declared", name))
+    }
+
+    fn allocate(&mut self) {
+        self.write_code(ByteCode::Allocate);
+    }
+
+    fn release(&mut self) {
+        self.write_code(ByteCode::Release);
     }
 
     /// Declare a new variable. Current stack top value is used as the initial value.
-    fn declare_variable(&mut self, name: String) {
+    fn declare_variable(&mut self, name: String, type_: PrimitiveType, initialized: bool) {
         let frame = self.frames.last_mut().unwrap();
-        frame.variables.insert(name, frame.variables.len());
-    }
-
-    /// Declare a new variable without incrementing the stack pointer
-    fn declare_uninitialized_variable(&mut self, name: String) {
-        self.frames.last_mut().unwrap().variables.insert(name, usize::MAX);
-    }
-
-    /// Mark a variable as initialized
-    fn mark_variable_initialized(&mut self, name: String) {
-        for frame in self.frames.iter_mut().rev() {
-            if let Some(index) = frame.variables.get(&name) {
-                if index != &usize::MAX {
-                    panic!("Variable {} is already initialized", name);
-                }
-                frame.variables.insert(name, frame.variables.len());
-                return;
-            }
+        let size = type_.size();
+        frame.variables.insert(name.clone(), Variable {
+            offset: frame.stack_offset + frame.stack_size,
+            type_,
+        });
+        frame.stack_size += size;
+        if initialized {
+            frame.initialized.insert(name);
         }
-
-        panic!("Variable {} is not declared", name);
     }
 
     fn enter_scope(&mut self, breakable: bool) {
         let frame = self.frames.last().unwrap();
-        let mut new_frame = StackFrame::new(frame.stack_offset + frame.variables.len(), breakable);
+        let mut new_frame = StackFrame::new(frame.stack_offset + frame.stack_size, breakable);
         new_frame.ip_start = self.codes.len();
         self.frames.push(new_frame);
     }
 
     fn exit_scope(&mut self) {
         let frame = self.frames.pop().unwrap();
-        let ip_end = self.codes.len();
-
         for ip in frame.patch_ips.into_iter() {
-            match self.codes[ip] {
-                ByteCode::Jump(..) => {
-                    self.codes[ip] = ByteCode::Jump(ip_end);
-                }
-                ByteCode::JumpIfZero(..) => {
-                    self.codes[ip] = ByteCode::JumpIfZero(ip_end);
-                }
-                _ => panic!("Invalid patch target"),
-            }
+            self.patch_address(ip);
         }
-
-        self.write(ByteCode::Flush(frame.stack_offset));
+        self.write_flush(frame.stack_offset);
     }
 
-    fn register_break_to_patch(&mut self, ip: usize) {
+    fn register_break_to_patch(&mut self, ip: usize) -> Result<(), String> {
         for frame in self.frames.iter_mut().rev() {
             if frame.breakable {
                 frame.patch_ips.push(ip);
-                return;
+                return Ok(());
             }
         }
-        panic!("Break statement is not inside a loop");
+
+        Err("Break statement is used outside of loop".to_string())
     }
 }
 
-pub fn generate(node: &Node) -> Vec<ByteCode> {
+pub fn generate(program: &Program) -> Result<Vec<u8>, Error> {
     let mut generator = CodeGenerator::new();
-    generator.generate_node(node);
-    generator.codes
+    for node in program.statements.iter() {
+        generator.generate_node(node)?;
+    }
+    Ok(generator.codes)
 }

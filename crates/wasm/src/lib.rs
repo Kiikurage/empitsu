@@ -15,5 +15,8 @@ extern {
 
 #[wasm_bindgen]
 pub fn evaluate(input: &str) -> String {
-    VM::new().eval(input).to_string()
+    match VM::new().eval(input) {
+        Ok(result) => result.to_string(),
+        Err(error) => error.message()
+    }
 }

@@ -6,6 +6,12 @@ pub struct Position {
     pub column: usize,
 }
 
+impl Into<Position> for (usize, usize) {
+    fn into(self) -> Position {
+        Position::new(self.0, self.1)
+    }
+}
+
 impl Position {
     pub fn new(line: usize, column: usize) -> Self {
         Self { line, column }

@@ -27,7 +27,7 @@ pub enum PunctuationKind {
 }
 
 impl PunctuationKind {
-    pub fn get_text(&self) -> &str {
+    pub fn text(&self) -> &str {
         match self {
             PunctuationKind::Plus => "+",
             PunctuationKind::Minus => "-",

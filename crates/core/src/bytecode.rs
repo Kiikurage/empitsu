@@ -1,22 +1,42 @@
-#[derive(Debug, PartialEq)]
+pub type EMNumber = f64;
+pub type EMBool = bool;
+pub type EMRef = usize;
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum ByteCode {
-    /// Push a constant value to the top of the stack
-    Constant(f64),
+    /// Load next X-byte from bytecode and push it to the stack
+    ConstantNumber,
+    ConstantBool,
 
-    /// Flush stack until the given index. Stack top index after this operation will be (given_index - 1).
-    Flush(usize),
+    /// Load next (usize)bytes from bytecode as index, peak X-bytes
+    /// from the given position of stack, and push it to the top of
+    /// stack
+    LoadNumber,
+    LoadBool,
 
-    /// Load a value from the given index of stack and push it to the top
-    Load(usize),
+    /// Load next (usize)bytes from bytecode as index, peak X-bytes
+    /// from the top of stack, and store it to the given position of
+    /// stack
+    StoreNumber,
+    StoreBool,
 
-    /// Store a value from the top of the stack to the given index. Top value is not popped.
-    Store(usize),
+    /// Allocate a new heap entry, and push the ref value to the stack
+    Allocate,
+    /// Pop a reference from the top of stack, and release heap memory
+    /// allocated for the given reference
+    Release,
 
-    /// Jump to the given instruction pointer
-    Jump(usize),
+    /// Load next (usize)bytes from bytecode as index, and jump to
+    /// the given position of IP
+    Jump,
 
-    /// Pop the top value of stack and jump if the value is zero
-    JumpIfZero(usize),
+    /// Pop the top 1byte from stack. If true, load next (usize)bytes
+    /// from bytecode, and jump to the given position of IP
+    JumpIfFalse,
+
+    /// Load next (usize)bytes from bytecode as size, pop stack until
+    /// stack size equals to the given size.
+    Flush,
 
     /// Binary operations
     Add,
