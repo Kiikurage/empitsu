@@ -26,6 +26,11 @@ pub enum ByteCode {
     /// allocated for the given reference
     Release,
 
+    /// Read next 4 bytes from bytecode as index, load literal binary
+    /// of given literal index, store it in heap, and push the ref to
+    /// the stack
+    LoadLiteral,
+
     /// Load next (usize)bytes from bytecode as index, and jump to
     /// the given position of IP
     Jump,

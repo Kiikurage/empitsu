@@ -3,9 +3,17 @@ use crate::code_generator::generate;
 use crate::error::Error;
 use crate::parser::parse;
 use crate::util::{AsU8Slice, ParseAs};
+use std::collections::HashMap;
 use std::fmt::Debug;
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct EMObject {
+    memory: Vec<u8>,
+    type_: String,
+}
+
 pub struct VM {
+    heap: HashMap<usize, EMObject>,
     stack: Vec<u8>,
     ip: usize,
     codes: Vec<u8>,
@@ -13,7 +21,7 @@ pub struct VM {
 
 impl VM {
     pub fn new() -> Self {
-        Self { stack: vec![], ip: 0, codes: vec![] }
+        Self { heap: HashMap::new(), stack: vec![], ip: 0, codes: vec![] }
     }
 
     pub fn eval(&mut self, program: &str) -> Result<&f64, Error> {
@@ -51,10 +59,38 @@ impl VM {
     }
 
     fn eval_codes(&mut self, codes: &[u8]) -> Result<(), Error> {
-        self.ip = 0;
         self.codes = codes.to_vec();
+        self.ip = 0;
 
-        while self.ip < codes.len() {
+        let num_literals = *self.read::<u32>();
+        let mut literal_index = Vec::new();
+        for _ in 0..num_literals {
+            let offset = *self.read::<usize>();
+            let size = *self.read::<usize>();
+            literal_index.push((offset, size));
+        }
+
+        let literal_table_offset = self.ip;
+        let (last_literal_offset, last_literal_size) = literal_index.last().unwrap_or(&(0, 0));
+        for (offset, size) in literal_index.iter() {
+            let binary = codes[literal_table_offset + offset..literal_table_offset + offset + size]
+                .to_vec();
+
+            self.heap.insert(self.heap.len(), EMObject { memory: binary, type_: "Literal".to_string() });
+        }
+
+        let op_code_offset = literal_table_offset + last_literal_offset + last_literal_size;
+
+        self.codes = self.codes[op_code_offset..].to_vec();
+        self.ip = 0;
+
+        self.eval_op_codes()?;
+
+        Ok(())
+    }
+
+    fn eval_op_codes(&mut self) -> Result<(), Error> {
+        while self.ip < self.codes.len() {
             let code = self.read::<ByteCode>();
             match code {
                 ByteCode::ConstantNumber => {
@@ -104,6 +140,11 @@ impl VM {
                         let ip = *self.read::<usize>();
                         self.ip = ip;
                     }
+                }
+                ByteCode::LoadLiteral => {
+                    let index = *self.read::<u32>() as usize;
+                    let ref_ = index;
+                    self.push(ref_);
                 }
                 ByteCode::Flush => {
                     let length = *self.read::<usize>();
@@ -187,6 +228,12 @@ impl VM {
         }
 
         Ok(())
+    }
+
+    fn alloc(&mut self) -> usize {
+        let ref_ = self.heap.len();
+        self.heap.insert(ref_, EMObject { memory: Vec::new(), type_: "Object".to_string() });
+        ref_
     }
 }
 
@@ -404,11 +451,11 @@ mod tests {
         VM::new().eval(r#"
             let x: number
             let y: number
-            
+
             for (i in range) {
                 y = x
             }
-            
+
             y
         "#).expect_err("Reading uninitialized variable should raise an error");
     }
@@ -436,5 +483,18 @@ mod tests {
             "#,
              106.0,
         );
+    }
+
+    #[test]
+    fn string_literal() {
+        let mut vm = VM::new();
+        vm.eval(r#"
+            "Hello"
+            "World"
+        "#).unwrap();
+
+        assert_eq!(vm.heap.len(), 2);
+        println!("heap: {:?}", vm.heap);
+        println!("stack: {:?}", vm.stack);
     }
 }

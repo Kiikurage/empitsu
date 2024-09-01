@@ -223,7 +223,7 @@ fn scan_number(chars: &mut CharIterator) -> Result<Token, Error> {
     }
 
     if digits.is_empty() {
-        Err(Error::syntax_error(position, "invalid number format"))
+        Err(Error::invalid_syntax(position, "invalid number format"))
     } else {
         Ok(Token::number(position, digits.clone(), digits.parse().unwrap()))
     }
@@ -262,7 +262,7 @@ fn scan_identifier(chars: &mut CharIterator) -> Result<Token, Error> {
             identifier_name.push(c);
             chars.next();
         }
-        _ => return Err(Error::syntax_error(position, "Invalid identifier name")),
+        _ => return Err(Error::invalid_syntax(position, "Invalid identifier name")),
     }
 
     while let Some(&c @ ('a'..='z' | 'A'..='Z' | '0'..='9' | '_')) = chars.peek(0) {

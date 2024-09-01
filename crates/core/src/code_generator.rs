@@ -3,6 +3,7 @@ use crate::ast::program::Program;
 use crate::ast::traits::GetPosition;
 use crate::ast::type_expression::TypeExpression;
 use crate::bytecode::ByteCode;
+use crate::checker::check;
 use crate::error::Error;
 use crate::punctuation_kind::PunctuationKind;
 use crate::util::AsU8Slice;
@@ -63,21 +64,55 @@ impl StackFrame {
 }
 
 struct CodeGenerator {
-    codes: Vec<u8>,
+    opcodes: Vec<u8>,
     frames: Vec<StackFrame>,
+    literals: Vec<Vec<u8>>,
 }
+
+///
+/// - 4byte: number of literal in literal tables (N)
+/// - 16byte * N: (offset: usize, length: usize) of each literal.
+///               Offset is from the start of the literal table.
+/// - Literal table: each literal binary
+/// - op codes
+///
 
 impl CodeGenerator {
     fn new() -> Self {
         Self {
-            codes: vec![],
+            literals: vec![],
+            opcodes: vec![],
             frames: vec![StackFrame::new(0, false)],
         }
     }
 
+    pub fn get_codes(&self) -> Vec<u8> {
+        let mut codes = Vec::new();
+
+        codes.extend((self.literals.len() as u32).as_u8_slice());
+        let mut offset = 0;
+
+        for i in 0..self.literals.len() {
+            let binary = &self.literals[i];
+
+            codes.extend(offset.as_u8_slice());
+            codes.extend(binary.len().as_u8_slice());
+
+            offset += binary.len();
+        }
+
+        for i in 0..self.literals.len() {
+            codes.extend(&self.literals[i]);
+        }
+
+        codes.extend(&self.opcodes);
+
+        codes
+    }
+
     fn patch_address(&mut self, ip: usize) {
-        let address = self.codes.len();
-        self.codes[ip..ip + size_of::<usize>()].copy_from_slice(address.as_u8_slice());
+        let address = self.opcodes.len();
+        self.opcodes[ip..ip + size_of::<usize>()].copy_from_slice(address.as_u8_slice());
     }
 
     fn generate_node(&mut self, node: &Node) -> Result<(), Error> {
@@ -113,12 +148,12 @@ impl CodeGenerator {
                     self.declare_variable(for_.variable.name.clone(), PrimitiveType::Number, true);
 
                     // condition
-                    let ip_condition_start = self.codes.len();
+                    let ip_condition_start = self.opcodes.len();
                     self.enter_scope(true);
                     {
                         match self.load(&for_.variable.name) {
                             Ok(()) => (),
-                            Err(message) => return Err(Error::syntax_error(for_.position.clone(), message)),
+                            Err(message) => return Err(Error::invalid_syntax(for_.position.clone(), message)),
                         }
                         self.write_constant_number(5.0);
                         self.write_code(ByteCode::LessThan);
@@ -130,13 +165,13 @@ impl CodeGenerator {
                         // update
                         match self.load(&for_.variable.name) {
                             Ok(()) => (),
-                            Err(message) => return Err(Error::syntax_error(for_.position.clone(), message)),
+                            Err(message) => return Err(Error::invalid_syntax(for_.position.clone(), message)),
                         }
                         self.write_constant_number(1.0);
                         self.write_code(ByteCode::Add);
                         match self.store(&for_.variable.name) {
                             Ok(()) => (),
-                            Err(message) => return Err(Error::syntax_error(for_.position.clone(), message)),
+                            Err(message) => return Err(Error::invalid_syntax(for_.position.clone(), message)),
                         }
 
                         // loop
@@ -167,7 +202,7 @@ impl CodeGenerator {
                                 }
                             }
                             Some(..) => return Err(Error::not_implemented(variable_declaration.position.clone(), "Only identifier type is supported")),
-                            None => return Err(Error::syntax_error(variable_declaration.position.clone(), "Type or initializer is required for variable declaration")),
+                            None => return Err(Error::invalid_syntax(variable_declaration.position.clone(), "Type or initializer is required for variable declaration")),
                         };
                     }
                 }
@@ -181,7 +216,7 @@ impl CodeGenerator {
                 let ip_break = self.write_jump(/*dummy*/ 0);
                 match self.register_break_to_patch(ip_break) {
                     Ok(()) => (),
-                    Err(message) => return Err(Error::syntax_error(node.position().clone(), message)),
+                    Err(message) => return Err(Error::invalid_syntax(node.position().clone(), message)),
                 }
             }
             Node::FunctionExpressionNode(_) => return Err(Error::not_implemented(node.position().clone(), "FunctionExpression")),
@@ -204,39 +239,38 @@ impl CodeGenerator {
                 }
                 self.exit_scope();
             }
-            Node::BinaryExpressionNode(expression) => {
-                if matches!(expression.operator, PunctuationKind::Equal) {
-                    match &expression.lhs.deref() {
-                        Node::IdentifierNode(name) => {
-                            self.generate_node(&expression.rhs)?;
-                            match self.store(&name.name) {
-                                Ok(()) => (),
-                                Err(message) => return Err(Error::syntax_error(node.position().clone(), message)),
-                            }
+            Node::AssignmentExpressionNode(expression) => {
+                match &expression.lhs.deref() {
+                    Node::IdentifierNode(name) => {
+                        self.generate_node(&expression.rhs)?;
+                        match self.store(&name.name) {
+                            Ok(()) => (),
+                            Err(message) => return Err(Error::invalid_syntax(node.position().clone(), message)),
                         }
-                        _ => return Err(Error::not_implemented(node.position().clone(), "Assign to complex target is not supported")),
                     }
-                } else {
-                    self.generate_node(&expression.lhs)?;
-                    self.generate_node(&expression.rhs)?;
-                    match &expression.operator {
-                        PunctuationKind::Plus => self.write_code(ByteCode::Add),
-                        PunctuationKind::Minus => self.write_code(ByteCode::Subtract),
-                        PunctuationKind::Asterisk => self.write_code(ByteCode::Multiply),
-                        PunctuationKind::Slash => self.write_code(ByteCode::Divide),
-                        PunctuationKind::AndAnd => self.write_code(ByteCode::LogicalAnd),
-                        PunctuationKind::VerticalLineVerticalLine => self.write_code(ByteCode::LogicalOr),
-                        PunctuationKind::LeftChevron => self.write_code(ByteCode::LessThan),
-                        PunctuationKind::LeftChevronEqual => self.write_code(ByteCode::LessThanOrEqual),
-                        PunctuationKind::RightChevron => self.write_code(ByteCode::GreaterThan),
-                        PunctuationKind::RightChevronEqual => self.write_code(ByteCode::GreaterThanEqual),
-                        PunctuationKind::EqualEqual => self.write_code(ByteCode::Equal),
-                        PunctuationKind::ExclamationEqual => self.write_code(ByteCode::NotEqual),
-                        _ => return Err(Error::not_implemented(
-                            node.position().clone(),
-                            format!("Unsupported binary operator: {:?}", expression.operator),
-                        )),
-                    }
+                    _ => return Err(Error::not_implemented(node.position().clone(), "Assign to complex target is not supported")),
+                }
+            }
+            Node::BinaryExpressionNode(expression) => {
+                self.generate_node(&expression.lhs)?;
+                self.generate_node(&expression.rhs)?;
+                match &expression.operator {
+                    PunctuationKind::Plus => self.write_code(ByteCode::Add),
+                    PunctuationKind::Minus => self.write_code(ByteCode::Subtract),
+                    PunctuationKind::Asterisk => self.write_code(ByteCode::Multiply),
+                    PunctuationKind::Slash => self.write_code(ByteCode::Divide),
+                    PunctuationKind::AndAnd => self.write_code(ByteCode::LogicalAnd),
+                    PunctuationKind::VerticalLineVerticalLine => self.write_code(ByteCode::LogicalOr),
+                    PunctuationKind::LeftChevron => self.write_code(ByteCode::LessThan),
+                    PunctuationKind::LeftChevronEqual => self.write_code(ByteCode::LessThanOrEqual),
+                    PunctuationKind::RightChevron => self.write_code(ByteCode::GreaterThan),
+                    PunctuationKind::RightChevronEqual => self.write_code(ByteCode::GreaterThanEqual),
+                    PunctuationKind::EqualEqual => self.write_code(ByteCode::Equal),
+                    PunctuationKind::ExclamationEqual => self.write_code(ByteCode::NotEqual),
+                    _ => return Err(Error::not_implemented(
+                        node.position().clone(),
+                        format!("Unsupported binary operator: {:?}", expression.operator),
+                    )),
                 }
             }
             Node::UnaryExpressionNode(expression) => {
@@ -258,7 +292,7 @@ impl CodeGenerator {
             Node::IdentifierNode(name) => {
                 match self.load(&name.name) {
                     Ok(()) => (),
-                    Err(message) => return Err(Error::syntax_error(node.position().clone(), message)),
+                    Err(message) => return Err(Error::invalid_syntax(node.position().clone(), message)),
                 }
             }
             Node::NumberLiteralNode(value) => {
@@ -267,8 +301,8 @@ impl CodeGenerator {
             Node::BoolLiteralNode(value) => {
                 self.write_constant_bool(value.value);
             }
-            Node::StringLiteralNode(..) => {
-                self.allocate();
+            Node::StringLiteralNode(string_literal) => {
+                self.write_load_literal(string_literal.value.as_bytes().to_vec());
             }
         }
 
@@ -276,7 +310,7 @@ impl CodeGenerator {
     }
 
     fn write_bytes(&mut self, bytes: &[u8]) {
-        self.codes.extend(bytes);
+        self.opcodes.extend(bytes);
     }
 
     fn write_code(&mut self, code: ByteCode) {
@@ -315,14 +349,14 @@ impl CodeGenerator {
 
     fn write_jump(&mut self, address: usize) -> usize {
         self.write_code(ByteCode::Jump);
-        let ip = self.codes.len();
+        let ip = self.opcodes.len();
         self.write_bytes(&address.as_u8_slice());
         ip
     }
 
     fn write_jump_if_false(&mut self, address: usize) -> usize {
         self.write_code(ByteCode::JumpIfFalse);
-        let ip = self.codes.len();
+        let ip = self.opcodes.len();
         self.write_bytes(&address.as_u8_slice());
         ip
     }
@@ -330,6 +364,14 @@ impl CodeGenerator {
     fn write_flush(&mut self, expected_size: usize) {
         self.write_code(ByteCode::Flush);
         self.write_bytes(&expected_size.as_u8_slice());
+    }
+
+    fn write_load_literal(&mut self, value: Vec<u8>) {
+        let index = self.literals.len();
+        self.literals.push(value);
+
+        self.write_code(ByteCode::LoadLiteral);
+        self.write_bytes(&(index as u32).as_u8_slice());
     }
 
     /// Check if the given variable is initialized in the current scope
@@ -349,7 +391,7 @@ impl CodeGenerator {
 
     fn store(&mut self, name: &String) -> Result<(), String> {
         for frame in self.frames.iter_mut().rev() {
-            if let Some(mut variable) = frame.variables.get_mut(name) {
+            if let Some(variable) = frame.variables.get_mut(name) {
                 let offset = variable.offset.clone();
                 match variable.type_ {
                     PrimitiveType::Number => self.write_store_number(offset),
@@ -407,7 +449,7 @@ impl CodeGenerator {
     fn enter_scope(&mut self, breakable: bool) {
         let frame = self.frames.last().unwrap();
         let mut new_frame = StackFrame::new(frame.stack_offset + frame.stack_size, breakable);
-        new_frame.ip_start = self.codes.len();
+        new_frame.ip_start = self.opcodes.len();
         self.frames.push(new_frame);
     }
 
@@ -433,8 +475,13 @@ impl CodeGenerator {
 
 pub fn generate(program: &Program) -> Result<Vec<u8>, Error> {
     let mut generator = CodeGenerator::new();
+    let errors = check(program).errors;
+    if !errors.is_empty() {
+        return Err(errors[0].clone());
+    }
+
     for node in program.statements.iter() {
         generator.generate_node(node)?;
     }
-    Ok(generator.codes)
+    Ok(generator.get_codes())
 }

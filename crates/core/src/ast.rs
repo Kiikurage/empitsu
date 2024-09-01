@@ -25,3 +25,4 @@ pub mod member_expression;
 pub mod number_literal;
 pub mod bool_literal;
 pub mod string_literal;
+pub mod assignment_expression;

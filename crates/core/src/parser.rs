@@ -1,16 +1,16 @@
 use crate::ast::block::Block;
 use crate::ast::break_expression::BreakExpression;
 use crate::ast::for_statement::ForStatement;
-use crate::ast::function_interface::FunctionInterface;
 use crate::ast::function::Function;
+use crate::ast::function_interface::FunctionInterface;
 use crate::ast::identifier::Identifier;
 use crate::ast::if_expression::IfExpression;
 use crate::ast::if_statement::IfStatement;
 use crate::ast::impl_statement::ImplStatement;
 use crate::ast::interface_declaration::InterfaceDeclaration;
 use crate::ast::node::Node;
-use crate::ast::parameter_declaration::ParameterDeclaration;
 use crate::ast::parameter::Parameter;
+use crate::ast::parameter_declaration::ParameterDeclaration;
 use crate::ast::program::Program;
 use crate::ast::return_expression::ReturnExpression;
 use crate::ast::struct_declaration::StructDeclaration;
@@ -401,7 +401,7 @@ fn parse_assignment_expression(tokens: &mut TokenIterator) -> Result<Node, Error
     assert_punctuation!(tokens.next(), Equal)?;
     let rhs = parse_expression(tokens)?;
 
-    Ok(Node::binary_expression(lhs, PunctuationKind::Equal, rhs).into())
+    Ok(Node::assignment_expression(lhs, rhs).into())
 }
 
 fn parse_logical_or_expression(tokens: &mut TokenIterator) -> Result<Node, Error> {
@@ -1255,16 +1255,14 @@ mod tests {
     mod assignment_expression {
         use crate::ast::node::Node;
         use crate::parser::parse;
-        use crate::punctuation_kind::PunctuationKind;
 
         #[test]
         fn assign() {
             assert_eq!(
                 parse("x = 1").program,
                 Node::program(vec![
-                    Node::binary_expression(
+                    Node::assignment_expression(
                         Node::identifier((0, 0), "x"),
-                        PunctuationKind::Equal,
                         Node::number_literal((0, 4), 1f64),
                     ),
                 ])
@@ -2048,7 +2046,6 @@ mod tests {
         use crate::ast::node::Node;
         use crate::ast::type_expression::TypeExpression;
         use crate::parser::parse;
-        use crate::punctuation_kind::PunctuationKind;
 
         #[test]
         fn empty_object() {
@@ -2187,9 +2184,8 @@ mod tests {
                         vec![],
                         (0, 0),
                     ),
-                    Node::binary_expression_node(
+                    Node::assignment_expression_node(
                         Node::identifier((0, 23), "x"),
-                        PunctuationKind::Equal,
                         Node::call_expression(
                             Node::identifier((0, 27), "Obj"),
                             vec![

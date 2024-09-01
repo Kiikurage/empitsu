@@ -1,11 +1,12 @@
+use crate::ast::assignment_expression::AssignmentExpression;
 use crate::ast::binary_expression::BinaryExpression;
 use crate::ast::block::Block;
 use crate::ast::bool_literal::BoolLiteral;
 use crate::ast::break_expression::BreakExpression;
 use crate::ast::call_expression::CallExpression;
 use crate::ast::for_statement::ForStatement;
-use crate::ast::function_interface::FunctionInterface;
 use crate::ast::function::Function;
+use crate::ast::function_interface::FunctionInterface;
 use crate::ast::identifier::Identifier;
 use crate::ast::if_expression::IfExpression;
 use crate::ast::if_statement::IfStatement;
@@ -13,8 +14,8 @@ use crate::ast::impl_statement::ImplStatement;
 use crate::ast::interface_declaration::InterfaceDeclaration;
 use crate::ast::member_expression::MemberExpression;
 use crate::ast::number_literal::NumberLiteral;
-use crate::ast::parameter_declaration::ParameterDeclaration;
 use crate::ast::parameter::Parameter;
+use crate::ast::parameter_declaration::ParameterDeclaration;
 use crate::ast::program::Program;
 use crate::ast::property_declaration::PropertyDeclaration;
 use crate::ast::return_expression::ReturnExpression;
@@ -46,6 +47,7 @@ pub enum Node {
     FunctionExpressionNode(Function),
     IfExpressionNode(IfExpression),
     BlockExpressionNode(Block),
+    AssignmentExpressionNode(AssignmentExpression),
     BinaryExpressionNode(BinaryExpression),
     UnaryExpressionNode(UnaryExpression),
     CallExpressionNode(CallExpression),
@@ -125,6 +127,10 @@ impl Node {
 
     pub fn block_expression_node(nodes: Vec<impl Into<Node>>, position: impl Into<Position>) -> Node {
         Node::BlockExpressionNode(Node::block(position, nodes))
+    }
+
+    pub fn assignment_expression_node(lhs: impl Into<Node>, rhs: impl Into<Node>) -> Node {
+        Node::AssignmentExpressionNode(Node::assignment_expression(lhs, rhs))
     }
 
     pub fn binary_expression_node(lhs: impl Into<Node>, operator: PunctuationKind, rhs: impl Into<Node>) -> Node {
@@ -295,6 +301,13 @@ impl Node {
         }
     }
 
+    pub fn assignment_expression(lhs: impl Into<Node>, rhs: impl Into<Node>) -> AssignmentExpression {
+        AssignmentExpression {
+            lhs: Box::new(lhs.into()),
+            rhs: Box::new(rhs.into()),
+        }
+    }
+
     pub fn binary_expression(lhs: impl Into<Node>, operator: PunctuationKind, rhs: impl Into<Node>) -> BinaryExpression {
         BinaryExpression {
             lhs: Box::new(lhs.into()),
@@ -377,6 +390,7 @@ impl GetPosition for Node {
             Node::FunctionExpressionNode(node) => node.position(),
             Node::IfExpressionNode(node) => node.position(),
             Node::BlockExpressionNode(node) => node.position(),
+            Node::AssignmentExpressionNode(node) => node.position(),
             Node::BinaryExpressionNode(node) => node.position(),
             Node::UnaryExpressionNode(node) => node.position(),
             Node::CallExpressionNode(node) => node.position(),
