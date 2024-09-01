@@ -3,8 +3,8 @@ use crate::ast::node::Node;
 use crate::ast::program::Program;
 use crate::bytecode::ByteCode;
 use crate::error::Error;
-use crate::position::Position;
 use crate::punctuation_kind::PunctuationKind;
+use crate::range::Range;
 use crate::util::AsU8Slice;
 use std::collections::HashMap;
 use std::ops::Deref;
@@ -21,7 +21,7 @@ impl AnalyzedType {
 
 struct Variable {
     offset: usize,
-    declared_at: Position,
+    range: Range,
 }
 
 struct StackFrame {
@@ -148,7 +148,7 @@ impl Generator {
                     self.write_constant_number(0.0);
                     self.declare_variable(
                         for_.variable.name.clone(),
-                        for_.variable.position.clone(),
+                        for_.variable.range.clone(),
                     );
 
                     // condition
@@ -178,7 +178,7 @@ impl Generator {
                 self.exit_scope();
             }
             Node::VariableDeclaration(ref variable_declaration) => {
-                let symbol_info = self.analyze_result.variables.get(&variable_declaration.name.position).unwrap();
+                let symbol_info = self.analyze_result.variables.get(&variable_declaration.name.range).unwrap();
 
                 match &variable_declaration.initializer {
                     Some(initializer) => self.generate_node(initializer),
@@ -193,15 +193,15 @@ impl Generator {
 
                 self.declare_variable(
                     variable_declaration.name.name.clone(),
-                    variable_declaration.name.position.clone(),
+                    variable_declaration.name.range.clone(),
                 );
             }
             Node::FunctionDeclaration(_) => unreachable!("FunctionDeclaration"),
             Node::StructDeclaration(_) => unreachable!("StructDeclaration"),
             Node::InterfaceDeclaration(_) => unreachable!("InterfaceDeclaration"),
             Node::ImplStatement(_) => unreachable!("ImplStatement"),
-            Node::ReturnExpression(_) => unreachable!("ReturnExpression"),
-            Node::BreakExpression(..) => {
+            Node::Return(_) => unreachable!("Return"),
+            Node::Break(..) => {
                 let ip_break = self.write_jump(/*dummy*/ 0);
                 self.register_break_to_patch(ip_break);
             }
@@ -218,7 +218,7 @@ impl Generator {
 
                 self.patch_address(ip_after_true_branch);
             }
-            Node::BlockExpression(block) => {
+            Node::Block(block) => {
                 self.enter_scope(false);
                 for node in block.nodes.iter() {
                     self.generate_node(node);
@@ -276,6 +276,7 @@ impl Generator {
             Node::StringLiteral(string_literal) => {
                 self.write_load_literal(string_literal.value.as_bytes().to_vec());
             }
+            Node::TypeExpression(_) => unreachable!("TypeExpression"),
         }
     }
 
@@ -348,7 +349,7 @@ impl Generator {
         for frame in self.frames.iter_mut().rev() {
             if let Some(variable) = frame.variables.get_mut(name) {
                 let offset = variable.offset;
-                match &self.analyze_result.variables.get(&variable.declared_at).unwrap().type_ {
+                match &self.analyze_result.variables.get(&variable.range).unwrap().type_ {
                     AnalyzedType::Number => self.write_store_number(offset),
                     AnalyzedType::Bool => self.write_store_bool(offset),
                     _ => unreachable!("Expected primitive type"),
@@ -365,7 +366,7 @@ impl Generator {
         for frame in self.frames.iter_mut().rev() {
             if let Some(variable) = frame.variables.get(name) {
                 let offset = variable.offset;
-                match self.analyze_result.variables.get(&variable.declared_at).unwrap().type_ {
+                match self.analyze_result.variables.get(&variable.range).unwrap().type_ {
                     AnalyzedType::Number => self.write_load_number(offset),
                     AnalyzedType::Bool => self.write_load_bool(offset),
                     _ => unreachable!("Expected primitive type"),
@@ -377,13 +378,13 @@ impl Generator {
     }
 
     /// Declare a new variable. Current stack top value is used as the initial value.
-    fn declare_variable(&mut self, name: String, declared_at: Position) {
+    fn declare_variable(&mut self, name: String, range: Range) {
         let frame = self.frames.last_mut().unwrap();
-        let size = &self.analyze_result.variables.get(&declared_at).unwrap().type_.size();
+        let size = &self.analyze_result.variables.get(&range).unwrap().type_.size();
 
         frame.variables.insert(name.clone(), Variable {
             offset: frame.stack_offset + frame.stack_size,
-            declared_at,
+            range,
         });
         frame.stack_size += size;
     }

@@ -15,8 +15,8 @@ impl<'a> CharIterator<'a> {
         }
     }
 
-    pub fn get_position(&self) -> &Position {
-        &self.position
+    pub fn get_position(&self) -> Position {
+        self.position
     }
 
     pub fn peek(&mut self, offset: usize) -> Option<&char> {
@@ -32,9 +32,9 @@ impl Iterator for CharIterator<'_> {
         if let Some(ch) = option {
             if ch == '\n' {
                 self.position.line += 1;
-                self.position.column = 0;
+                self.position.character = 0;
             } else {
-                self.position.column += 1;
+                self.position.character += 1;
             }
         }
         option

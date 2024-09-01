@@ -1,6 +1,8 @@
+use crate::ast::traits::GetRange;
 use crate::error::Error;
 use crate::lexer::scan;
 use crate::position::Position;
+use crate::range::Range;
 use crate::token::Token;
 
 pub struct TokenIterator {
@@ -33,11 +35,11 @@ impl TokenIterator {
         }
 
         let position = match ret {
-            Ok(token) => token.position(),
-            Err(error) => &error.position,
+            Ok(token) => &token.range().start,
+            Err(error) => &error.range.start,
         };
         self.last_position.line = position.line;
-        self.last_position.column = position.column;
+        self.last_position.character = position.character;
 
         ret
     }
@@ -60,11 +62,13 @@ impl TokenIterator {
         // Safe to unwrap because EndOfInput token must be present
         self.tokens.get(self.raw_offset).unwrap()
     }
+}
 
-    pub fn position(&mut self) -> &Position {
-        match self.raw_peek() {
-            Ok(ref token) => token.position(),
-            Err(ref err) => &err.position
+impl GetRange for Result<Token, Error> {
+    fn range(&self) -> Range {
+        match self {
+            Ok(token) => token.range(),
+            Err(err) => err.range,
         }
     }
 }
@@ -72,6 +76,7 @@ impl TokenIterator {
 #[cfg(test)]
 mod test {
     use crate::position::Position;
+    use crate::range::Range;
     use crate::token::Token;
     use crate::token_iterator::TokenIterator;
 
@@ -79,35 +84,35 @@ mod test {
     fn next() {
         let mut iter = TokenIterator::new("a\nb\nc");
 
-        assert_eq!(iter.next(), &Ok(Token::identifier((0, 0), "a")));
-        assert_eq!(iter.next(), &Ok(Token::identifier((1, 0), "b")));
-        assert_eq!(iter.next(), &Ok(Token::identifier((2, 0), "c")));
-        assert_eq!(iter.next(), &Ok(Token::end_of_input((2, 1))));
-        assert_eq!(iter.next(), &Ok(Token::end_of_input((2, 1))));
+        assert_eq!(iter.next(), &Ok(Token::identifier(Range::of(0, 0, 0, 1), "a")));
+        assert_eq!(iter.next(), &Ok(Token::identifier(Range::of(1, 0, 1, 1), "b")));
+        assert_eq!(iter.next(), &Ok(Token::identifier(Range::of(2, 0, 2, 1), "c")));
+        assert_eq!(iter.next(), &Ok(Token::end_of_input(Range::of(2, 1, 2, 1))));
+        assert_eq!(iter.next(), &Ok(Token::end_of_input(Range::of(2, 1, 2, 1))));
     }
 
     #[test]
     fn raw_next() {
         let mut iter = TokenIterator::new("a\nb\nc");
 
-        assert_eq!(iter.raw_next(), &Ok(Token::identifier((0, 0), "a")));
-        assert_eq!(iter.raw_next(), &Ok(Token::line_terminator((0, 1))));
-        assert_eq!(iter.raw_next(), &Ok(Token::identifier((1, 0), "b")));
-        assert_eq!(iter.raw_next(), &Ok(Token::line_terminator((1, 1))));
-        assert_eq!(iter.raw_next(), &Ok(Token::identifier((2, 0), "c")));
-        assert_eq!(iter.next(), &Ok(Token::end_of_input((2, 1))));
-        assert_eq!(iter.next(), &Ok(Token::end_of_input((2, 1))));
+        assert_eq!(iter.raw_next(), &Ok(Token::identifier(Range::of(0, 0, 0, 1), "a")));
+        assert_eq!(iter.raw_next(), &Ok(Token::line_terminator(Range::of(0, 1, 1, 0))));
+        assert_eq!(iter.raw_next(), &Ok(Token::identifier(Range::of(1, 0, 1, 1), "b")));
+        assert_eq!(iter.raw_next(), &Ok(Token::line_terminator(Range::of(1, 1, 2, 0))));
+        assert_eq!(iter.raw_next(), &Ok(Token::identifier(Range::of(2, 0, 2, 1), "c")));
+        assert_eq!(iter.next(), &Ok(Token::end_of_input(Range::of(2, 1, 2, 1))));
+        assert_eq!(iter.next(), &Ok(Token::end_of_input(Range::of(2, 1, 2, 1))));
     }
 
     #[test]
     fn mix_next() {
         let mut iter = TokenIterator::new("a\nb\nc");
 
-        assert_eq!(iter.raw_next(), &Ok(Token::identifier((0, 0), "a")));
-        assert_eq!(iter.next(), &Ok(Token::identifier((1, 0), "b")));
-        assert_eq!(iter.next(), &Ok(Token::identifier((2, 0), "c")));
-        assert_eq!(iter.raw_next(), &Ok(Token::end_of_input((2, 1))));
-        assert_eq!(iter.next(), &Ok(Token::end_of_input((2, 1))));
+        assert_eq!(iter.raw_next(), &Ok(Token::identifier(Range::of(0, 0, 0, 1), "a")));
+        assert_eq!(iter.next(), &Ok(Token::identifier(Range::of(1, 0, 1, 1), "b")));
+        assert_eq!(iter.next(), &Ok(Token::identifier(Range::of(2, 0, 2, 1), "c")));
+        assert_eq!(iter.raw_next(), &Ok(Token::end_of_input(Range::of(2, 1, 2, 1))));
+        assert_eq!(iter.next(), &Ok(Token::end_of_input(Range::of(2, 1, 2, 1))));
     }
 
     #[test]

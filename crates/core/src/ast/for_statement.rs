@@ -1,14 +1,14 @@
 use crate::ast::identifier::Identifier;
 use crate::ast::node::Node;
-use crate::ast::traits::GetPosition;
-use crate::position::Position;
+use crate::ast::traits::GetRange;
+use crate::range::Range;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ForStatement {
     pub variable: Identifier,
     pub iterable: Box<Node>,
     pub body: Box<Node>,
-    pub position: Position,
+    pub range: Range,
 }
 
 impl From<ForStatement> for Node {
@@ -17,8 +17,8 @@ impl From<ForStatement> for Node {
     }
 }
 
-impl GetPosition for ForStatement {
-    fn position(&self) -> &Position {
-        &self.position
+impl GetRange for ForStatement {
+    fn range(&self) -> Range {
+        self.range
     }
 }

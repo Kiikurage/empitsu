@@ -1,11 +1,11 @@
 use crate::ast::node::Node;
-use crate::ast::traits::GetPosition;
-use crate::position::Position;
+use crate::ast::traits::GetRange;
+use crate::range::Range;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StringLiteral {
     pub value: String,
-    pub position: Position,
+    pub range: Range,
 }
 
 impl From<StringLiteral> for Node {
@@ -14,8 +14,8 @@ impl From<StringLiteral> for Node {
     }
 }
 
-impl GetPosition for StringLiteral {
-    fn position(&self) -> &Position {
-        &self.position
+impl GetRange for StringLiteral {
+    fn range(&self) -> Range {
+        self.range
     }
 }

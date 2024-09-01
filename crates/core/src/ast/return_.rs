@@ -3,18 +3,18 @@ use crate::ast::traits::GetRange;
 use crate::range::Range;
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Identifier {
-    pub name: String,
+pub struct Return {
+    pub value: Option<Box<Node>>,
     pub range: Range,
 }
 
-impl From<Identifier> for Node {
-    fn from(value: Identifier) -> Node {
-        Node::Identifier(value)
+impl From<Return> for Node {
+    fn from(value: Return) -> Node {
+        Node::Return(value)
     }
 }
 
-impl GetRange for Identifier {
+impl GetRange for Return {
     fn range(&self) -> Range {
         self.range
     }

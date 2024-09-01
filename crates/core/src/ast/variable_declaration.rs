@@ -1,15 +1,15 @@
 use crate::ast::identifier::Identifier;
 use crate::ast::node::Node;
-use crate::ast::traits::GetPosition;
+use crate::ast::traits::GetRange;
 use crate::ast::type_expression::TypeExpression;
-use crate::position::Position;
+use crate::range::Range;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct VariableDeclaration {
     pub name: Identifier,
     pub type_: Option<TypeExpression>,
     pub initializer: Option<Box<Node>>,
-    pub position: Position,
+    pub range: Range,
 }
 
 impl From<VariableDeclaration> for Node {
@@ -18,8 +18,8 @@ impl From<VariableDeclaration> for Node {
     }
 }
 
-impl GetPosition for VariableDeclaration {
-    fn position(&self) -> &Position {
-        &self.position
+impl GetRange for VariableDeclaration {
+    fn range(&self) -> Range {
+        self.range
     }
 }

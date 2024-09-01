@@ -1,5 +1,6 @@
-use crate::position::Position;
+use crate::ast::traits::GetRange;
 use crate::punctuation_kind::PunctuationKind;
+use crate::range::Range;
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Token {
@@ -13,93 +14,137 @@ pub enum Token {
 }
 
 impl Token {
-    pub fn position(&self) -> &Position {
+    #[inline(always)]
+    pub fn number(range: Range, text: impl Into<String>, value: f64) -> Token {
+        Token::Number(NumberToken { range, text: text.into(), value })
+    }
+
+    #[inline(always)]
+    pub fn bool(range: Range, text: impl Into<String>, value: bool) -> Token {
+        Token::Bool(BoolToken { range, text: text.into(), value })
+    }
+
+    #[inline(always)]
+    pub fn string(range: Range, text: impl Into<String>, value: impl Into<String>) -> Token {
+        Token::String(StringToken { range, text: text.into(), value: value.into() })
+    }
+
+    #[inline(always)]
+    pub fn identifier(range: Range, text: impl Into<String>) -> Token {
+        Token::Identifier(IdentifierToken { range, text: text.into() })
+    }
+
+    #[inline(always)]
+    pub fn punctuation(range: Range, value: PunctuationKind) -> Token {
+        Token::Punctuation(PunctuationToken { range, value })
+    }
+
+    #[inline(always)]
+    pub fn line_terminator(range: Range) -> Token {
+        Token::LineTerminator(LineTerminatorToken { range })
+    }
+
+    #[inline(always)]
+    pub fn end_of_input(range: Range) -> Token {
+        Token::EndOfInput(EndOfInputToken { range })
+    }
+}
+
+impl GetRange for Token {
+    fn range(&self) -> Range {
         match self {
-            Token::Number(token) => &token.position,
-            Token::Bool(token) => &token.position,
-            Token::String(token) => &token.position,
-            Token::Identifier(token) => &token.position,
-            Token::Punctuation(token) => &token.position,
-            Token::LineTerminator(token) => &token.position,
-            Token::EndOfInput(token) => &token.position,
+            Token::Number(token) => token.range,
+            Token::Bool(token) => token.range,
+            Token::String(token) => token.range,
+            Token::Identifier(token) => token.range,
+            Token::Punctuation(token) => token.range,
+            Token::LineTerminator(token) => token.range,
+            Token::EndOfInput(token) => token.range,
         }
-    }
-
-    #[inline(always)]
-    pub fn number(position: impl Into<Position>, text: impl Into<String>, value: f64) -> Token {
-        Token::Number(NumberToken { position: position.into(), text: text.into(), value })
-    }
-
-    #[inline(always)]
-    pub fn bool(position: impl Into<Position>, text: impl Into<String>, value: bool) -> Token {
-        Token::Bool(BoolToken { position: position.into(), text: text.into(), value })
-    }
-
-    #[inline(always)]
-    pub fn string(position: impl Into<Position>, text: impl Into<String>, value: impl Into<String>) -> Token {
-        Token::String(StringToken { position: position.into(), text: text.into(), value: value.into() })
-    }
-
-    #[inline(always)]
-    pub fn identifier(position: impl Into<Position>, text: impl Into<String>) -> Token {
-        Token::Identifier(IdentifierToken { position: position.into(), text: text.into() })
-    }
-
-    #[inline(always)]
-    pub fn punctuation(position: impl Into<Position>, value: PunctuationKind) -> Token {
-        Token::Punctuation(PunctuationToken { position: position.into(), value })
-    }
-
-    #[inline(always)]
-    pub fn line_terminator(position: impl Into<Position>) -> Token {
-        Token::LineTerminator(LineTerminatorToken { position: position.into() })
-    }
-
-    #[inline(always)]
-    pub fn end_of_input(position: impl Into<Position>) -> Token {
-        Token::EndOfInput(EndOfInputToken { position: position.into() })
     }
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct NumberToken {
-    pub position: Position,
+    range: Range,
     pub text: String,
     pub value: f64,
 }
 
+impl GetRange for NumberToken {
+    fn range(&self) -> Range {
+        self.range
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub struct BoolToken {
-    pub position: Position,
+    range: Range,
     pub text: String,
     pub value: bool,
 }
 
+impl GetRange for BoolToken {
+    fn range(&self) -> Range {
+        self.range
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub struct StringToken {
-    pub position: Position,
+    range: Range,
     pub text: String,
     pub value: String,
 }
 
+impl GetRange for StringToken {
+    fn range(&self) -> Range {
+        self.range
+    }
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub struct IdentifierToken {
-    pub position: Position,
+    range: Range,
     pub text: String,
+}
+
+impl GetRange for IdentifierToken {
+    fn range(&self) -> Range {
+        self.range
+    }
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct PunctuationToken {
-    pub position: Position,
+    range: Range,
     pub value: PunctuationKind,
+}
+
+impl GetRange for PunctuationToken {
+    fn range(&self) -> Range {
+        self.range
+    }
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct LineTerminatorToken {
-    pub position: Position,
+    range: Range,
+}
+
+impl GetRange for LineTerminatorToken {
+    fn range(&self) -> Range {
+        self.range
+    }
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct EndOfInputToken {
-    pub position: Position,
+    range: Range,
+}
+
+impl GetRange for EndOfInputToken {
+    fn range(&self) -> Range {
+        self.range
+    }
 }

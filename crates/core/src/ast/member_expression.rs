@@ -1,7 +1,7 @@
 use crate::ast::identifier::Identifier;
 use crate::ast::node::Node;
-use crate::ast::traits::GetPosition;
-use crate::position::Position;
+use crate::ast::traits::GetRange;
+use crate::range::Range;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MemberExpression {
@@ -15,8 +15,8 @@ impl From<MemberExpression> for Node {
     }
 }
 
-impl GetPosition for MemberExpression {
-    fn position(&self) -> &Position {
-        self.object.position()
+impl GetRange for MemberExpression {
+    fn range(&self) -> Range {
+        Range::new(self.object.start(), self.member.end())
     }
 }

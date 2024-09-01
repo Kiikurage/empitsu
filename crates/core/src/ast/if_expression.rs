@@ -1,13 +1,13 @@
 use crate::ast::node::Node;
-use crate::ast::traits::GetPosition;
-use crate::position::Position;
+use crate::ast::traits::GetRange;
+use crate::range::Range;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct IfExpression {
     pub condition: Box<Node>,
     pub true_branch: Box<Node>,
     pub false_branch: Box<Node>,
-    pub position: Position,
+    pub range: Range,
 }
 
 impl From<IfExpression> for Node {
@@ -16,8 +16,8 @@ impl From<IfExpression> for Node {
     }
 }
 
-impl GetPosition for IfExpression {
-    fn position(&self) -> &Position {
-        &self.position
+impl GetRange for IfExpression {
+    fn range(&self) -> Range {
+        self.range
     }
 }

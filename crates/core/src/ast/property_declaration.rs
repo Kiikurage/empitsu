@@ -1,7 +1,7 @@
 use crate::ast::identifier::Identifier;
-use crate::ast::traits::GetPosition;
+use crate::ast::traits::GetRange;
 use crate::ast::type_expression::TypeExpression;
-use crate::position::Position;
+use crate::range::Range;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PropertyDeclaration {
@@ -9,8 +9,8 @@ pub struct PropertyDeclaration {
     pub type_: TypeExpression,
 }
 
-impl GetPosition for PropertyDeclaration {
-    fn position(&self) -> &Position {
-        &self.name.position
+impl GetRange for PropertyDeclaration {
+    fn range(&self) -> Range {
+        self.name.range
     }
 }

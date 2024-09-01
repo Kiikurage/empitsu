@@ -1,20 +1,21 @@
+use crate::ast::node::Node;
+use crate::ast::traits::GetRange;
+use crate::range::Range;
+
 #[derive(Debug, Clone, PartialEq)]
-pub enum TypeExpression {
-    Identifier(String),
-    Optional(Box<TypeExpression>),
-    Union(Vec<TypeExpression>),
+pub struct TypeExpression {
+    pub name: String,
+    pub range: Range,
 }
 
-impl TypeExpression {
-    pub fn identifier(name: impl Into<String>) -> TypeExpression {
-        TypeExpression::Identifier(name.into())
+impl From<TypeExpression> for Node {
+    fn from(value: TypeExpression) -> Node {
+        Node::TypeExpression(value)
     }
+}
 
-    pub fn optional(type_: TypeExpression) -> TypeExpression {
-        TypeExpression::Optional(Box::new(type_))
-    }
-
-    pub fn union(types: Vec<TypeExpression>) -> TypeExpression {
-        TypeExpression::Union(types)
+impl GetRange for TypeExpression {
+    fn range(&self) -> Range {
+        self.range
     }
 }

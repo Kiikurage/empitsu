@@ -1,7 +1,7 @@
 use crate::ast::node::Node;
 use crate::ast::parameter::Parameter;
-use crate::ast::traits::GetPosition;
-use crate::position::Position;
+use crate::ast::traits::GetRange;
+use crate::range::Range;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CallExpression {
@@ -15,8 +15,8 @@ impl From<CallExpression> for Node {
     }
 }
 
-impl GetPosition for CallExpression {
-    fn position(&self) -> &Position {
-        self.callee.position()
+impl GetRange for CallExpression {
+    fn range(&self) -> Range {
+        self.callee.range()
     }
 }

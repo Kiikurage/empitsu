@@ -1,21 +1,21 @@
 use crate::ast::node::Node;
-use crate::ast::traits::GetPosition;
-use crate::position::Position;
+use crate::ast::traits::GetRange;
+use crate::range::Range;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Block {
     pub nodes: Vec<Node>,
-    pub position: Position,
+    pub range: Range,
 }
 
 impl From<Block> for Node {
     fn from(value: Block) -> Node {
-        Node::BlockExpression(value)
+        Node::Block(value)
     }
 }
 
-impl GetPosition for Block {
-    fn position(&self) -> &Position {
-        &self.position
+impl GetRange for Block {
+    fn range(&self) -> Range {
+        self.range
     }
 }

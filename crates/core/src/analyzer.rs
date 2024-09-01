@@ -2,7 +2,7 @@ use crate::ast::assignment_expression::AssignmentExpression;
 use crate::ast::binary_expression::BinaryExpression;
 use crate::ast::block::Block;
 use crate::ast::bool_literal::BoolLiteral;
-use crate::ast::break_expression::BreakExpression;
+use crate::ast::break_::Break;
 use crate::ast::call_expression::CallExpression;
 use crate::ast::for_statement::ForStatement;
 use crate::ast::function::Function;
@@ -15,16 +15,16 @@ use crate::ast::member_expression::MemberExpression;
 use crate::ast::node::Node;
 use crate::ast::number_literal::NumberLiteral;
 use crate::ast::program::Program;
-use crate::ast::return_expression::ReturnExpression;
+use crate::ast::return_::Return;
 use crate::ast::string_literal::StringLiteral;
 use crate::ast::struct_declaration::StructDeclaration;
-use crate::ast::traits::GetPosition;
+use crate::ast::traits::GetRange;
 use crate::ast::type_expression::TypeExpression;
 use crate::ast::unary_expression::UnaryExpression;
 use crate::ast::variable_declaration::VariableDeclaration;
 use crate::error::Error;
-use crate::position::Position;
 use crate::punctuation_kind::PunctuationKind;
+use crate::range::Range;
 use std::collections::{HashMap, HashSet};
 use std::ops::Deref;
 
@@ -43,7 +43,7 @@ pub enum AnalyzedType {
 #[derive(Clone, Debug, PartialEq)]
 pub struct SymbolInfo {
     pub name: String,
-    pub declared_at: Position,
+    pub declared_at: Range,
     pub type_: AnalyzedType,
 }
 
@@ -68,8 +68,8 @@ pub struct Scope {
 }
 
 struct Context {
-    variables: HashMap<Position, SymbolInfo>,
-    expressions: HashMap<Position, ExpressionInfo>,
+    variables: HashMap<Range, SymbolInfo>,
+    expressions: HashMap<Range, ExpressionInfo>,
     errors: Vec<Error>,
 
     scopes: Vec<Scope>,
@@ -95,11 +95,11 @@ impl Context {
             Node::StructDeclaration(struct_) => self.analyze_struct_declaration(struct_),
             Node::InterfaceDeclaration(interface) => self.analyze_interface(interface),
             Node::ImplStatement(impl_statement) => self.analyze_impl_statement(impl_statement),
-            Node::ReturnExpression(return_expression) => self.analyze_return_expression(return_expression),
-            Node::BreakExpression(break_expression) => self.analyze_break_expression(break_expression),
+            Node::Return(return_) => self.analyze_return_(return_),
+            Node::Break(break_) => self.analyze_break(break_),
             Node::FunctionExpression(function) => self.analyze_function(function),
             Node::IfExpression(if_expression) => self.analyze_if_expression(if_expression),
-            Node::BlockExpression(block_expression) => self.analyze_block_expression(block_expression),
+            Node::Block(block) => self.analyze_block(block),
             Node::AssignmentExpression(assignment_expression) => self.analyze_assignment_expression(assignment_expression),
             Node::BinaryExpression(binary_expression) => self.analyze_binary_expression(binary_expression),
             Node::UnaryExpression(unary_expression) => self.analyze_unary_expression(unary_expression),
@@ -109,13 +109,14 @@ impl Context {
             Node::NumberLiteral(number_literal) => self.analyze_number_literal(number_literal),
             Node::BoolLiteral(bool_literal) => self.analyze_bool_literal(bool_literal),
             Node::StringLiteral(string_literal) => self.analyze_string_literal(string_literal),
+            Node::TypeExpression(type_expression) => self.analyze_type_expression(type_expression),
         }
     }
 
     fn analyze_nodes(&mut self, nodes: &[Node]) {
         for node in nodes {
             if self.scopes.last().unwrap().exited {
-                self.errors.push(Error::unreachable_code(node.position().clone()));
+                self.errors.push(Error::unreachable_code(node.range().clone()));
                 break;
             }
             self.analyze_node(node);
@@ -158,7 +159,7 @@ impl Context {
             let initializer_type = self.get_node_type(initializer);
             if let Some(type_expression) = &variable_declaration.type_ {
                 let expected_type = self.evaluate_type_expression(type_expression);
-                self.report_if_not_assignable(&initializer_type, &expected_type, initializer.position());
+                self.report_if_not_assignable(&initializer_type, &expected_type, initializer.range());
             }
             self.register_variable_type(&variable_declaration.name, initializer_type);
             self.initialize_variable(&variable_declaration.name);
@@ -181,19 +182,19 @@ impl Context {
         unimplemented!("Impl analysis is not implemented yet");
     }
 
-    fn analyze_return_expression(&mut self, _return_statement: &ReturnExpression) {
+    fn analyze_return_(&mut self, _return: &Return) {
         // Check if return value is valid
         // Check if return value type is correct
         // Check if it is inside a function
         unimplemented!("Return analysis is not implemented yet");
     }
 
-    fn analyze_break_expression(&mut self, break_statement: &BreakExpression) {
+    fn analyze_break(&mut self, break_: &Break) {
         if self.is_inside_of_loop() {
             self.mark_scopes_as_exited_by_break();
         } else {
             self.errors.push(Error::invalid_syntax(
-                break_statement.position().clone(),
+                break_.range().clone(),
                 "Break statement is not inside a loop",
             ));
         }
@@ -206,7 +207,7 @@ impl Context {
 
         let condition_type = self.get_node_type(&if_expression.condition);
         if !self.is_assignable(&condition_type, &AnalyzedType::Bool) {
-            self.errors.push(Error::unexpected_type_in_if_condition(if_expression.condition.position().clone(), &condition_type));
+            self.errors.push(Error::unexpected_type_in_if_condition(if_expression.condition.range().clone(), &condition_type));
         }
 
         let true_branch_type_ = self.get_node_type(&if_expression.true_branch);
@@ -214,17 +215,17 @@ impl Context {
         if self.report_if_not_assignable(
             &true_branch_type_,
             &false_branch_type_,
-            if_expression.false_branch.position(),
+            if_expression.false_branch.range(),
         ) {
-            self.register_expression_type(if_expression.position().clone(), true_branch_type_);
+            self.register_expression_type(if_expression.range().clone(), true_branch_type_);
         } else {
-            self.register_expression_type(if_expression.position().clone(), AnalyzedType::Any);
+            self.register_expression_type(if_expression.range().clone(), AnalyzedType::Any);
         }
     }
 
-    fn analyze_block_expression(&mut self, block_expression: &Block) {
+    fn analyze_block(&mut self, block: &Block) {
         self.enter_scope(false);
-        self.analyze_nodes(&block_expression.nodes);
+        self.analyze_nodes(&block.nodes);
         self.exit_scope();
     }
 
@@ -235,12 +236,12 @@ impl Context {
         match assignment_expression.lhs.deref() {
             Node::Identifier(identifier) => {
                 if !self.is_variable_defined(&identifier.name) {
-                    self.errors.push(Error::undefined_symbol(identifier.position().clone(), identifier.name.clone()));
+                    self.errors.push(Error::undefined_symbol(identifier.range().clone(), identifier.name.clone()));
                     self.define_variable(identifier);
                 }
                 if self.is_variable_initialized(&identifier.name) {
                     let lhs_type = self.get_variable_type(&identifier.name);
-                    self.report_if_not_assignable(&rhs_type, &lhs_type, assignment_expression.rhs.position());
+                    self.report_if_not_assignable(&rhs_type, &lhs_type, assignment_expression.rhs.range());
                 } else {
                     self.register_variable_type(identifier, rhs_type.clone());
                     self.initialize_variable(identifier);
@@ -248,13 +249,13 @@ impl Context {
             }
             _ => {
                 self.errors.push(Error::invalid_syntax(
-                    assignment_expression.position().clone(),
+                    assignment_expression.range().clone(),
                     "Left-hand side of an assignment must be a variable",
                 ));
             }
         }
 
-        self.register_expression_type(assignment_expression.position().clone(), rhs_type);
+        self.register_expression_type(assignment_expression.range().clone(), rhs_type);
     }
 
     fn analyze_binary_expression(&mut self, binary_expression: &BinaryExpression) {
@@ -282,10 +283,10 @@ impl Context {
             _ => panic!("Unexpected binary operator {:?}", binary_expression.operator),
         };
 
-        self.report_if_not_assignable(&lhs_type, &expected_lhs_type, binary_expression.lhs.position());
-        self.report_if_not_assignable(&rhs_type, &expected_rhs_type, binary_expression.rhs.position());
+        self.report_if_not_assignable(&lhs_type, &expected_lhs_type, binary_expression.lhs.range());
+        self.report_if_not_assignable(&rhs_type, &expected_rhs_type, binary_expression.rhs.range());
 
-        self.register_expression_type(binary_expression.position().clone(), result_type);
+        self.register_expression_type(binary_expression.range().clone(), result_type);
     }
 
     fn analyze_unary_expression(&mut self, unary_expression: &UnaryExpression) {
@@ -298,9 +299,9 @@ impl Context {
             _ => panic!("Unexpected unary operator {:?}", unary_expression.operator),
         };
 
-        self.report_if_not_assignable(&operand_type, &expected_operand_type, unary_expression.operand.position());
+        self.report_if_not_assignable(&operand_type, &expected_operand_type, unary_expression.operand.range());
 
-        self.register_expression_type(unary_expression.position().clone(), result_type);
+        self.register_expression_type(unary_expression.range().clone(), result_type);
     }
 
     fn analyze_call_expression(&mut self, _call_expression: &CallExpression) {
@@ -313,27 +314,31 @@ impl Context {
 
     fn analyze_identifier(&mut self, identifier: &Identifier) {
         if !self.is_variable_defined(&identifier.name) {
-            self.errors.push(Error::undefined_symbol(identifier.position().clone(), identifier.name.clone()));
+            self.errors.push(Error::undefined_symbol(identifier.range().clone(), identifier.name.clone()));
             self.define_variable(identifier);
         } else if !self.is_variable_initialized(&identifier.name) {
-            self.errors.push(Error::uninitialized_variable(identifier.position().clone(), identifier.name.clone()));
+            self.errors.push(Error::uninitialized_variable(identifier.range().clone(), identifier.name.clone()));
             self.initialize_variable(identifier);
         }
 
-        self.register_expression_type(identifier.position().clone(), self.get_variable_type(&identifier.name));
+        self.register_expression_type(identifier.range().clone(), self.get_variable_type(&identifier.name));
     }
 
     fn analyze_number_literal(&mut self, number_literal: &NumberLiteral) {
-        self.register_expression_type(number_literal.position().clone(), AnalyzedType::Number);
+        self.register_expression_type(number_literal.range().clone(), AnalyzedType::Number);
     }
 
     fn analyze_bool_literal(&mut self, bool_literal: &BoolLiteral) {
-        self.register_expression_type(bool_literal.position().clone(), AnalyzedType::Bool);
+        self.register_expression_type(bool_literal.range().clone(), AnalyzedType::Bool);
     }
 
     fn analyze_string_literal(&mut self, string_literal: &StringLiteral) {
         // TODO
-        self.register_expression_type(string_literal.position().clone(), AnalyzedType::Any);
+        self.register_expression_type(string_literal.range().clone(), AnalyzedType::Any);
+    }
+
+    fn analyze_type_expression(&mut self, _type_expression: &TypeExpression) {
+        unimplemented!("Type analysis is not implemented yet");
     }
 
     // Scope
@@ -358,7 +363,7 @@ impl Context {
 
         frame.declared_variables.insert(identifier.name.clone(), SymbolInfo {
             name: identifier.name.clone(),
-            declared_at: identifier.position().clone(),
+            declared_at: identifier.range().clone(),
             type_: AnalyzedType::NotInitialized,
         });
     }
@@ -374,7 +379,7 @@ impl Context {
 
     fn initialize_variable(&mut self, identifier: &Identifier) {
         if !self.is_variable_defined(&identifier.name) {
-            self.errors.push(Error::uninitialized_variable(identifier.position().clone(), identifier.name.clone()));
+            self.errors.push(Error::uninitialized_variable(identifier.range().clone(), identifier.name.clone()));
         }
         self.scopes.last_mut().unwrap().initialized_variables.insert(identifier.name.clone());
     }
@@ -422,8 +427,8 @@ impl Context {
         panic!("Symbol {} is not declared", identifier.name);
     }
 
-    fn register_expression_type(&mut self, position: Position, type_: AnalyzedType) {
-        self.expressions.insert(position, ExpressionInfo {
+    fn register_expression_type(&mut self, range: Range, type_: AnalyzedType) {
+        self.expressions.insert(range, ExpressionInfo {
             type_,
         });
     }
@@ -440,10 +445,10 @@ impl Context {
         }
     }
 
-    fn report_if_not_assignable(&mut self, from: &AnalyzedType, to: &AnalyzedType, position: &Position) -> bool {
+    fn report_if_not_assignable(&mut self, from: &AnalyzedType, to: &AnalyzedType, range: Range) -> bool {
         let is_assignable = self.is_assignable(from, to);
         if !is_assignable {
-            self.errors.push(Error::unexpected_type(position.clone(), to, from));
+            self.errors.push(Error::unexpected_type(range.clone(), to, from));
         }
 
         is_assignable
@@ -459,31 +464,25 @@ impl Context {
     }
 
     fn get_node_type(&self, node: &Node) -> AnalyzedType {
-        let cached_info = self.expressions.get(node.position());
+        let cached_info = self.expressions.get(&node.range());
         if let Some(cache) = cached_info {
             return cache.type_.clone();
         }
 
-        panic!("Expression {:?} is not yet analyzed", node.position());
+        panic!("Expression {:?} is not yet analyzed", node.range());
     }
 
-    fn evaluate_type_expression(&self, _type_expression: &TypeExpression) -> AnalyzedType {
-        match _type_expression {
-            TypeExpression::Identifier(name) => {
-                match name.as_str() {
-                    "number" => AnalyzedType::Number,
-                    "bool" => AnalyzedType::Bool,
-                    _ => AnalyzedType::Any,
-                }
-            }
-            TypeExpression::Optional(_) => AnalyzedType::Any,
-            TypeExpression::Union(_) => AnalyzedType::Any,
+    fn evaluate_type_expression(&self, type_expression: &TypeExpression) -> AnalyzedType {
+        match type_expression.name.as_str() {
+            "number" => AnalyzedType::Number,
+            "bool" => AnalyzedType::Bool,
+            _ => AnalyzedType::Any,
         }
     }
 }
 
 pub struct AnalyzeResult {
-    pub variables: HashMap<Position, SymbolInfo>,
+    pub variables: HashMap<Range, SymbolInfo>,
     pub errors: Vec<Error>,
 }
 
@@ -507,11 +506,12 @@ mod test {
     mod use_undefined_variable {
         use crate::analyzer::test::{test, AssertMethods};
         use crate::error::Error;
+        use crate::range::Range;
 
         #[test]
         fn use_undefined_variable() {
             test(r#"let x = y"#).assert_errors(vec![
-                Error::undefined_symbol((0, 8), "y")
+                Error::undefined_symbol(Range::of(0, 8, 0, 9), "y")
             ])
         }
     }
@@ -519,11 +519,12 @@ mod test {
     mod use_uninitialized_variable {
         use crate::analyzer::test::{test, AssertMethods};
         use crate::error::Error;
+        use crate::range::Range;
 
         #[test]
         fn use_uninitialized_variable() {
             test(r#"let x:number; let y = x"#).assert_errors(vec![
-                Error::uninitialized_variable((0, 22), "x")
+                Error::uninitialized_variable(Range::of(0, 22, 0, 23), "x")
             ])
         }
     }
@@ -532,6 +533,7 @@ mod test {
         use crate::analyzer::test::{test, AssertMethods};
         use crate::analyzer::AnalyzedType;
         use crate::error::Error;
+        use crate::range::Range;
 
         #[test]
         fn correct_type() {
@@ -541,7 +543,7 @@ mod test {
         #[test]
         fn invalid_type() {
             test(r#"let x:number = false"#).assert_errors(vec![
-                Error::unexpected_type((0, 15), &AnalyzedType::Number, &AnalyzedType::Bool)
+                Error::unexpected_type(Range::of(0, 15, 0, 20), &AnalyzedType::Number, &AnalyzedType::Bool)
             ])
         }
     }
@@ -550,6 +552,7 @@ mod test {
         use crate::analyzer::test::{test, AssertMethods};
         use crate::analyzer::AnalyzedType;
         use crate::error::Error;
+        use crate::range::Range;
 
         #[test]
         fn correct_type() {
@@ -559,7 +562,7 @@ mod test {
         #[test]
         fn invalid_type() {
             test(r#"let x:number = 2; x = false"#).assert_errors(vec![
-                Error::unexpected_type((0, 22), &AnalyzedType::Number, &AnalyzedType::Bool)
+                Error::unexpected_type(Range::of(0, 22, 0, 27), &AnalyzedType::Number, &AnalyzedType::Bool)
             ])
         }
     }
@@ -568,6 +571,7 @@ mod test {
         use crate::analyzer::test::{test, AssertMethods};
         use crate::analyzer::AnalyzedType;
         use crate::error::Error;
+        use crate::range::Range;
 
         #[test]
         fn correct_type() {
@@ -577,22 +581,22 @@ mod test {
         #[test]
         fn invalid_type_in_rhs() {
             test(r#"1 + false"#).assert_errors(vec![
-                Error::unexpected_type((0, 4), &AnalyzedType::Number, &AnalyzedType::Bool)
+                Error::unexpected_type(Range::of(0, 4, 0, 9), &AnalyzedType::Number, &AnalyzedType::Bool)
             ])
         }
 
         #[test]
         fn invalid_type_in_lhs() {
             test(r#"true + 1"#).assert_errors(vec![
-                Error::unexpected_type((0, 0), &AnalyzedType::Number, &AnalyzedType::Bool)
+                Error::unexpected_type(Range::of(0, 0, 0, 4), &AnalyzedType::Number, &AnalyzedType::Bool)
             ])
         }
 
         #[test]
         fn invalid_type_in_both() {
             test(r#"true + false"#).assert_errors(vec![
-                Error::unexpected_type((0, 0), &AnalyzedType::Number, &AnalyzedType::Bool),
-                Error::unexpected_type((0, 7), &AnalyzedType::Number, &AnalyzedType::Bool)
+                Error::unexpected_type(Range::of(0, 0, 0, 4), &AnalyzedType::Number, &AnalyzedType::Bool),
+                Error::unexpected_type(Range::of(0, 7, 0, 12), &AnalyzedType::Number, &AnalyzedType::Bool)
             ])
         }
     }
@@ -601,6 +605,7 @@ mod test {
         use crate::analyzer::test::{test, AssertMethods};
         use crate::analyzer::AnalyzedType;
         use crate::error::Error;
+        use crate::range::Range;
 
         #[test]
         fn correct_type() {
@@ -610,7 +615,7 @@ mod test {
         #[test]
         fn invalid_type() {
             test(r#"!1"#).assert_errors(vec![
-                Error::unexpected_type((0, 1), &AnalyzedType::Bool, &AnalyzedType::Number)
+                Error::unexpected_type(Range::of(0, 1, 0, 2), &AnalyzedType::Bool, &AnalyzedType::Number)
             ])
         }
     }
@@ -619,6 +624,7 @@ mod test {
         use crate::analyzer::test::{test, AssertMethods};
         use crate::analyzer::AnalyzedType;
         use crate::error::Error;
+        use crate::range::Range;
 
         #[test]
         fn correct_type() {
@@ -637,7 +643,7 @@ mod test {
             for (i in iterable) {
                 x = i
             }"#).assert_errors(vec![
-                Error::unexpected_type((3, 20), &AnalyzedType::Bool, &AnalyzedType::Number)
+                Error::unexpected_type(Range::of(3, 20, 3, 21), &AnalyzedType::Bool, &AnalyzedType::Number)
             ])
         }
     }
@@ -645,6 +651,7 @@ mod test {
     mod unreachable_code_due_to_break {
         use crate::analyzer::test::{test, AssertMethods};
         use crate::error::Error;
+        use crate::range::Range;
 
         #[test]
         fn unreachable_code_in_block() {
@@ -652,7 +659,7 @@ mod test {
             break;
             let x = 1;
         }"#).assert_errors(vec![
-                Error::unreachable_code((2, 12))
+                Error::unreachable_code(Range::of(2, 12, 2, 21))
             ])
         }
 
@@ -665,8 +672,8 @@ mod test {
             }
             let y = 1;
         }"#).assert_errors(vec![
-                Error::unreachable_code((3, 16)),
-                Error::unreachable_code((5, 12))
+                Error::unreachable_code(Range::of(3, 16, 3, 25)),
+                Error::unreachable_code(Range::of(5, 12, 5, 21))
             ])
         }
 
@@ -677,7 +684,7 @@ mod test {
             let x = 1;
             let y = 1;
         }"#).assert_errors(vec![
-                Error::unreachable_code((2, 12))
+                Error::unreachable_code(Range::of(2, 12, 2, 21))
             ])
         }
     }

@@ -1,11 +1,11 @@
 use crate::ast::node::Node;
-use crate::ast::traits::GetPosition;
-use crate::position::Position;
+use crate::ast::traits::GetRange;
+use crate::range::Range;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
     pub statements: Vec<Node>,
-    pub position: Position,
+    pub range: Range,
 }
 
 impl From<Program> for Node {
@@ -14,8 +14,8 @@ impl From<Program> for Node {
     }
 }
 
-impl GetPosition for Program {
-    fn position(&self) -> &Position {
-        &self.position
+impl GetRange for Program {
+    fn range(&self) -> Range {
+        self.range
     }
 }
