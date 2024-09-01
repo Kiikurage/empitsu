@@ -12,9 +12,9 @@ pub struct VariableDeclaration {
     pub position: Position,
 }
 
-impl Into<Node> for VariableDeclaration {
-    fn into(self) -> Node {
-        Node::VariableDeclarationNode(self)
+impl From<VariableDeclaration> for Node {
+    fn from(value: VariableDeclaration) -> Node {
+        Node::VariableDeclaration(value)
     }
 }
 

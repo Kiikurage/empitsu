@@ -9,9 +9,9 @@ pub struct MemberExpression {
     pub member: Identifier,
 }
 
-impl Into<Node> for MemberExpression {
-    fn into(self) -> Node {
-        Node::MemberExpressionNode(self)
+impl From<MemberExpression> for Node {
+    fn from(value: MemberExpression) -> Node {
+        Node::MemberExpression(value)
     }
 }
 

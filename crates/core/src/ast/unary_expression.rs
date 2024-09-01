@@ -10,9 +10,9 @@ pub struct UnaryExpression {
     pub position: Position,
 }
 
-impl Into<Node> for UnaryExpression {
-    fn into(self) -> Node {
-        Node::UnaryExpressionNode(self)
+impl From<UnaryExpression> for Node {
+    fn from(value: UnaryExpression) -> Node {
+        Node::UnaryExpression(value)
     }
 }
 

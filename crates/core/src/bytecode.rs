@@ -1,6 +1,5 @@
 pub type EMNumber = f64;
 pub type EMBool = bool;
-pub type EMRef = usize;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ByteCode {
@@ -19,12 +18,6 @@ pub enum ByteCode {
     /// stack
     StoreNumber,
     StoreBool,
-
-    /// Allocate a new heap entry, and push the ref value to the stack
-    Allocate,
-    /// Pop a reference from the top of stack, and release heap memory
-    /// allocated for the given reference
-    Release,
 
     /// Read next 4 bytes from bytecode as index, load literal binary
     /// of given literal index, store it in heap, and push the ref to

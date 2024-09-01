@@ -10,14 +10,14 @@ pub struct AssignmentExpression {
     pub rhs: Box<Node>,
 }
 
-impl Into<Node> for AssignmentExpression {
-    fn into(self) -> Node {
-        Node::AssignmentExpressionNode(self)
+impl From<AssignmentExpression> for Node {
+    fn from(value: AssignmentExpression) -> Node {
+        Node::AssignmentExpression(value)
     }
 }
 
 impl GetPosition for AssignmentExpression {
     fn position(&self) -> &Position {
-        &self.lhs.position()
+        self.lhs.position()
     }
 }

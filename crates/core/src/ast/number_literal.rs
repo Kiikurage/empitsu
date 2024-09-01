@@ -8,9 +8,9 @@ pub struct NumberLiteral {
     pub position: Position,
 }
 
-impl Into<Node> for NumberLiteral {
-    fn into(self) -> Node {
-        Node::NumberLiteralNode(self)
+impl From<NumberLiteral> for Node {
+    fn from(value: NumberLiteral) -> Node {
+        Node::NumberLiteral(value)
     }
 }
 

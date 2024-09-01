@@ -6,9 +6,9 @@ pub struct Position {
     pub column: usize,
 }
 
-impl Into<Position> for (usize, usize) {
-    fn into(self) -> Position {
-        Position::new(self.0, self.1)
+impl From<(usize, usize)> for Position {
+    fn from(value: (usize, usize)) -> Position {
+        Position::new(value.0, value.1)
     }
 }
 

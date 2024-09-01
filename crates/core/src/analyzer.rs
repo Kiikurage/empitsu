@@ -53,7 +53,7 @@ pub struct ExpressionInfo {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct ScopeInfo {
+pub struct Scope {
     /// Variables declared in this scope.
     declared_variables: HashMap<String, SymbolInfo>,
 
@@ -70,8 +70,9 @@ pub struct ScopeInfo {
 struct Context {
     variables: HashMap<Position, SymbolInfo>,
     expressions: HashMap<Position, ExpressionInfo>,
-    frames: Vec<ScopeInfo>,
     errors: Vec<Error>,
+
+    scopes: Vec<Scope>,
 }
 
 impl Context {
@@ -79,41 +80,41 @@ impl Context {
         Context {
             variables: HashMap::new(),
             expressions: HashMap::new(),
-            frames: Vec::new(),
+            scopes: Vec::new(),
             errors: Vec::new(),
         }
     }
 
     fn analyze_node(&mut self, node: &Node) {
         match node {
-            Node::ProgramNode(program) => self.analyze_program(program),
-            Node::IfStatementNode(if_statement) => self.analyze_if_statement(if_statement),
-            Node::ForStatementNode(for_statement) => self.analyze_for_statement(for_statement),
-            Node::VariableDeclarationNode(variable_declaration) => self.analyze_variable_declaration(variable_declaration),
-            Node::FunctionDeclarationNode(function) => self.analyze_function(function),
-            Node::StructDeclarationNode(struct_) => self.analyze_struct_declaration(struct_),
-            Node::InterfaceDeclarationNode(interface) => self.analyze_interface(interface),
-            Node::ImplStatementNode(impl_statement) => self.analyze_impl_statement(impl_statement),
-            Node::ReturnExpressionNode(return_expression) => self.analyze_return_expression(return_expression),
-            Node::BreakExpressionNode(break_expression) => self.analyze_break_expression(break_expression),
-            Node::FunctionExpressionNode(function) => self.analyze_function(function),
-            Node::IfExpressionNode(if_expression) => self.analyze_if_expression(if_expression),
-            Node::BlockExpressionNode(block_expression) => self.analyze_block_expression(block_expression),
-            Node::AssignmentExpressionNode(assignment_expression) => self.analyze_assignment_expression(assignment_expression),
-            Node::BinaryExpressionNode(binary_expression) => self.analyze_binary_expression(binary_expression),
-            Node::UnaryExpressionNode(unary_expression) => self.analyze_unary_expression(unary_expression),
-            Node::CallExpressionNode(call_expression) => self.analyze_call_expression(call_expression),
-            Node::MemberExpressionNode(member_expression) => self.analyze_member_expression(member_expression),
-            Node::IdentifierNode(identifier) => self.analyze_identifier(identifier),
-            Node::NumberLiteralNode(number_literal) => self.analyze_number_literal(number_literal),
-            Node::BoolLiteralNode(bool_literal) => self.analyze_bool_literal(bool_literal),
-            Node::StringLiteralNode(string_literal) => self.analyze_string_literal(string_literal),
+            Node::Program(program) => self.analyze_program(program),
+            Node::IfStatement(if_statement) => self.analyze_if_statement(if_statement),
+            Node::ForStatement(for_statement) => self.analyze_for_statement(for_statement),
+            Node::VariableDeclaration(variable_declaration) => self.analyze_variable_declaration(variable_declaration),
+            Node::FunctionDeclaration(function) => self.analyze_function(function),
+            Node::StructDeclaration(struct_) => self.analyze_struct_declaration(struct_),
+            Node::InterfaceDeclaration(interface) => self.analyze_interface(interface),
+            Node::ImplStatement(impl_statement) => self.analyze_impl_statement(impl_statement),
+            Node::ReturnExpression(return_expression) => self.analyze_return_expression(return_expression),
+            Node::BreakExpression(break_expression) => self.analyze_break_expression(break_expression),
+            Node::FunctionExpression(function) => self.analyze_function(function),
+            Node::IfExpression(if_expression) => self.analyze_if_expression(if_expression),
+            Node::BlockExpression(block_expression) => self.analyze_block_expression(block_expression),
+            Node::AssignmentExpression(assignment_expression) => self.analyze_assignment_expression(assignment_expression),
+            Node::BinaryExpression(binary_expression) => self.analyze_binary_expression(binary_expression),
+            Node::UnaryExpression(unary_expression) => self.analyze_unary_expression(unary_expression),
+            Node::CallExpression(call_expression) => self.analyze_call_expression(call_expression),
+            Node::MemberExpression(member_expression) => self.analyze_member_expression(member_expression),
+            Node::Identifier(identifier) => self.analyze_identifier(identifier),
+            Node::NumberLiteral(number_literal) => self.analyze_number_literal(number_literal),
+            Node::BoolLiteral(bool_literal) => self.analyze_bool_literal(bool_literal),
+            Node::StringLiteral(string_literal) => self.analyze_string_literal(string_literal),
         }
     }
 
     fn analyze_nodes(&mut self, nodes: &[Node]) {
         for node in nodes {
-            if self.frames.last().unwrap().exited {
+            if self.scopes.last().unwrap().exited {
                 self.errors.push(Error::unreachable_code(node.position().clone()));
                 break;
             }
@@ -232,7 +233,7 @@ impl Context {
         let rhs_type = self.get_node_type(&assignment_expression.rhs);
 
         match assignment_expression.lhs.deref() {
-            Node::IdentifierNode(identifier) => {
+            Node::Identifier(identifier) => {
                 if !self.is_variable_defined(&identifier.name) {
                     self.errors.push(Error::undefined_symbol(identifier.position().clone(), identifier.name.clone()));
                     self.define_variable(identifier);
@@ -338,7 +339,7 @@ impl Context {
     // Scope
 
     fn enter_scope(&mut self, is_breakable: bool) {
-        self.frames.push(ScopeInfo {
+        self.scopes.push(Scope {
             declared_variables: HashMap::new(),
             initialized_variables: HashSet::new(),
             is_breakable,
@@ -347,13 +348,13 @@ impl Context {
     }
 
     fn exit_scope(&mut self) {
-        self.frames.pop();
+        self.scopes.pop();
     }
 
     // Variable
 
     fn define_variable(&mut self, identifier: &Identifier) {
-        let frame = self.frames.last_mut().unwrap();
+        let frame = self.scopes.last_mut().unwrap();
 
         frame.declared_variables.insert(identifier.name.clone(), SymbolInfo {
             name: identifier.name.clone(),
@@ -363,7 +364,7 @@ impl Context {
     }
 
     fn is_variable_defined(&self, name: &String) -> bool {
-        for frame in self.frames.iter().rev() {
+        for frame in self.scopes.iter().rev() {
             if frame.declared_variables.contains_key(name) {
                 return true;
             }
@@ -375,11 +376,11 @@ impl Context {
         if !self.is_variable_defined(&identifier.name) {
             self.errors.push(Error::uninitialized_variable(identifier.position().clone(), identifier.name.clone()));
         }
-        self.frames.last_mut().unwrap().initialized_variables.insert(identifier.name.clone());
+        self.scopes.last_mut().unwrap().initialized_variables.insert(identifier.name.clone());
     }
 
     fn is_variable_initialized(&self, name: &String) -> bool {
-        for frame in self.frames.iter().rev() {
+        for frame in self.scopes.iter().rev() {
             if frame.initialized_variables.contains(name) {
                 return true;
             }
@@ -393,7 +394,7 @@ impl Context {
     // Loop
 
     fn is_inside_of_loop(&self) -> bool {
-        for frame in self.frames.iter().rev() {
+        for frame in self.scopes.iter().rev() {
             if frame.is_breakable {
                 return true;
             }
@@ -402,7 +403,7 @@ impl Context {
     }
 
     fn mark_scopes_as_exited_by_break(&mut self) {
-        for frame in self.frames.iter_mut().rev() {
+        for frame in self.scopes.iter_mut().rev() {
             frame.exited = true;
             if frame.is_breakable { break; }
         }
@@ -411,7 +412,7 @@ impl Context {
     // Type
 
     fn register_variable_type(&mut self, identifier: &Identifier, type_: AnalyzedType) {
-        for frame in self.frames.iter_mut().rev() {
+        for frame in self.scopes.iter_mut().rev() {
             if let Some(symbol) = frame.declared_variables.get_mut(&identifier.name) {
                 symbol.type_ = type_;
                 self.variables.insert(symbol.declared_at.clone(), symbol.clone());
@@ -449,7 +450,7 @@ impl Context {
     }
 
     fn get_variable_type(&self, name: &String) -> AnalyzedType {
-        for frame in self.frames.iter().rev() {
+        for frame in self.scopes.iter().rev() {
             if let Some(symbol) = frame.declared_variables.get(name) {
                 return symbol.type_.clone();
             }
@@ -483,7 +484,6 @@ impl Context {
 
 pub struct AnalyzeResult {
     pub variables: HashMap<Position, SymbolInfo>,
-    pub expressions: HashMap<Position, ExpressionInfo>,
     pub errors: Vec<Error>,
 }
 
@@ -494,7 +494,6 @@ pub fn analyze(program: &Program) -> AnalyzeResult {
 
     AnalyzeResult {
         variables: context.variables,
-        expressions: context.expressions,
         errors: context.errors,
     }
 }
@@ -599,8 +598,8 @@ mod test {
     }
 
     mod type_analyze_in_unary_expression {
-        use crate::analyzer::AnalyzedType;
         use crate::analyzer::test::{test, AssertMethods};
+        use crate::analyzer::AnalyzedType;
         use crate::error::Error;
 
         #[test]
@@ -617,8 +616,8 @@ mod test {
     }
 
     mod type_analyze_for_loop_variable {
-        use crate::analyzer::AnalyzedType;
         use crate::analyzer::test::{test, AssertMethods};
+        use crate::analyzer::AnalyzedType;
         use crate::error::Error;
 
         #[test]

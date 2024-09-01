@@ -10,9 +10,9 @@ pub struct IfExpression {
     pub position: Position,
 }
 
-impl Into<Node> for IfExpression {
-    fn into(self) -> Node {
-        Node::IfExpressionNode(self)
+impl From<IfExpression> for Node {
+    fn from(value: IfExpression) -> Node {
+        Node::IfExpression(value)
     }
 }
 

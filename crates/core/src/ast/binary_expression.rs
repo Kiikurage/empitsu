@@ -10,14 +10,14 @@ pub struct BinaryExpression {
     pub rhs: Box<Node>,
 }
 
-impl Into<Node> for BinaryExpression {
-    fn into(self) -> Node {
-        Node::BinaryExpressionNode(self)
+impl From<BinaryExpression> for Node {
+    fn from(value: BinaryExpression) -> Node {
+        Node::BinaryExpression(value)
     }
 }
 
 impl GetPosition for BinaryExpression {
     fn position(&self) -> &Position {
-        &self.lhs.position()
+        self.lhs.position()
     }
 }

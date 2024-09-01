@@ -7,9 +7,9 @@ pub struct BreakExpression {
     pub position: Position,
 }
 
-impl Into<Node> for BreakExpression {
-    fn into(self) -> Node {
-        Node::BreakExpressionNode(self)
+impl From<BreakExpression> for Node {
+    fn from(value: BreakExpression) -> Node {
+        Node::BreakExpression(value)
     }
 }
 

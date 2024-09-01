@@ -1,10 +1,10 @@
 use crate::bytecode::{ByteCode, EMBool, EMNumber};
+use crate::code_generator::Generator;
 use crate::error::Error;
 use crate::parser::parse;
 use crate::util::{AsU8Slice, ParseAs};
 use std::collections::HashMap;
 use std::fmt::Debug;
-use crate::code_generator::Generator;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct EMObject {
@@ -32,11 +32,11 @@ impl VM {
 
         let codes = Generator::generate(&parse_result.program)?;
         self.eval_codes(&codes)?;
-        Ok(&self.stack.parse_as::<EMNumber>(self.stack.len() - size_of::<EMNumber>()))
+        Ok(self.stack.parse_as::<EMNumber>(self.stack.len() - size_of::<EMNumber>()))
     }
 
     fn push<T: Debug>(&mut self, value: T) {
-        self.stack.extend((&value).as_u8_slice());
+        self.stack.extend(value.as_u8_slice());
     }
 
     fn pop<T: Clone>(&mut self) -> T {
@@ -103,12 +103,12 @@ impl VM {
                 }
                 ByteCode::LoadNumber => {
                     let index = *self.read::<usize>();
-                    let value = self.read_stack::<EMNumber>(index).clone();
+                    let value = *self.read_stack::<EMNumber>(index);
                     self.stack.extend(value.as_u8_slice());
                 }
                 ByteCode::LoadBool => {
                     let index = *self.read::<usize>();
-                    let value = self.read_stack::<EMBool>(index).clone();
+                    let value = *self.read_stack::<EMBool>(index);
                     self.stack.extend(value.as_u8_slice());
                 }
                 ByteCode::StoreNumber => {
@@ -116,7 +116,7 @@ impl VM {
                     let len = self.stack.len();
                     for i in 0..size_of::<EMNumber>() {
                         let value = self.stack[len - size_of::<EMNumber>() + i];
-                        self.stack[index + i] = value.clone();
+                        self.stack[index + i] = value;
                     }
                 }
                 ByteCode::StoreBool => {
@@ -124,7 +124,7 @@ impl VM {
                     let len = self.stack.len();
                     for i in 0..size_of::<EMBool>() {
                         let value = self.stack[len - size_of::<EMNumber>() + i];
-                        self.stack[index + i] = value.clone();
+                        self.stack[index + i] = value;
                     }
                 }
                 ByteCode::Jump => {
@@ -183,32 +183,32 @@ impl VM {
                 ByteCode::LessThan => {
                     let rhs = self.pop::<EMNumber>();
                     let lhs = self.pop::<EMNumber>();
-                    self.push(if lhs < rhs { true } else { false });
+                    self.push(lhs < rhs);
                 }
                 ByteCode::LessThanOrEqual => {
                     let rhs = self.pop::<EMNumber>();
                     let lhs = self.pop::<EMNumber>();
-                    self.push(if lhs <= rhs { true } else { false });
+                    self.push(lhs <= rhs);
                 }
                 ByteCode::GreaterThan => {
                     let rhs = self.pop::<EMNumber>();
                     let lhs = self.pop::<EMNumber>();
-                    self.push(if lhs > rhs { true } else { false });
+                    self.push(lhs > rhs);
                 }
                 ByteCode::GreaterThanEqual => {
                     let rhs = self.pop::<EMNumber>();
                     let lhs = self.pop::<EMNumber>();
-                    self.push(if lhs >= rhs { true } else { false });
+                    self.push(lhs >= rhs);
                 }
                 ByteCode::Equal => {
                     let rhs = self.pop::<EMNumber>();
                     let lhs = self.pop::<EMNumber>();
-                    self.push(if lhs == rhs { true } else { false });
+                    self.push(lhs == rhs);
                 }
                 ByteCode::NotEqual => {
                     let rhs = self.pop::<EMNumber>();
                     let lhs = self.pop::<EMNumber>();
-                    self.push(if lhs != rhs { true } else { false });
+                    self.push(lhs != rhs);
                 }
                 ByteCode::Negative => {
                     let operand = self.pop::<EMNumber>();
@@ -218,31 +218,19 @@ impl VM {
                     let operand = self.pop::<EMBool>();
                     self.push(!operand);
                 }
-                ByteCode::Allocate => {
-                    return Err(Error::runtime_error((0, 0), "Not implemented"));
-                }
-                ByteCode::Release => {
-                    return Err(Error::runtime_error((0, 0), "Not implemented"));
-                }
             }
         }
 
         Ok(())
     }
-
-    fn alloc(&mut self) -> usize {
-        let ref_ = self.heap.len();
-        self.heap.insert(ref_, EMObject { memory: Vec::new(), type_: "Object".to_string() });
-        ref_
-    }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::code_generator::Generator;
     use crate::parser::parse;
     use crate::vm::VM;
     use std::fmt::Debug;
-    use crate::code_generator::Generator;
 
     fn test<T: Clone + PartialEq + Debug>(program: &str, expected: T) {
         let mut vm = VM::new();

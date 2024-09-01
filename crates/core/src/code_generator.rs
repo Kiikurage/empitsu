@@ -9,10 +9,6 @@ use crate::util::AsU8Slice;
 use std::collections::HashMap;
 use std::ops::Deref;
 
-trait AnalyzedTypeForCodeGenerator {
-    fn size(&self) -> usize;
-}
-
 impl AnalyzedType {
     fn size(&self) -> usize {
         match self {
@@ -32,9 +28,6 @@ struct StackFrame {
     stack_offset: usize,
     stack_size: usize,
 
-    /// Instruction pointer of the start of this frame
-    ip_start: usize,
-
     /// If this frame is breakable (i.e. frame made by for-loop)
     breakable: bool,
 
@@ -52,7 +45,6 @@ impl StackFrame {
             stack_size: 0,
             variables: HashMap::new(),
             breakable,
-            ip_start: 0usize,
             patch_ips: vec![],
         }
     }
@@ -76,7 +68,7 @@ pub struct Generator {
 impl Generator {
     pub fn generate(program: &Program) -> Result<Vec<u8>, Error> {
         let analyze_result = analyze(program);
-        if analyze_result.errors.len() > 0 {
+        if !analyze_result.errors.is_empty() {
             return Err(analyze_result.errors.first().unwrap().clone());
         }
 
@@ -128,10 +120,10 @@ impl Generator {
 
     fn generate_node(&mut self, node: &Node) {
         match node {
-            Node::ProgramNode(program) => {
+            Node::Program(program) => {
                 self.generate_program(program);
             }
-            Node::IfStatementNode(if_statement) => {
+            Node::IfStatement(if_statement) => {
                 self.generate_node(&if_statement.condition);
                 let ip_conditional_jump = self.write_jump_if_false(/*dummy*/ 0);
 
@@ -149,7 +141,7 @@ impl Generator {
                     }
                 }
             }
-            Node::ForStatementNode(for_) => {
+            Node::ForStatement(for_) => {
                 self.enter_scope(true);
                 {
                     // initializer
@@ -185,7 +177,7 @@ impl Generator {
                 }
                 self.exit_scope();
             }
-            Node::VariableDeclarationNode(ref variable_declaration) => {
+            Node::VariableDeclaration(ref variable_declaration) => {
                 let symbol_info = self.analyze_result.variables.get(&variable_declaration.name.position).unwrap();
 
                 match &variable_declaration.initializer {
@@ -204,17 +196,17 @@ impl Generator {
                     variable_declaration.name.position.clone(),
                 );
             }
-            Node::FunctionDeclarationNode(_) => unreachable!("FunctionDeclaration"),
-            Node::StructDeclarationNode(_) => unreachable!("StructDeclaration"),
-            Node::InterfaceDeclarationNode(_) => unreachable!("InterfaceDeclaration"),
-            Node::ImplStatementNode(_) => unreachable!("ImplStatement"),
-            Node::ReturnExpressionNode(_) => unreachable!("ReturnExpression"),
-            Node::BreakExpressionNode(..) => {
+            Node::FunctionDeclaration(_) => unreachable!("FunctionDeclaration"),
+            Node::StructDeclaration(_) => unreachable!("StructDeclaration"),
+            Node::InterfaceDeclaration(_) => unreachable!("InterfaceDeclaration"),
+            Node::ImplStatement(_) => unreachable!("ImplStatement"),
+            Node::ReturnExpression(_) => unreachable!("ReturnExpression"),
+            Node::BreakExpression(..) => {
                 let ip_break = self.write_jump(/*dummy*/ 0);
                 self.register_break_to_patch(ip_break);
             }
-            Node::FunctionExpressionNode(_) => unreachable!("FunctionExpression"),
-            Node::IfExpressionNode(if_expression) => {
+            Node::FunctionExpression(_) => unreachable!("FunctionExpression"),
+            Node::IfExpression(if_expression) => {
                 self.generate_node(&if_expression.condition);
                 let ip_conditional_jump = self.write_jump_if_false(/*dummy*/ 0);
 
@@ -226,23 +218,23 @@ impl Generator {
 
                 self.patch_address(ip_after_true_branch);
             }
-            Node::BlockExpressionNode(block) => {
+            Node::BlockExpression(block) => {
                 self.enter_scope(false);
                 for node in block.nodes.iter() {
                     self.generate_node(node);
                 }
                 self.exit_scope();
             }
-            Node::AssignmentExpressionNode(expression) => {
+            Node::AssignmentExpression(expression) => {
                 match &expression.lhs.deref() {
-                    Node::IdentifierNode(name) => {
+                    Node::Identifier(name) => {
                         self.generate_node(&expression.rhs);
                         self.store(&name.name)
                     }
                     _ => unreachable!("Assign to complex target is not supported")
                 }
             }
-            Node::BinaryExpressionNode(expression) => {
+            Node::BinaryExpression(expression) => {
                 self.generate_node(&expression.lhs);
                 self.generate_node(&expression.rhs);
                 match &expression.operator {
@@ -261,7 +253,7 @@ impl Generator {
                     _ => unreachable!("Unsupported binary operator: {:?}", expression.operator),
                 }
             }
-            Node::UnaryExpressionNode(expression) => {
+            Node::UnaryExpression(expression) => {
                 self.generate_node(&expression.operand);
                 match &expression.operator {
                     PunctuationKind::Plus => (),
@@ -270,18 +262,18 @@ impl Generator {
                     _ => unreachable!("Unsupported unary operator: {:?}", expression.operator),
                 }
             }
-            Node::CallExpressionNode(_expression) => unreachable!("CallExpression"),
-            Node::MemberExpressionNode(_expression) => unreachable!("MemberExpression"),
-            Node::IdentifierNode(name) => {
+            Node::CallExpression(_expression) => unreachable!("CallExpression"),
+            Node::MemberExpression(_expression) => unreachable!("MemberExpression"),
+            Node::Identifier(name) => {
                 self.load(&name.name);
             }
-            Node::NumberLiteralNode(value) => {
+            Node::NumberLiteral(value) => {
                 self.write_constant_number(value.value);
             }
-            Node::BoolLiteralNode(value) => {
+            Node::BoolLiteral(value) => {
                 self.write_constant_bool(value.value);
             }
-            Node::StringLiteralNode(string_literal) => {
+            Node::StringLiteral(string_literal) => {
                 self.write_load_literal(string_literal.value.as_bytes().to_vec());
             }
         }
@@ -292,56 +284,56 @@ impl Generator {
     }
 
     fn write_code(&mut self, code: ByteCode) {
-        self.write_bytes(&code.as_u8_slice());
+        self.write_bytes(code.as_u8_slice());
     }
 
     fn write_constant_number(&mut self, value: f64) {
         self.write_code(ByteCode::ConstantNumber);
-        self.write_bytes(&value.as_u8_slice());
+        self.write_bytes(value.as_u8_slice());
     }
 
     fn write_constant_bool(&mut self, value: bool) {
         self.write_code(ByteCode::ConstantBool);
-        self.write_bytes(&value.as_u8_slice());
+        self.write_bytes(value.as_u8_slice());
     }
 
     fn write_load_number(&mut self, offset: usize) {
         self.write_code(ByteCode::LoadNumber);
-        self.write_bytes(&offset.as_u8_slice());
+        self.write_bytes(offset.as_u8_slice());
     }
 
     fn write_load_bool(&mut self, offset: usize) {
         self.write_code(ByteCode::LoadBool);
-        self.write_bytes(&offset.as_u8_slice());
+        self.write_bytes(offset.as_u8_slice());
     }
 
     fn write_store_number(&mut self, offset: usize) {
         self.write_code(ByteCode::StoreNumber);
-        self.write_bytes(&offset.as_u8_slice());
+        self.write_bytes(offset.as_u8_slice());
     }
 
     fn write_store_bool(&mut self, offset: usize) {
         self.write_code(ByteCode::StoreBool);
-        self.write_bytes(&offset.as_u8_slice());
+        self.write_bytes(offset.as_u8_slice());
     }
 
     fn write_jump(&mut self, address: usize) -> usize {
         self.write_code(ByteCode::Jump);
         let ip = self.opcodes.len();
-        self.write_bytes(&address.as_u8_slice());
+        self.write_bytes(address.as_u8_slice());
         ip
     }
 
     fn write_jump_if_false(&mut self, address: usize) -> usize {
         self.write_code(ByteCode::JumpIfFalse);
         let ip = self.opcodes.len();
-        self.write_bytes(&address.as_u8_slice());
+        self.write_bytes(address.as_u8_slice());
         ip
     }
 
     fn write_flush(&mut self, expected_size: usize) {
         self.write_code(ByteCode::Flush);
-        self.write_bytes(&expected_size.as_u8_slice());
+        self.write_bytes(expected_size.as_u8_slice());
     }
 
     fn write_load_literal(&mut self, value: Vec<u8>) {
@@ -349,13 +341,13 @@ impl Generator {
         self.literals.push(value);
 
         self.write_code(ByteCode::LoadLiteral);
-        self.write_bytes(&(index as u32).as_u8_slice());
+        self.write_bytes((index as u32).as_u8_slice());
     }
 
     fn store(&mut self, name: &String) {
         for frame in self.frames.iter_mut().rev() {
             if let Some(variable) = frame.variables.get_mut(name) {
-                let offset = variable.offset.clone();
+                let offset = variable.offset;
                 match &self.analyze_result.variables.get(&variable.declared_at).unwrap().type_ {
                     AnalyzedType::Number => self.write_store_number(offset),
                     AnalyzedType::Bool => self.write_store_bool(offset),
@@ -372,7 +364,7 @@ impl Generator {
     fn load(&mut self, name: &str) {
         for frame in self.frames.iter_mut().rev() {
             if let Some(variable) = frame.variables.get(name) {
-                let offset = variable.offset.clone();
+                let offset = variable.offset;
                 match self.analyze_result.variables.get(&variable.declared_at).unwrap().type_ {
                     AnalyzedType::Number => self.write_load_number(offset),
                     AnalyzedType::Bool => self.write_load_bool(offset),
@@ -384,19 +376,11 @@ impl Generator {
         unreachable!("Variable {} is not declared", name);
     }
 
-    fn allocate(&mut self) {
-        self.write_code(ByteCode::Allocate);
-    }
-
-    fn release(&mut self) {
-        self.write_code(ByteCode::Release);
-    }
-
     /// Declare a new variable. Current stack top value is used as the initial value.
     fn declare_variable(&mut self, name: String, declared_at: Position) {
         let frame = self.frames.last_mut().unwrap();
         let size = &self.analyze_result.variables.get(&declared_at).unwrap().type_.size();
-        
+
         frame.variables.insert(name.clone(), Variable {
             offset: frame.stack_offset + frame.stack_size,
             declared_at,
@@ -406,8 +390,7 @@ impl Generator {
 
     fn enter_scope(&mut self, breakable: bool) {
         let frame = self.frames.last().unwrap();
-        let mut new_frame = StackFrame::new(frame.stack_offset + frame.stack_size, breakable);
-        new_frame.ip_start = self.opcodes.len();
+        let new_frame = StackFrame::new(frame.stack_offset + frame.stack_size, breakable);
         self.frames.push(new_frame);
     }
 

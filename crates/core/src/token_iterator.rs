@@ -33,7 +33,7 @@ impl TokenIterator {
         }
 
         let position = match ret {
-            Ok(token) => &token.position(),
+            Ok(token) => token.position(),
             Err(error) => &error.position,
         };
         self.last_position.line = position.line;
@@ -63,7 +63,7 @@ impl TokenIterator {
 
     pub fn position(&mut self) -> &Position {
         match self.raw_peek() {
-            Ok(ref token) => &token.position(),
+            Ok(ref token) => token.position(),
             Err(ref err) => &err.position
         }
     }

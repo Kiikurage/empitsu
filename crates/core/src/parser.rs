@@ -88,9 +88,11 @@ pub fn parse(input: &str) -> ParseResult {
     parse_program(&mut iter)
 }
 
+type Parser<T> = fn(tokens: &mut TokenIterator) -> Result<T, Error>;
+
 fn parse_one_of<T>(
     tokens: &mut TokenIterator,
-    parsers: Vec<fn(tokens: &mut TokenIterator) -> Result<T, Error>>,
+    parsers: Vec<Parser<T>>,
     expected_node: &str,
 ) -> Result<T, Error> {
     let current = tokens.raw_offset;
@@ -146,7 +148,7 @@ fn parse_statement(tokens: &mut TokenIterator) -> Result<Node, Error> {
         |tokens| parse_break_statement(tokens).map(Into::into),
         |tokens| parse_for_statement(tokens).map(Into::into),
         |tokens| parse_variable_declaration(tokens).map(Into::into),
-        |tokens| parse_function_declaration(tokens).map(|f| Node::FunctionDeclarationNode(f)),
+        |tokens| parse_function_declaration(tokens).map(Node::FunctionDeclaration),
         |tokens| parse_struct_declaration(tokens).map(Into::into),
         |tokens| parse_interface_declaration(tokens).map(Into::into),
         |tokens| parse_impl_statement(tokens).map(Into::into),
@@ -506,7 +508,7 @@ fn parse_unary_expression(tokens: &mut TokenIterator) -> Result<Node, Error> {
     tokens.next();
 
     let operand = parse_unary_expression(tokens)?;
-    if matches!(operand, Node::UnaryExpressionNode(..)) {
+    if matches!(operand, Node::UnaryExpression(..)) {
         return Err(Error::unexpected_token(operand.position().clone(), "expression"));
     }
 
@@ -519,7 +521,7 @@ fn parse_statement_expression(tokens: &mut TokenIterator) -> Result<Node, Error>
         |tokens| parse_block_expression(tokens).map(Block::into),
         |tokens| parse_return_expression(tokens).map(ReturnExpression::into),
         |tokens| parse_break_expression(tokens).map(BreakExpression::into),
-        |tokens| parse_function_expression(tokens).map(|f| Node::FunctionExpressionNode(f)),
+        |tokens| parse_function_expression(tokens).map(Node::FunctionExpression),
         |tokens| parse_call_expression(tokens),
     ], "expression")
 }
@@ -540,7 +542,7 @@ fn parse_if_expression(tokens: &mut TokenIterator) -> Result<IfExpression, Error
         condition,
         true_branch,
         false_branch,
-    ).into())
+    ))
 }
 
 fn parse_block_expression(tokens: &mut TokenIterator) -> Result<Block, Error> {

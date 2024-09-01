@@ -9,9 +9,9 @@ pub struct CallExpression {
     pub parameters: Vec<Parameter>,
 }
 
-impl Into<Node> for CallExpression {
-    fn into(self) -> Node {
-        Node::CallExpressionNode(self)
+impl From<CallExpression> for Node {
+    fn from(value: CallExpression) -> Node {
+        Node::CallExpression(value)
     }
 }
 

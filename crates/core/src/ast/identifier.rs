@@ -8,9 +8,9 @@ pub struct Identifier {
     pub position: Position,
 }
 
-impl Into<Node> for Identifier {
-    fn into(self) -> Node {
-        Node::IdentifierNode(self)
+impl From<Identifier> for Node {
+    fn from(value: Identifier) -> Node {
+        Node::Identifier(value)
     }
 }
 

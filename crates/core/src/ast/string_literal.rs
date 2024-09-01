@@ -8,9 +8,9 @@ pub struct StringLiteral {
     pub position: Position,
 }
 
-impl Into<Node> for StringLiteral {
-    fn into(self) -> Node {
-        Node::StringLiteralNode(self)
+impl From<StringLiteral> for Node {
+    fn from(value: StringLiteral) -> Node {
+        Node::StringLiteral(value)
     }
 }
 

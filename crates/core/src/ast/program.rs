@@ -8,9 +8,9 @@ pub struct Program {
     pub position: Position,
 }
 
-impl Into<Node> for Program {
-    fn into(self) -> Node {
-        Node::ProgramNode(self)
+impl From<Program> for Node {
+    fn from(value: Program) -> Node {
+        Node::Program(value)
     }
 }
 

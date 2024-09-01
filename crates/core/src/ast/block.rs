@@ -8,9 +8,9 @@ pub struct Block {
     pub position: Position,
 }
 
-impl Into<Node> for Block {
-    fn into(self) -> Node {
-        Node::BlockExpressionNode(self)
+impl From<Block> for Node {
+    fn from(value: Block) -> Node {
+        Node::BlockExpression(value)
     }
 }
 

@@ -8,9 +8,9 @@ pub struct ReturnExpression {
     pub position: Position,
 }
 
-impl Into<Node> for ReturnExpression {
-    fn into(self) -> Node {
-        Node::ReturnExpressionNode(self)
+impl From<ReturnExpression> for Node {
+    fn from(value: ReturnExpression) -> Node {
+        Node::ReturnExpression(value)
     }
 }
 

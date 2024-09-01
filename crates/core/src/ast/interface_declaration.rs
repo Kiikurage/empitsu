@@ -11,9 +11,9 @@ pub struct InterfaceDeclaration {
     pub position: Position,
 }
 
-impl Into<Node> for InterfaceDeclaration {
-    fn into(self) -> Node {
-        Node::InterfaceDeclarationNode(self)
+impl From<InterfaceDeclaration> for Node {
+    fn from(value: InterfaceDeclaration) -> Node {
+        Node::InterfaceDeclaration(value)
     }
 }
 

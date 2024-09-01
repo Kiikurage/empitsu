@@ -14,9 +14,9 @@ pub struct StructDeclaration {
     pub position: Position,
 }
 
-impl Into<Node> for StructDeclaration {
-    fn into(self) -> Node {
-        Node::StructDeclarationNode(self)
+impl From<StructDeclaration> for Node {
+    fn from(value: StructDeclaration) -> Node {
+        Node::StructDeclaration(value)
     }
 }
 

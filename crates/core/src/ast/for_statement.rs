@@ -11,9 +11,9 @@ pub struct ForStatement {
     pub position: Position,
 }
 
-impl Into<Node> for ForStatement {
-    fn into(self) -> Node {
-        Node::ForStatementNode(self)
+impl From<ForStatement> for Node {
+    fn from(value: ForStatement) -> Node {
+        Node::ForStatement(value)
     }
 }
 

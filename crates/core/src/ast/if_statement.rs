@@ -10,9 +10,9 @@ pub struct IfStatement {
     pub position: Position,
 }
 
-impl Into<Node> for IfStatement {
-    fn into(self) -> Node {
-        Node::IfStatementNode(self)
+impl From<IfStatement> for Node {
+    fn from(value: IfStatement) -> Node {
+        Node::IfStatement(value)
     }
 }
 

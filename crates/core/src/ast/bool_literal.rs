@@ -8,9 +8,9 @@ pub struct BoolLiteral {
     pub position: Position,
 }
 
-impl Into<Node> for BoolLiteral {
-    fn into(self) -> Node {
-        Node::BoolLiteralNode(self)
+impl From<BoolLiteral> for Node {
+    fn from(value: BoolLiteral) -> Node {
+        Node::BoolLiteral(value)
     }
 }
 

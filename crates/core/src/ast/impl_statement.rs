@@ -12,9 +12,9 @@ pub struct ImplStatement {
     pub position: Position,
 }
 
-impl Into<Node> for ImplStatement {
-    fn into(self) -> Node {
-        Node::ImplStatementNode(self)
+impl From<ImplStatement> for Node {
+    fn from(value: ImplStatement) -> Node {
+        Node::ImplStatement(value)
     }
 }
 
