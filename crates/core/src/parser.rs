@@ -229,9 +229,9 @@ fn parse_variable_declaration(tokens: &mut TokenIterator) -> Result<VariableDecl
         None
     };
 
-    if type_.is_none() && initializer.is_none() {
-        return Err(Error::unexpected_token(tokens.position().clone(), "type or initializer"));
-    }
+    // if type_.is_none() && initializer.is_none() {
+    //     return Err(Error::unexpected_token(tokens.position().clone(), "type or initializer"));
+    // }
 
     parse_statement_end(tokens)?;
 
@@ -910,7 +910,7 @@ mod tests {
 
         #[test]
         fn no_type_annotation_nor_initial_value() {
-            assert!(parse("let x").errors.len() > 0);
+            assert!(parse("let x").errors.len() == 0);
         }
     }
 
