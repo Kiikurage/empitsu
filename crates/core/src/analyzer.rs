@@ -40,17 +40,19 @@ pub enum AnalyzedType {
     Bool,
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct SymbolInfo {
-    name: String,
-    declared_at: Position,
-    type_: AnalyzedType,
+    pub name: String,
+    pub declared_at: Position,
+    pub type_: AnalyzedType,
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct ExpressionInfo {
-    position: Position,
-    type_: AnalyzedType,
+    pub type_: AnalyzedType,
 }
 
+#[derive(Clone, Debug, PartialEq)]
 pub struct ScopeInfo {
     /// Variables declared in this scope.
     declared_variables: HashMap<String, SymbolInfo>,
@@ -82,111 +84,111 @@ impl Context {
         }
     }
 
-    fn check_node(&mut self, node: &Node) {
+    fn analyze_node(&mut self, node: &Node) {
         match node {
-            Node::ProgramNode(program) => self.check_program(program),
-            Node::IfStatementNode(if_statement) => self.check_if_statement(if_statement),
-            Node::ForStatementNode(for_statement) => self.check_for_statement(for_statement),
-            Node::VariableDeclarationNode(variable_declaration) => self.check_variable_declaration(variable_declaration),
-            Node::FunctionDeclarationNode(function) => self.check_function(function),
-            Node::StructDeclarationNode(struct_) => self.check_struct_declaration(struct_),
-            Node::InterfaceDeclarationNode(interface) => self.check_interface(interface),
-            Node::ImplStatementNode(impl_statement) => self.check_impl_statement(impl_statement),
-            Node::ReturnExpressionNode(return_expression) => self.check_return_expression(return_expression),
-            Node::BreakExpressionNode(break_expression) => self.check_break_expression(break_expression),
-            Node::FunctionExpressionNode(function) => self.check_function(function),
-            Node::IfExpressionNode(if_expression) => self.check_if_expression(if_expression),
-            Node::BlockExpressionNode(block_expression) => self.check_block_expression(block_expression),
-            Node::AssignmentExpressionNode(assignment_expression) => self.check_assignment_expression(assignment_expression),
-            Node::BinaryExpressionNode(binary_expression) => self.check_binary_expression(binary_expression),
-            Node::UnaryExpressionNode(unary_expression) => self.check_unary_expression(unary_expression),
-            Node::CallExpressionNode(call_expression) => self.check_call_expression(call_expression),
-            Node::MemberExpressionNode(member_expression) => self.check_member_expression(member_expression),
-            Node::IdentifierNode(identifier) => self.check_identifier(identifier),
-            Node::NumberLiteralNode(number_literal) => self.check_number_literal(number_literal),
-            Node::BoolLiteralNode(bool_literal) => self.check_bool_literal(bool_literal),
-            Node::StringLiteralNode(string_literal) => self.check_string_literal(string_literal),
+            Node::ProgramNode(program) => self.analyze_program(program),
+            Node::IfStatementNode(if_statement) => self.analyze_if_statement(if_statement),
+            Node::ForStatementNode(for_statement) => self.analyze_for_statement(for_statement),
+            Node::VariableDeclarationNode(variable_declaration) => self.analyze_variable_declaration(variable_declaration),
+            Node::FunctionDeclarationNode(function) => self.analyze_function(function),
+            Node::StructDeclarationNode(struct_) => self.analyze_struct_declaration(struct_),
+            Node::InterfaceDeclarationNode(interface) => self.analyze_interface(interface),
+            Node::ImplStatementNode(impl_statement) => self.analyze_impl_statement(impl_statement),
+            Node::ReturnExpressionNode(return_expression) => self.analyze_return_expression(return_expression),
+            Node::BreakExpressionNode(break_expression) => self.analyze_break_expression(break_expression),
+            Node::FunctionExpressionNode(function) => self.analyze_function(function),
+            Node::IfExpressionNode(if_expression) => self.analyze_if_expression(if_expression),
+            Node::BlockExpressionNode(block_expression) => self.analyze_block_expression(block_expression),
+            Node::AssignmentExpressionNode(assignment_expression) => self.analyze_assignment_expression(assignment_expression),
+            Node::BinaryExpressionNode(binary_expression) => self.analyze_binary_expression(binary_expression),
+            Node::UnaryExpressionNode(unary_expression) => self.analyze_unary_expression(unary_expression),
+            Node::CallExpressionNode(call_expression) => self.analyze_call_expression(call_expression),
+            Node::MemberExpressionNode(member_expression) => self.analyze_member_expression(member_expression),
+            Node::IdentifierNode(identifier) => self.analyze_identifier(identifier),
+            Node::NumberLiteralNode(number_literal) => self.analyze_number_literal(number_literal),
+            Node::BoolLiteralNode(bool_literal) => self.analyze_bool_literal(bool_literal),
+            Node::StringLiteralNode(string_literal) => self.analyze_string_literal(string_literal),
         }
     }
 
-    fn check_nodes(&mut self, nodes: &[Node]) {
+    fn analyze_nodes(&mut self, nodes: &[Node]) {
         for node in nodes {
             if self.frames.last().unwrap().exited {
                 self.errors.push(Error::unreachable_code(node.position().clone()));
                 break;
             }
-            self.check_node(node);
+            self.analyze_node(node);
         }
     }
 
-    fn check_program(&mut self, program: &Program) {
+    fn analyze_program(&mut self, program: &Program) {
         self.enter_scope(false);
-        self.check_nodes(&program.statements);
+        self.analyze_nodes(&program.statements);
         self.exit_scope();
     }
 
-    fn check_if_statement(&mut self, if_statement: &IfStatement) {
-        self.check_node(&if_statement.condition);
-        self.check_node(&if_statement.true_branch);
+    fn analyze_if_statement(&mut self, if_statement: &IfStatement) {
+        self.analyze_node(&if_statement.condition);
+        self.analyze_node(&if_statement.true_branch);
         if let Some(false_branch) = &if_statement.false_branch {
-            self.check_node(false_branch.deref());
+            self.analyze_node(false_branch.deref());
         }
     }
 
-    fn check_for_statement(&mut self, for_statement: &ForStatement) {
+    fn analyze_for_statement(&mut self, for_statement: &ForStatement) {
         self.enter_scope(true);
         self.define_variable(&for_statement.variable);
         self.register_variable_type(&for_statement.variable, AnalyzedType::Number);
         self.initialize_variable(&for_statement.variable);
 
-        // self.check(&for_statement.iterable); // TODO
-        self.check_node(&for_statement.body);
+        // self.analyze_node(&for_statement.iterable); // TODO
+        self.analyze_node(&for_statement.body);
         self.exit_scope();
     }
 
-    fn check_variable_declaration(&mut self, variable_declaration: &VariableDeclaration) {
+    fn analyze_variable_declaration(&mut self, variable_declaration: &VariableDeclaration) {
         self.define_variable(&variable_declaration.name);
         if let Some(type_expression) = &variable_declaration.type_ {
             let type_ = self.evaluate_type_expression(type_expression);
             self.register_variable_type(&variable_declaration.name, type_);
         }
         if let Some(initializer) = &variable_declaration.initializer {
-            self.check_node(initializer);
+            self.analyze_node(initializer);
             let initializer_type = self.get_node_type(initializer);
             if let Some(type_expression) = &variable_declaration.type_ {
                 let expected_type = self.evaluate_type_expression(type_expression);
-                self.check_type_and_report(&initializer_type, &expected_type, initializer.position());
+                self.report_if_not_assignable(&initializer_type, &expected_type, initializer.position());
             }
             self.register_variable_type(&variable_declaration.name, initializer_type);
             self.initialize_variable(&variable_declaration.name);
         }
     }
 
-    fn check_function(&mut self, _function: &Function) {
-        unimplemented!("Function checking is not implemented yet");
+    fn analyze_function(&mut self, _function: &Function) {
+        unimplemented!("Function analysis is not implemented yet");
     }
 
-    fn check_struct_declaration(&mut self, _struct_: &StructDeclaration) {
-        unimplemented!("Struct checking is not implemented yet");
+    fn analyze_struct_declaration(&mut self, _struct_: &StructDeclaration) {
+        unimplemented!("Struct analysis is not implemented yet");
     }
 
-    fn check_interface(&mut self, _interface: &InterfaceDeclaration) {
-        unimplemented!("Interface checking is not implemented yet");
+    fn analyze_interface(&mut self, _interface: &InterfaceDeclaration) {
+        unimplemented!("Interface analysis is not implemented yet");
     }
 
-    fn check_impl_statement(&mut self, _impl_statement: &ImplStatement) {
-        unimplemented!("Impl checking is not implemented yet");
+    fn analyze_impl_statement(&mut self, _impl_statement: &ImplStatement) {
+        unimplemented!("Impl analysis is not implemented yet");
     }
 
-    fn check_return_expression(&mut self, _return_statement: &ReturnExpression) {
+    fn analyze_return_expression(&mut self, _return_statement: &ReturnExpression) {
         // Check if return value is valid
         // Check if return value type is correct
         // Check if it is inside a function
-        unimplemented!("Return checking is not implemented yet");
+        unimplemented!("Return analysis is not implemented yet");
     }
 
-    fn check_break_expression(&mut self, break_statement: &BreakExpression) {
-        if self.check_if_inside_of_loop() {
+    fn analyze_break_expression(&mut self, break_statement: &BreakExpression) {
+        if self.is_inside_of_loop() {
             self.mark_scopes_as_exited_by_break();
         } else {
             self.errors.push(Error::invalid_syntax(
@@ -196,22 +198,19 @@ impl Context {
         }
     }
 
-    fn check_if_expression(&mut self, if_expression: &IfExpression) {
-        self.check_node(&if_expression.condition);
-        self.check_node(&if_expression.true_branch);
-        self.check_node(&if_expression.false_branch);
+    fn analyze_if_expression(&mut self, if_expression: &IfExpression) {
+        self.analyze_node(&if_expression.condition);
+        self.analyze_node(&if_expression.true_branch);
+        self.analyze_node(&if_expression.false_branch);
 
         let condition_type = self.get_node_type(&if_expression.condition);
-        if !self.check_type(&condition_type, &AnalyzedType::Bool) {
-            self.errors.push(Error::incompatible_type(
-                if_expression.condition.position().clone(),
-                format!("Condition must be a boolean, but found {:?}", condition_type),
-            ));
+        if !self.is_assignable(&condition_type, &AnalyzedType::Bool) {
+            self.errors.push(Error::unexpected_type_in_if_condition(if_expression.condition.position().clone(), &condition_type));
         }
 
         let true_branch_type_ = self.get_node_type(&if_expression.true_branch);
         let false_branch_type_ = self.get_node_type(&if_expression.false_branch);
-        if self.check_type_and_report(
+        if self.report_if_not_assignable(
             &true_branch_type_,
             &false_branch_type_,
             if_expression.false_branch.position(),
@@ -222,14 +221,14 @@ impl Context {
         }
     }
 
-    fn check_block_expression(&mut self, block_expression: &Block) {
+    fn analyze_block_expression(&mut self, block_expression: &Block) {
         self.enter_scope(false);
-        self.check_nodes(&block_expression.nodes);
+        self.analyze_nodes(&block_expression.nodes);
         self.exit_scope();
     }
 
-    fn check_assignment_expression(&mut self, assignment_expression: &AssignmentExpression) {
-        self.check_node(&assignment_expression.rhs);
+    fn analyze_assignment_expression(&mut self, assignment_expression: &AssignmentExpression) {
+        self.analyze_node(&assignment_expression.rhs);
         let rhs_type = self.get_node_type(&assignment_expression.rhs);
 
         match assignment_expression.lhs.deref() {
@@ -240,7 +239,7 @@ impl Context {
                 }
                 if self.is_variable_initialized(&identifier.name) {
                     let lhs_type = self.get_variable_type(&identifier.name);
-                    self.check_type_and_report(&rhs_type, &lhs_type, assignment_expression.rhs.position());
+                    self.report_if_not_assignable(&rhs_type, &lhs_type, assignment_expression.rhs.position());
                 } else {
                     self.register_variable_type(identifier, rhs_type.clone());
                     self.initialize_variable(identifier);
@@ -257,9 +256,9 @@ impl Context {
         self.register_expression_type(assignment_expression.position().clone(), rhs_type);
     }
 
-    fn check_binary_expression(&mut self, binary_expression: &BinaryExpression) {
-        self.check_node(&binary_expression.lhs);
-        self.check_node(&binary_expression.rhs);
+    fn analyze_binary_expression(&mut self, binary_expression: &BinaryExpression) {
+        self.analyze_node(&binary_expression.lhs);
+        self.analyze_node(&binary_expression.rhs);
         let lhs_type = self.get_node_type(&binary_expression.lhs);
         let rhs_type = self.get_node_type(&binary_expression.rhs);
         let (expected_lhs_type, expected_rhs_type, result_type) = match binary_expression.operator {
@@ -282,14 +281,14 @@ impl Context {
             _ => panic!("Unexpected binary operator {:?}", binary_expression.operator),
         };
 
-        self.check_type_and_report(&lhs_type, &expected_lhs_type, binary_expression.lhs.position());
-        self.check_type_and_report(&rhs_type, &expected_rhs_type, binary_expression.rhs.position());
+        self.report_if_not_assignable(&lhs_type, &expected_lhs_type, binary_expression.lhs.position());
+        self.report_if_not_assignable(&rhs_type, &expected_rhs_type, binary_expression.rhs.position());
 
         self.register_expression_type(binary_expression.position().clone(), result_type);
     }
 
-    fn check_unary_expression(&mut self, unary_expression: &UnaryExpression) {
-        self.check_node(&unary_expression.operand);
+    fn analyze_unary_expression(&mut self, unary_expression: &UnaryExpression) {
+        self.analyze_node(&unary_expression.operand);
         let operand_type = self.get_node_type(&unary_expression.operand);
 
         let (expected_operand_type, result_type) = match unary_expression.operator {
@@ -298,20 +297,20 @@ impl Context {
             _ => panic!("Unexpected unary operator {:?}", unary_expression.operator),
         };
 
-        self.check_type_and_report(&operand_type, &expected_operand_type, unary_expression.operand.position());
+        self.report_if_not_assignable(&operand_type, &expected_operand_type, unary_expression.operand.position());
 
         self.register_expression_type(unary_expression.position().clone(), result_type);
     }
 
-    fn check_call_expression(&mut self, _call_expression: &CallExpression) {
-        unimplemented!("Call checking is not implemented yet");
+    fn analyze_call_expression(&mut self, _call_expression: &CallExpression) {
+        unimplemented!("Call analysis is not implemented yet");
     }
 
-    fn check_member_expression(&mut self, _member_expression: &MemberExpression) {
-        unimplemented!("Member checking is not implemented yet");
+    fn analyze_member_expression(&mut self, _member_expression: &MemberExpression) {
+        unimplemented!("Member analysis is not implemented yet");
     }
 
-    fn check_identifier(&mut self, identifier: &Identifier) {
+    fn analyze_identifier(&mut self, identifier: &Identifier) {
         if !self.is_variable_defined(&identifier.name) {
             self.errors.push(Error::undefined_symbol(identifier.position().clone(), identifier.name.clone()));
             self.define_variable(identifier);
@@ -323,15 +322,15 @@ impl Context {
         self.register_expression_type(identifier.position().clone(), self.get_variable_type(&identifier.name));
     }
 
-    fn check_number_literal(&mut self, number_literal: &NumberLiteral) {
+    fn analyze_number_literal(&mut self, number_literal: &NumberLiteral) {
         self.register_expression_type(number_literal.position().clone(), AnalyzedType::Number);
     }
 
-    fn check_bool_literal(&mut self, bool_literal: &BoolLiteral) {
+    fn analyze_bool_literal(&mut self, bool_literal: &BoolLiteral) {
         self.register_expression_type(bool_literal.position().clone(), AnalyzedType::Bool);
     }
 
-    fn check_string_literal(&mut self, string_literal: &StringLiteral) {
+    fn analyze_string_literal(&mut self, string_literal: &StringLiteral) {
         // TODO
         self.register_expression_type(string_literal.position().clone(), AnalyzedType::Any);
     }
@@ -393,7 +392,7 @@ impl Context {
 
     // Loop
 
-    fn check_if_inside_of_loop(&self) -> bool {
+    fn is_inside_of_loop(&self) -> bool {
         for frame in self.frames.iter().rev() {
             if frame.is_breakable {
                 return true;
@@ -415,6 +414,7 @@ impl Context {
         for frame in self.frames.iter_mut().rev() {
             if let Some(symbol) = frame.declared_variables.get_mut(&identifier.name) {
                 symbol.type_ = type_;
+                self.variables.insert(symbol.declared_at.clone(), symbol.clone());
                 return;
             }
         }
@@ -422,13 +422,12 @@ impl Context {
     }
 
     fn register_expression_type(&mut self, position: Position, type_: AnalyzedType) {
-        self.expressions.insert(position.clone(), ExpressionInfo {
-            position,
+        self.expressions.insert(position, ExpressionInfo {
             type_,
         });
     }
 
-    fn check_type(&self, from: &AnalyzedType, to: &AnalyzedType) -> bool {
+    fn is_assignable(&self, from: &AnalyzedType, to: &AnalyzedType) -> bool {
         match (from, to) {
             (AnalyzedType::NotInitialized, _) => false,
             (_, AnalyzedType::NotInitialized) => false,
@@ -440,13 +439,10 @@ impl Context {
         }
     }
 
-    fn check_type_and_report(&mut self, from: &AnalyzedType, to: &AnalyzedType, position: &Position) -> bool {
-        let is_assignable = self.check_type(from, to);
+    fn report_if_not_assignable(&mut self, from: &AnalyzedType, to: &AnalyzedType, position: &Position) -> bool {
+        let is_assignable = self.is_assignable(from, to);
         if !is_assignable {
-            self.errors.push(Error::incompatible_type(
-                position.clone(),
-                format!("Expected type is {:?}, but actual type is {:?}", to, from),
-            ));
+            self.errors.push(Error::unexpected_type(position.clone(), to, from));
         }
 
         is_assignable
@@ -485,18 +481,18 @@ impl Context {
     }
 }
 
-pub struct CheckResult {
+pub struct AnalyzeResult {
     pub variables: HashMap<Position, SymbolInfo>,
     pub expressions: HashMap<Position, ExpressionInfo>,
     pub errors: Vec<Error>,
 }
 
-pub fn check(program: &Program) -> CheckResult {
+pub fn analyze(program: &Program) -> AnalyzeResult {
     let mut context = Context::new();
 
-    context.check_program(program);
+    context.analyze_program(program);
 
-    CheckResult {
+    AnalyzeResult {
         variables: context.variables,
         expressions: context.expressions,
         errors: context.errors,
@@ -505,12 +501,12 @@ pub fn check(program: &Program) -> CheckResult {
 
 #[cfg(test)]
 mod test {
-    use crate::checker::{check, CheckResult};
+    use crate::analyzer::{analyze, AnalyzeResult};
     use crate::error::Error;
     use crate::parser::parse;
 
     mod use_undefined_variable {
-        use crate::checker::test::{test, AssertMethods};
+        use crate::analyzer::test::{test, AssertMethods};
         use crate::error::Error;
 
         #[test]
@@ -522,7 +518,7 @@ mod test {
     }
 
     mod use_uninitialized_variable {
-        use crate::checker::test::{test, AssertMethods};
+        use crate::analyzer::test::{test, AssertMethods};
         use crate::error::Error;
 
         #[test]
@@ -533,8 +529,9 @@ mod test {
         }
     }
 
-    mod type_check_in_initialization {
-        use crate::checker::test::{test, AssertMethods};
+    mod type_analyze_in_initialization {
+        use crate::analyzer::test::{test, AssertMethods};
+        use crate::analyzer::AnalyzedType;
         use crate::error::Error;
 
         #[test]
@@ -545,13 +542,14 @@ mod test {
         #[test]
         fn invalid_type() {
             test(r#"let x:number = false"#).assert_errors(vec![
-                Error::incompatible_type((0, 15), "Expected type is Number, but actual type is Bool")
+                Error::unexpected_type((0, 15), &AnalyzedType::Number, &AnalyzedType::Bool)
             ])
         }
     }
 
-    mod type_check_in_assignment {
-        use crate::checker::test::{test, AssertMethods};
+    mod type_analyze_in_assignment {
+        use crate::analyzer::test::{test, AssertMethods};
+        use crate::analyzer::AnalyzedType;
         use crate::error::Error;
 
         #[test]
@@ -562,13 +560,14 @@ mod test {
         #[test]
         fn invalid_type() {
             test(r#"let x:number = 2; x = false"#).assert_errors(vec![
-                Error::incompatible_type((0, 22), "Expected type is Number, but actual type is Bool")
+                Error::unexpected_type((0, 22), &AnalyzedType::Number, &AnalyzedType::Bool)
             ])
         }
     }
 
-    mod type_check_in_binary_expression {
-        use crate::checker::test::{test, AssertMethods};
+    mod type_analyze_in_binary_expression {
+        use crate::analyzer::test::{test, AssertMethods};
+        use crate::analyzer::AnalyzedType;
         use crate::error::Error;
 
         #[test]
@@ -579,28 +578,29 @@ mod test {
         #[test]
         fn invalid_type_in_rhs() {
             test(r#"1 + false"#).assert_errors(vec![
-                Error::incompatible_type((0, 4), "Expected type is Number, but actual type is Bool")
+                Error::unexpected_type((0, 4), &AnalyzedType::Number, &AnalyzedType::Bool)
             ])
         }
 
         #[test]
         fn invalid_type_in_lhs() {
             test(r#"true + 1"#).assert_errors(vec![
-                Error::incompatible_type((0, 0), "Expected type is Number, but actual type is Bool")
+                Error::unexpected_type((0, 0), &AnalyzedType::Number, &AnalyzedType::Bool)
             ])
         }
 
         #[test]
         fn invalid_type_in_both() {
             test(r#"true + false"#).assert_errors(vec![
-                Error::incompatible_type((0, 0), "Expected type is Number, but actual type is Bool"),
-                Error::incompatible_type((0, 7), "Expected type is Number, but actual type is Bool")
+                Error::unexpected_type((0, 0), &AnalyzedType::Number, &AnalyzedType::Bool),
+                Error::unexpected_type((0, 7), &AnalyzedType::Number, &AnalyzedType::Bool)
             ])
         }
     }
 
-    mod type_check_in_unary_expression {
-        use crate::checker::test::{test, AssertMethods};
+    mod type_analyze_in_unary_expression {
+        use crate::analyzer::AnalyzedType;
+        use crate::analyzer::test::{test, AssertMethods};
         use crate::error::Error;
 
         #[test]
@@ -611,13 +611,14 @@ mod test {
         #[test]
         fn invalid_type() {
             test(r#"!1"#).assert_errors(vec![
-                Error::incompatible_type((0, 1), "Expected type is Bool, but actual type is Number")
+                Error::unexpected_type((0, 1), &AnalyzedType::Bool, &AnalyzedType::Number)
             ])
         }
     }
 
-    mod type_check_for_loop_variable {
-        use crate::checker::test::{test, AssertMethods};
+    mod type_analyze_for_loop_variable {
+        use crate::analyzer::AnalyzedType;
+        use crate::analyzer::test::{test, AssertMethods};
         use crate::error::Error;
 
         #[test]
@@ -637,13 +638,13 @@ mod test {
             for (i in iterable) {
                 x = i
             }"#).assert_errors(vec![
-                Error::incompatible_type((3, 20), "Expected type is Bool, but actual type is Number")
+                Error::unexpected_type((3, 20), &AnalyzedType::Bool, &AnalyzedType::Number)
             ])
         }
     }
 
     mod unreachable_code_due_to_break {
-        use crate::checker::test::{test, AssertMethods};
+        use crate::analyzer::test::{test, AssertMethods};
         use crate::error::Error;
 
         #[test]
@@ -686,13 +687,13 @@ mod test {
         fn assert_errors(&self, expected: Vec<Error>);
     }
 
-    impl AssertMethods for CheckResult {
+    impl AssertMethods for AnalyzeResult {
         fn assert_errors(&self, expected: Vec<Error>) {
             assert_eq!(self.errors, expected);
         }
     }
 
-    fn test(src: &str) -> CheckResult {
+    fn test(src: &str) -> AnalyzeResult {
         let parse_result = parse(src);
         if !parse_result.errors.is_empty() {
             for error in parse_result.errors {
@@ -701,6 +702,6 @@ mod test {
             panic!("Failed to parse");
         }
 
-        check(&parse_result.program)
+        analyze(&parse_result.program)
     }
 }

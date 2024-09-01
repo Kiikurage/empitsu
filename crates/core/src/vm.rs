@@ -1,10 +1,10 @@
 use crate::bytecode::{ByteCode, EMBool, EMNumber};
-use crate::code_generator::generate;
 use crate::error::Error;
 use crate::parser::parse;
 use crate::util::{AsU8Slice, ParseAs};
 use std::collections::HashMap;
 use std::fmt::Debug;
+use crate::code_generator::Generator;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct EMObject {
@@ -30,7 +30,7 @@ impl VM {
             return Err(parse_result.errors[0].clone());
         }
 
-        let codes = generate(&parse_result.program)?;
+        let codes = Generator::generate(&parse_result.program)?;
         self.eval_codes(&codes)?;
         Ok(&self.stack.parse_as::<EMNumber>(self.stack.len() - size_of::<EMNumber>()))
     }
@@ -239,17 +239,17 @@ impl VM {
 
 #[cfg(test)]
 mod tests {
-    use crate::code_generator::generate;
     use crate::parser::parse;
     use crate::vm::VM;
     use std::fmt::Debug;
+    use crate::code_generator::Generator;
 
     fn test<T: Clone + PartialEq + Debug>(program: &str, expected: T) {
         let mut vm = VM::new();
         let result = parse(program);
         assert_eq!(result.errors, vec![]);
 
-        let codes = generate(&result.program).unwrap();
+        let codes = Generator::generate(&result.program).unwrap();
 
         vm.eval_codes(&codes).unwrap();
 

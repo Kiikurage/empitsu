@@ -1,6 +1,6 @@
 use std::fmt::{Debug, Display};
 
-#[derive(PartialEq, Eq, Clone, Hash)]
+#[derive(PartialEq, Eq, Clone, Hash, Debug)]
 pub struct Position {
     pub line: usize,
     pub column: usize,
@@ -19,12 +19,6 @@ impl Position {
 }
 
 impl Display for Position {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}:{}", self.line + 1, self.column + 1)
-    }
-}
-
-impl Debug for Position {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}:{}", self.line + 1, self.column + 1)
     }

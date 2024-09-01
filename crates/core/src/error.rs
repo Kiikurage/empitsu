@@ -1,3 +1,4 @@
+use crate::analyzer::AnalyzedType;
 use crate::position::Position;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -13,8 +14,13 @@ impl Error {
     }
 
     #[inline(always)]
-    pub fn incompatible_type(position: impl Into<Position>, message: impl Into<String>) -> Error {
-        Error { position: position.into(), message: message.into() }
+    pub fn unexpected_type(position: impl Into<Position>, expected: &AnalyzedType, actual: &AnalyzedType) -> Error {
+        Error { position: position.into(), message: format!("Expected type is {:?}, but actual type is {:?}", expected, actual) }
+    }
+
+    #[inline(always)]
+    pub fn unexpected_type_in_if_condition(position: impl Into<Position>, actual: &AnalyzedType) -> Error {
+        Error { position: position.into(), message: format!("Condition must be a boolean, but found {:?}", actual) }
     }
 
     #[inline(always)]

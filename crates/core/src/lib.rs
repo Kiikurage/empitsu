@@ -13,4 +13,4 @@ mod bytecode;
 mod code_generator;
 mod util;
 mod ast;
-mod checker;
+mod analyzer;

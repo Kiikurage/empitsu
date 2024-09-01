@@ -17,6 +17,6 @@ extern {
 pub fn evaluate(input: &str) -> String {
     match VM::new().eval(input) {
         Ok(result) => result.to_string(),
-        Err(error) => error.message
+        Err(error) => format!("Error({}) {}", error.position, error.message)
     }
 }

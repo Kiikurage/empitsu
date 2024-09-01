@@ -1,32 +1,31 @@
+use crate::analyzer::{analyze, AnalyzeResult, AnalyzedType};
 use crate::ast::node::Node;
 use crate::ast::program::Program;
-use crate::ast::traits::GetPosition;
-use crate::ast::type_expression::TypeExpression;
 use crate::bytecode::ByteCode;
-use crate::checker::check;
 use crate::error::Error;
+use crate::position::Position;
 use crate::punctuation_kind::PunctuationKind;
 use crate::util::AsU8Slice;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::ops::Deref;
 
-enum PrimitiveType {
-    Number,
-    Bool,
+trait AnalyzedTypeForCodeGenerator {
+    fn size(&self) -> usize;
 }
 
-impl PrimitiveType {
+impl AnalyzedType {
     fn size(&self) -> usize {
         match self {
-            PrimitiveType::Number => size_of::<f64>(),
-            PrimitiveType::Bool => size_of::<bool>(),
+            AnalyzedType::Number => size_of::<f64>(),
+            AnalyzedType::Bool => size_of::<bool>(),
+            _ => unreachable!("Unsupported type: {:?}", self),
         }
     }
 }
 
 struct Variable {
     offset: usize,
-    type_: PrimitiveType,
+    declared_at: Position,
 }
 
 struct StackFrame {
@@ -44,9 +43,6 @@ struct StackFrame {
 
     /// List of instruction pointer that requires to be patched with ip_end
     patch_ips: Vec<usize>,
-
-    /// Variables initialized in this scope
-    initialized: HashSet<String>,
 }
 
 impl StackFrame {
@@ -58,15 +54,15 @@ impl StackFrame {
             breakable,
             ip_start: 0usize,
             patch_ips: vec![],
-            initialized: HashSet::new(),
         }
     }
 }
 
-struct CodeGenerator {
+pub struct Generator {
     opcodes: Vec<u8>,
     frames: Vec<StackFrame>,
     literals: Vec<Vec<u8>>,
+    analyze_result: AnalyzeResult,
 }
 
 ///
@@ -77,16 +73,25 @@ struct CodeGenerator {
 /// - op codes
 ///
 
-impl CodeGenerator {
-    fn new() -> Self {
-        Self {
+impl Generator {
+    pub fn generate(program: &Program) -> Result<Vec<u8>, Error> {
+        let analyze_result = analyze(program);
+        if analyze_result.errors.len() > 0 {
+            return Err(analyze_result.errors.first().unwrap().clone());
+        }
+
+        let mut generator = Self {
             literals: vec![],
             opcodes: vec![],
             frames: vec![StackFrame::new(0, false)],
-        }
+            analyze_result,
+        };
+
+        generator.generate_program(program);
+        Ok(generator.get_codes())
     }
 
-    pub fn get_codes(&self) -> Vec<u8> {
+    fn get_codes(&self) -> Vec<u8> {
         let mut codes = Vec::new();
 
         codes.extend((self.literals.len() as u32).as_u8_slice());
@@ -115,24 +120,28 @@ impl CodeGenerator {
         self.opcodes[ip..ip + size_of::<usize>()].copy_from_slice(address.as_u8_slice());
     }
 
-    fn generate_node(&mut self, node: &Node) -> Result<(), Error> {
+    fn generate_program(&mut self, program: &Program) {
+        for statement in program.statements.iter() {
+            self.generate_node(statement);
+        }
+    }
+
+    fn generate_node(&mut self, node: &Node) {
         match node {
             Node::ProgramNode(program) => {
-                for statement in program.statements.iter() {
-                    self.generate_node(statement)?;
-                }
+                self.generate_program(program);
             }
             Node::IfStatementNode(if_statement) => {
-                self.generate_node(&if_statement.condition)?;
+                self.generate_node(&if_statement.condition);
                 let ip_conditional_jump = self.write_jump_if_false(/*dummy*/ 0);
 
-                self.generate_node(&if_statement.true_branch)?;
+                self.generate_node(&if_statement.true_branch);
 
                 match &if_statement.false_branch {
                     Some(false_branch) => {
                         let ip_after_true_branch = self.write_jump(/*dummy*/ 0);
                         self.patch_address(ip_conditional_jump);
-                        self.generate_node(false_branch)?;
+                        self.generate_node(false_branch);
                         self.patch_address(ip_after_true_branch);
                     }
                     None => {
@@ -145,34 +154,28 @@ impl CodeGenerator {
                 {
                     // initializer
                     self.write_constant_number(0.0);
-                    self.declare_variable(for_.variable.name.clone(), PrimitiveType::Number, true);
+                    self.declare_variable(
+                        for_.variable.name.clone(),
+                        for_.variable.position.clone(),
+                    );
 
                     // condition
                     let ip_condition_start = self.opcodes.len();
                     self.enter_scope(true);
                     {
-                        match self.load(&for_.variable.name) {
-                            Ok(()) => (),
-                            Err(message) => return Err(Error::invalid_syntax(for_.position.clone(), message)),
-                        }
+                        self.load(&for_.variable.name);
                         self.write_constant_number(5.0);
                         self.write_code(ByteCode::LessThan);
                         let ip_conditional_jump = self.write_jump_if_false(/*dummy*/ 0);
 
                         // body
-                        self.generate_node(&for_.body)?;
+                        self.generate_node(&for_.body);
 
                         // update
-                        match self.load(&for_.variable.name) {
-                            Ok(()) => (),
-                            Err(message) => return Err(Error::invalid_syntax(for_.position.clone(), message)),
-                        }
+                        self.load(&for_.variable.name);
                         self.write_constant_number(1.0);
                         self.write_code(ByteCode::Add);
-                        match self.store(&for_.variable.name) {
-                            Ok(()) => (),
-                            Err(message) => return Err(Error::invalid_syntax(for_.position.clone(), message)),
-                        }
+                        self.store(&for_.variable.name);
 
                         // loop
                         self.write_jump(ip_condition_start);
@@ -183,77 +186,65 @@ impl CodeGenerator {
                 self.exit_scope();
             }
             Node::VariableDeclarationNode(ref variable_declaration) => {
+                let symbol_info = self.analyze_result.variables.get(&variable_declaration.name.position).unwrap();
+
                 match &variable_declaration.initializer {
-                    Some(initializer) => {
-                        self.generate_node(initializer)?;
-                        self.declare_variable(variable_declaration.name.name.clone(), PrimitiveType::Number, true);
-                    }
+                    Some(initializer) => self.generate_node(initializer),
                     None => {
-                        match variable_declaration.type_ {
-                            Some(TypeExpression::Identifier(ref name)) => {
-                                match name.as_str() {
-                                    "number" => {
-                                        self.declare_variable(variable_declaration.name.name.clone(), PrimitiveType::Number, false)
-                                    }
-                                    "bool" => {
-                                        self.declare_variable(variable_declaration.name.name.clone(), PrimitiveType::Bool, false)
-                                    }
-                                    _ => return Err(Error::not_implemented(variable_declaration.position.clone(), format!("Unsupported type: {}", name))),
-                                }
-                            }
-                            Some(..) => return Err(Error::not_implemented(variable_declaration.position.clone(), "Only identifier type is supported")),
-                            None => return Err(Error::invalid_syntax(variable_declaration.position.clone(), "Type or initializer is required for variable declaration")),
-                        };
+                        match symbol_info.type_ {
+                            AnalyzedType::Number => self.write_constant_number(0.0),
+                            AnalyzedType::Bool => self.write_constant_bool(false),
+                            _ => unreachable!("Expected primitive type"),
+                        }
                     }
                 }
+
+                self.declare_variable(
+                    variable_declaration.name.name.clone(),
+                    variable_declaration.name.position.clone(),
+                );
             }
-            Node::FunctionDeclarationNode(_) => return Err(Error::not_implemented(node.position().clone(), "FunctionDeclaration")),
-            Node::StructDeclarationNode(_) => return Err(Error::not_implemented(node.position().clone(), "StructDeclaration")),
-            Node::InterfaceDeclarationNode(_) => return Err(Error::not_implemented(node.position().clone(), "InterfaceDeclaration")),
-            Node::ImplStatementNode(_) => return Err(Error::not_implemented(node.position().clone(), "ImplStatement")),
-            Node::ReturnExpressionNode(_) => return Err(Error::not_implemented(node.position().clone(), "ReturnExpression")),
+            Node::FunctionDeclarationNode(_) => unreachable!("FunctionDeclaration"),
+            Node::StructDeclarationNode(_) => unreachable!("StructDeclaration"),
+            Node::InterfaceDeclarationNode(_) => unreachable!("InterfaceDeclaration"),
+            Node::ImplStatementNode(_) => unreachable!("ImplStatement"),
+            Node::ReturnExpressionNode(_) => unreachable!("ReturnExpression"),
             Node::BreakExpressionNode(..) => {
                 let ip_break = self.write_jump(/*dummy*/ 0);
-                match self.register_break_to_patch(ip_break) {
-                    Ok(()) => (),
-                    Err(message) => return Err(Error::invalid_syntax(node.position().clone(), message)),
-                }
+                self.register_break_to_patch(ip_break);
             }
-            Node::FunctionExpressionNode(_) => return Err(Error::not_implemented(node.position().clone(), "FunctionExpression")),
+            Node::FunctionExpressionNode(_) => unreachable!("FunctionExpression"),
             Node::IfExpressionNode(if_expression) => {
-                self.generate_node(&if_expression.condition)?;
+                self.generate_node(&if_expression.condition);
                 let ip_conditional_jump = self.write_jump_if_false(/*dummy*/ 0);
 
-                self.generate_node(&if_expression.true_branch)?;
+                self.generate_node(&if_expression.true_branch);
                 let ip_after_true_branch = self.write_jump(/*dummy*/ 0);
 
                 self.patch_address(ip_conditional_jump);
-                self.generate_node(&if_expression.false_branch)?;
+                self.generate_node(&if_expression.false_branch);
 
                 self.patch_address(ip_after_true_branch);
             }
             Node::BlockExpressionNode(block) => {
                 self.enter_scope(false);
                 for node in block.nodes.iter() {
-                    self.generate_node(node)?;
+                    self.generate_node(node);
                 }
                 self.exit_scope();
             }
             Node::AssignmentExpressionNode(expression) => {
                 match &expression.lhs.deref() {
                     Node::IdentifierNode(name) => {
-                        self.generate_node(&expression.rhs)?;
-                        match self.store(&name.name) {
-                            Ok(()) => (),
-                            Err(message) => return Err(Error::invalid_syntax(node.position().clone(), message)),
-                        }
+                        self.generate_node(&expression.rhs);
+                        self.store(&name.name)
                     }
-                    _ => return Err(Error::not_implemented(node.position().clone(), "Assign to complex target is not supported")),
+                    _ => unreachable!("Assign to complex target is not supported")
                 }
             }
             Node::BinaryExpressionNode(expression) => {
-                self.generate_node(&expression.lhs)?;
-                self.generate_node(&expression.rhs)?;
+                self.generate_node(&expression.lhs);
+                self.generate_node(&expression.rhs);
                 match &expression.operator {
                     PunctuationKind::Plus => self.write_code(ByteCode::Add),
                     PunctuationKind::Minus => self.write_code(ByteCode::Subtract),
@@ -267,33 +258,22 @@ impl CodeGenerator {
                     PunctuationKind::RightChevronEqual => self.write_code(ByteCode::GreaterThanEqual),
                     PunctuationKind::EqualEqual => self.write_code(ByteCode::Equal),
                     PunctuationKind::ExclamationEqual => self.write_code(ByteCode::NotEqual),
-                    _ => return Err(Error::not_implemented(
-                        node.position().clone(),
-                        format!("Unsupported binary operator: {:?}", expression.operator),
-                    )),
+                    _ => unreachable!("Unsupported binary operator: {:?}", expression.operator),
                 }
             }
             Node::UnaryExpressionNode(expression) => {
-                self.generate_node(&expression.operand)?;
+                self.generate_node(&expression.operand);
                 match &expression.operator {
                     PunctuationKind::Plus => (),
                     PunctuationKind::Minus => self.write_code(ByteCode::Negative),
                     PunctuationKind::Exclamation => self.write_code(ByteCode::LogicalNot),
-                    _ => return Err(Error::not_implemented(
-                        node.position().clone(),
-                        format!("Unsupported unary operator: {:?}", expression.operator),
-                    )),
+                    _ => unreachable!("Unsupported unary operator: {:?}", expression.operator),
                 }
             }
-            Node::CallExpressionNode(_expression) =>
-                return Err(Error::not_implemented(node.position().clone(), "CallExpression")),
-            Node::MemberExpressionNode(_expression) =>
-                return Err(Error::not_implemented(node.position().clone(), "MemberExpression")),
+            Node::CallExpressionNode(_expression) => unreachable!("CallExpression"),
+            Node::MemberExpressionNode(_expression) => unreachable!("MemberExpression"),
             Node::IdentifierNode(name) => {
-                match self.load(&name.name) {
-                    Ok(()) => (),
-                    Err(message) => return Err(Error::invalid_syntax(node.position().clone(), message)),
-                }
+                self.load(&name.name);
             }
             Node::NumberLiteralNode(value) => {
                 self.write_constant_number(value.value);
@@ -305,8 +285,6 @@ impl CodeGenerator {
                 self.write_load_literal(string_literal.value.as_bytes().to_vec());
             }
         }
-
-        Ok(())
     }
 
     fn write_bytes(&mut self, bytes: &[u8]) {
@@ -374,54 +352,36 @@ impl CodeGenerator {
         self.write_bytes(&(index as u32).as_u8_slice());
     }
 
-    /// Check if the given variable is initialized in the current scope
-    fn initialized(&mut self, name: &String) -> bool {
-        for frame in self.frames.iter_mut().rev() {
-            if frame.initialized.contains(name) {
-                return true;
-            }
-            if let Some(..) = frame.variables.get_mut(name) {
-                return false;
-            }
-        }
-
-        // Variable is not declared
-        false
-    }
-
-    fn store(&mut self, name: &String) -> Result<(), String> {
+    fn store(&mut self, name: &String) {
         for frame in self.frames.iter_mut().rev() {
             if let Some(variable) = frame.variables.get_mut(name) {
                 let offset = variable.offset.clone();
-                match variable.type_ {
-                    PrimitiveType::Number => self.write_store_number(offset),
-                    PrimitiveType::Bool => self.write_store_bool(offset),
+                match &self.analyze_result.variables.get(&variable.declared_at).unwrap().type_ {
+                    AnalyzedType::Number => self.write_store_number(offset),
+                    AnalyzedType::Bool => self.write_store_bool(offset),
+                    _ => unreachable!("Expected primitive type"),
                 }
-                return Ok(());
+                return;
             }
         }
 
-        Err(format!("Variable {} is not declared", name))
+        unreachable!("Variable {} is not declared", name)
     }
 
     /// Load a value from the variable and push it to the stack
-    fn load(&mut self, name: &str) -> Result<(), String> {
-        if !self.initialized(&name.to_string()) {
-            return Err(format!("Variable \"{}\" is used before initialized", name));
-        }
-
+    fn load(&mut self, name: &str) {
         for frame in self.frames.iter_mut().rev() {
             if let Some(variable) = frame.variables.get(name) {
                 let offset = variable.offset.clone();
-                match variable.type_ {
-                    PrimitiveType::Number => self.write_load_number(offset),
-                    PrimitiveType::Bool => self.write_load_bool(offset),
+                match self.analyze_result.variables.get(&variable.declared_at).unwrap().type_ {
+                    AnalyzedType::Number => self.write_load_number(offset),
+                    AnalyzedType::Bool => self.write_load_bool(offset),
+                    _ => unreachable!("Expected primitive type"),
                 }
-                return Ok(());
+                return;
             }
         }
-
-        Err(format!("Variable {} is not declared", name))
+        unreachable!("Variable {} is not declared", name);
     }
 
     fn allocate(&mut self) {
@@ -433,17 +393,15 @@ impl CodeGenerator {
     }
 
     /// Declare a new variable. Current stack top value is used as the initial value.
-    fn declare_variable(&mut self, name: String, type_: PrimitiveType, initialized: bool) {
+    fn declare_variable(&mut self, name: String, declared_at: Position) {
         let frame = self.frames.last_mut().unwrap();
-        let size = type_.size();
+        let size = &self.analyze_result.variables.get(&declared_at).unwrap().type_.size();
+        
         frame.variables.insert(name.clone(), Variable {
             offset: frame.stack_offset + frame.stack_size,
-            type_,
+            declared_at,
         });
         frame.stack_size += size;
-        if initialized {
-            frame.initialized.insert(name);
-        }
     }
 
     fn enter_scope(&mut self, breakable: bool) {
@@ -461,27 +419,13 @@ impl CodeGenerator {
         self.write_flush(frame.stack_offset);
     }
 
-    fn register_break_to_patch(&mut self, ip: usize) -> Result<(), String> {
+    fn register_break_to_patch(&mut self, ip: usize) {
         for frame in self.frames.iter_mut().rev() {
             if frame.breakable {
                 frame.patch_ips.push(ip);
-                return Ok(());
+                return;
             }
         }
-
-        Err("Break statement is used outside of loop".to_string())
+        unreachable!("Break statement is used outside of loop")
     }
-}
-
-pub fn generate(program: &Program) -> Result<Vec<u8>, Error> {
-    let mut generator = CodeGenerator::new();
-    let errors = check(program).errors;
-    if !errors.is_empty() {
-        return Err(errors[0].clone());
-    }
-
-    for node in program.statements.iter() {
-        generator.generate_node(node)?;
-    }
-    Ok(generator.get_codes())
 }
