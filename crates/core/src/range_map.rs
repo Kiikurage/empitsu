@@ -1,3 +1,4 @@
+use std::collections::btree_map::Values;
 use std::collections::BTreeMap;
 use std::ops::Range;
 
@@ -5,7 +6,8 @@ use std::ops::Range;
 /// Map of non-overlapped ranges to values. For a given point p,
 /// it returns the value of the range that contains p.
 ///
-struct RangeMap<K, V> {
+#[derive(Debug)]
+pub struct RangeMap<K, V> {
     ranges: BTreeMap<K, K>,   // <start, end>
     values: BTreeMap<K, V>,  // <start, value>
 }
@@ -14,14 +16,14 @@ impl<K, V> RangeMap<K, V>
 where
     K: Copy + Ord,
 {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             ranges: BTreeMap::new(),
             values: BTreeMap::new(),
         }
     }
 
-    fn insert(&mut self, range: Range<K>, value: V) -> Result<(), String> {
+    pub fn insert(&mut self, range: Range<K>, value: V) -> Result<(), String> {
         if let Some((.., end)) = self.ranges.range(..range.end).next_back() {
             if &range.start < end {
                 return Err("Overlapped".to_string());
@@ -33,18 +35,22 @@ where
         Ok(())
     }
 
-    fn insert_unchecked(&mut self, range: Range<K>, value: V) {
+    pub fn insert_unchecked(&mut self, range: Range<K>, value: V) {
         self.ranges.insert(range.start, range.end);
         self.values.insert(range.start, value);
     }
 
-    fn find(&self, p: K) -> Option<&V> {
+    pub fn find(&self, p: &K) -> Option<&V> {
         let (start, end) = self.ranges.range(..=p).next_back()?;
-        if !(start <= &p && &p < end) {
+        if !(start <= p && p < end) {
             return None;
         }
 
         self.values.get(start)
+    }
+
+    pub fn values(&self) -> Values<'_, K, V> {
+        self.values.values()
     }
 }
 
@@ -59,9 +65,9 @@ mod test {
         range_map.insert_unchecked(4..6, 2);
         range_map.insert_unchecked(7..9, 3);
 
-        assert_eq!(range_map.find(2), Some(&1));
-        assert_eq!(range_map.find(5), Some(&2));
-        assert_eq!(range_map.find(8), Some(&3));
+        assert_eq!(range_map.find(&2), Some(&1));
+        assert_eq!(range_map.find(&5), Some(&2));
+        assert_eq!(range_map.find(&8), Some(&3));
     }
 
     #[test]
@@ -71,9 +77,9 @@ mod test {
         range_map.insert_unchecked(4..6, 2);
         range_map.insert_unchecked(7..9, 3);
 
-        assert_eq!(range_map.find(1), Some(&1));
-        assert_eq!(range_map.find(4), Some(&2));
-        assert_eq!(range_map.find(7), Some(&3));
+        assert_eq!(range_map.find(&1), Some(&1));
+        assert_eq!(range_map.find(&4), Some(&2));
+        assert_eq!(range_map.find(&7), Some(&3));
     }
 
     #[test]
@@ -83,9 +89,9 @@ mod test {
         range_map.insert_unchecked(4..6, 2);
         range_map.insert_unchecked(7..9, 3);
 
-        assert_eq!(range_map.find(3), None);
-        assert_eq!(range_map.find(6), None);
-        assert_eq!(range_map.find(9), None);
+        assert_eq!(range_map.find(&3), None);
+        assert_eq!(range_map.find(&6), None);
+        assert_eq!(range_map.find(&9), None);
     }
 
     #[test]
@@ -94,9 +100,9 @@ mod test {
         range_map.insert_unchecked(1..2, 1);
         range_map.insert_unchecked(4..5, 2);
 
-        assert_eq!(range_map.find(0), None);
-        assert_eq!(range_map.find(3), None);
-        assert_eq!(range_map.find(6), None);
+        assert_eq!(range_map.find(&0), None);
+        assert_eq!(range_map.find(&3), None);
+        assert_eq!(range_map.find(&6), None);
     }
 
     /// Partially overlapped: the new range is BEFORE the existing range)

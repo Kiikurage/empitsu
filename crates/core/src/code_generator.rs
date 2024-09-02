@@ -1,7 +1,7 @@
 use crate::analyzer::{analyze, AnalyzeResult, AnalyzedType};
+use crate::ast::get_range::GetRange;
 use crate::ast::node::Node;
 use crate::ast::program::Program;
-use crate::ast::get_range::GetRange;
 use crate::bytecode::ByteCode;
 use crate::error::Error;
 use crate::position::Position;
@@ -20,20 +20,14 @@ impl AnalyzedType {
     }
 }
 
-struct Variable {
-    offset: usize,
-    range: Range<Position>,
-}
-
 struct StackFrame {
+    /// Maps of variable names to their stack offset in each scope
+    variable_offset: HashMap<String, usize>,
     stack_offset: usize,
     stack_size: usize,
 
     /// If this frame is breakable (i.e. frame made by for-loop)
     breakable: bool,
-
-    /// Maps of variable names to their stack index in each scope
-    variables: HashMap<String, Variable>,
 
     /// List of instruction pointer that requires to be patched with ip_end
     patch_ips: Vec<usize>,
@@ -44,7 +38,7 @@ impl StackFrame {
         Self {
             stack_offset: offset,
             stack_size: 0,
-            variables: HashMap::new(),
+            variable_offset: HashMap::new(),
             breakable,
             patch_ips: vec![],
         }
@@ -156,7 +150,7 @@ impl Generator {
                     let ip_condition_start = self.opcodes.len();
                     self.enter_scope(true);
                     {
-                        self.load(&for_.variable.name);
+                        self.load(&for_.variable.range());
                         self.write_constant_number(5.0);
                         self.write_code(ByteCode::LessThan);
                         let ip_conditional_jump = self.write_jump_if_false(/*dummy*/ 0);
@@ -165,10 +159,10 @@ impl Generator {
                         self.generate_node(&for_.body);
 
                         // update
-                        self.load(&for_.variable.name);
+                        self.load(&for_.variable.range());
                         self.write_constant_number(1.0);
                         self.write_code(ByteCode::Add);
-                        self.store(&for_.variable.name);
+                        self.store(&for_.variable.range());
 
                         // loop
                         self.write_jump(ip_condition_start);
@@ -179,12 +173,13 @@ impl Generator {
                 self.exit_scope();
             }
             Node::VariableDeclaration(ref variable_declaration) => {
-                let symbol_info = self.analyze_result.variables.get(&variable_declaration.name.range()).unwrap();
+                let type_ = self.analyze_result
+                    .get_symbol_type(&variable_declaration.name.start()).unwrap();
 
                 match &variable_declaration.initializer {
                     Some(initializer) => self.generate_node(initializer),
                     None => {
-                        match symbol_info.type_ {
+                        match type_ {
                             AnalyzedType::Number => self.write_constant_number(0.0),
                             AnalyzedType::Bool => self.write_constant_bool(false),
                             _ => unreachable!("Expected primitive type"),
@@ -230,7 +225,7 @@ impl Generator {
                 match &expression.lhs.deref() {
                     Node::Identifier(name) => {
                         self.generate_node(&expression.rhs);
-                        self.store(&name.name)
+                        self.store(&name.range())
                     }
                     _ => unreachable!("Assign to complex target is not supported")
                 }
@@ -266,7 +261,7 @@ impl Generator {
             Node::CallExpression(_expression) => unreachable!("CallExpression"),
             Node::MemberExpression(_expression) => unreachable!("MemberExpression"),
             Node::Identifier(name) => {
-                self.load(&name.name);
+                self.load(&name.range());
             }
             Node::NumberLiteral(value) => {
                 self.write_constant_number(value.value);
@@ -346,11 +341,14 @@ impl Generator {
         self.write_bytes((index as u32).as_u8_slice());
     }
 
-    fn store(&mut self, name: &String) {
+    fn store(&mut self, symbol_range: &Range<Position>) {
+        let symbol = self.analyze_result.symbols.find(&symbol_range.start).unwrap();
+        let type_ = self.analyze_result.get_symbol_type(&symbol.range.start).unwrap();
+
         for frame in self.frames.iter_mut().rev() {
-            if let Some(variable) = frame.variables.get_mut(name) {
-                let offset = variable.offset;
-                match &self.analyze_result.variables.get(&variable.range).unwrap().type_ {
+            if let Some(offset) = frame.variable_offset.get(&symbol.name) {
+                let offset = *offset;
+                match type_ {
                     AnalyzedType::Number => self.write_store_number(offset),
                     AnalyzedType::Bool => self.write_store_bool(offset),
                     _ => unreachable!("Expected primitive type"),
@@ -359,15 +357,18 @@ impl Generator {
             }
         }
 
-        unreachable!("Variable {} is not declared", name)
+        unreachable!("Variable {} is not declared", symbol.name)
     }
 
     /// Load a value from the variable and push it to the stack
-    fn load(&mut self, name: &str) {
+    fn load(&mut self, symbol_range: &Range<Position>) {
+        let symbol = self.analyze_result.symbols.find(&symbol_range.start).unwrap();
+        let type_ = self.analyze_result.get_symbol_type(&symbol.range.start).unwrap();
+
         for frame in self.frames.iter_mut().rev() {
-            if let Some(variable) = frame.variables.get(name) {
-                let offset = variable.offset;
-                match self.analyze_result.variables.get(&variable.range).unwrap().type_ {
+            if let Some(offset) = frame.variable_offset.get(&symbol.name) {
+                let offset = *offset;
+                match type_ {
                     AnalyzedType::Number => self.write_load_number(offset),
                     AnalyzedType::Bool => self.write_load_bool(offset),
                     _ => unreachable!("Expected primitive type"),
@@ -375,18 +376,15 @@ impl Generator {
                 return;
             }
         }
-        unreachable!("Variable {} is not declared", name);
+        unreachable!("Variable {} is not declared", symbol.name);
     }
 
     /// Declare a new variable. Current stack top value is used as the initial value.
     fn declare_variable(&mut self, name: String, range: Range<Position>) {
         let frame = self.frames.last_mut().unwrap();
-        let size = &self.analyze_result.variables.get(&range).unwrap().type_.size();
-
-        frame.variables.insert(name.clone(), Variable {
-            offset: frame.stack_offset + frame.stack_size,
-            range,
-        });
+        let size = &self.analyze_result.get_symbol_type(&range.start).unwrap().size();
+        let offset = frame.stack_offset + frame.stack_size;
+        frame.variable_offset.insert(name.clone(), offset);
         frame.stack_size += size;
     }
 
