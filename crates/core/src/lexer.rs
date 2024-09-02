@@ -221,7 +221,7 @@ fn scan_token(chars: &mut CharIterator) -> Result<Token, Error> {
 fn scan_number(chars: &mut CharIterator) -> Result<Token, Error> {
     let mut digits = String::new();
     let mut has_dot = false;
-    let start = chars.get_position().clone();
+    let start = chars.get_position();
 
     loop {
         match chars.peek(0) {
@@ -263,7 +263,7 @@ fn scan_number(chars: &mut CharIterator) -> Result<Token, Error> {
 
 fn scan_string(chars: &mut CharIterator) -> Result<Token, Error> {
     let mut value = String::new();
-    let start = chars.get_position().clone();
+    let start = chars.get_position();
 
     if !matches!(chars.peek(0), Some('"')) {
         let range = start..pos(start.line, start.character + 1);
@@ -292,7 +292,7 @@ fn scan_string(chars: &mut CharIterator) -> Result<Token, Error> {
 
 fn scan_identifier(chars: &mut CharIterator) -> Result<Token, Error> {
     let mut identifier_name = String::new();
-    let start = chars.get_position().clone();
+    let start = chars.get_position();
 
     match chars.peek(0) {
         Some(&c @ ('a'..='z' | 'A'..='Z' | '_')) => {

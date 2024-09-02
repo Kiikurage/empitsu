@@ -1,5 +1,5 @@
 use crate::ast::node::Node;
-use crate::ast::traits::GetRange;
+use crate::ast::get_range::GetRange;
 use crate::position::{pos, Position};
 use std::ops::Range;
 

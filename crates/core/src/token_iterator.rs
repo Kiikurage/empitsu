@@ -1,5 +1,5 @@
 use std::ops::Range;
-use crate::ast::traits::GetRange;
+use crate::ast::get_range::GetRange;
 use crate::error::Error;
 use crate::lexer::scan;
 use crate::position::Position;
@@ -35,8 +35,8 @@ impl TokenIterator {
         }
 
         let position = match ret {
-            Ok(token) => &token.range().start,
-            Err(error) => &error.range.start,
+            Ok(token) => &token.start(),
+            Err(error) => &error.start(),
         };
         self.last_position.line = position.line;
         self.last_position.character = position.character;
@@ -68,7 +68,7 @@ impl GetRange for Result<Token, Error> {
     fn range(&self) -> Range<Position> {
         match self {
             Ok(token) => token.range(),
-            Err(err) => err.range.clone(),
+            Err(err) => err.range(),
         }
     }
 }

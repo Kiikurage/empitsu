@@ -1,10 +1,11 @@
 use std::ops::Range;
 use crate::analyzer::AnalyzedType;
+use crate::ast::get_range::GetRange;
 use crate::position::Position;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Error {
-    pub range: Range<Position>,
+    range: Range<Position>,
     pub message: String,
 }
 
@@ -62,5 +63,11 @@ impl Error {
     #[inline(always)]
     pub fn uninitialized_variable(range: Range<Position>, name: impl Into<String>) -> Error {
         Error { range, message: format!("Variable \"{}\" is used before initialization", name.into()) }
+    }
+}
+
+impl GetRange for Error {
+    fn range(&self) -> Range<Position> {
+        self.range.clone()
     }
 }

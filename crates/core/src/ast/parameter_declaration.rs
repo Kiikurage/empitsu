@@ -1,6 +1,6 @@
 use std::ops::Range;
 use crate::ast::identifier::Identifier;
-use crate::ast::traits::GetRange;
+use crate::ast::get_range::GetRange;
 use crate::ast::type_expression::TypeExpression;
 use crate::position::Position;
 

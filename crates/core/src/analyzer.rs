@@ -18,7 +18,7 @@ use crate::ast::program::Program;
 use crate::ast::return_::Return;
 use crate::ast::string_literal::StringLiteral;
 use crate::ast::struct_declaration::StructDeclaration;
-use crate::ast::traits::GetRange;
+use crate::ast::get_range::GetRange;
 use crate::ast::type_expression::TypeExpression;
 use crate::ast::unary_expression::UnaryExpression;
 use crate::ast::variable_declaration::VariableDeclaration;

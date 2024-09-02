@@ -5,7 +5,7 @@ pub fn pos(line: usize, character: usize) -> Position {
     Position::new(line, character)
 }
 
-#[derive(PartialEq, Eq, Clone, Copy, Hash, Debug, Ord)]
+#[derive(PartialEq, Eq, Clone, Copy, Hash, Debug)]
 pub struct Position {
     pub line: usize,
     pub character: usize,
@@ -25,11 +25,16 @@ impl Display for Position {
 
 impl PartialOrd for Position {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        if self.line == other.line {
-            self.character.partial_cmp(&other.character)
-        } else {
-            self.line.partial_cmp(&other.line)
-        }
+        Some(self.cmp(other))
     }
 }
 
+impl Ord for Position {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        if self.line == other.line {
+            self.character.cmp(&other.character)
+        } else {
+            self.line.cmp(&other.line)
+        }
+    }
+}

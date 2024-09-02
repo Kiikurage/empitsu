@@ -1,7 +1,7 @@
 use crate::ast::function::Function;
 use crate::ast::identifier::Identifier;
 use crate::ast::property_declaration::PropertyDeclaration;
-use crate::ast::traits::GetRange;
+use crate::ast::get_range::GetRange;
 use crate::position::Position;
 use std::ops::Range;
 

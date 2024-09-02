@@ -1,4 +1,5 @@
 mod utils;
+use core::ast::get_range::GetRange;
 use core::vm::VM;
 use wasm_bindgen::prelude::*;
 
@@ -17,6 +18,6 @@ extern {
 pub fn evaluate(input: &str) -> String {
     match VM::new().eval(input) {
         Ok(result) => result.to_string(),
-        Err(error) => format!("Error({}) {}", error.position, error.message)
+        Err(error) => format!("Error({}) {}", error.start(), error.message)
     }
 }

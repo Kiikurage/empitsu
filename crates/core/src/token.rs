@@ -1,5 +1,5 @@
 use std::ops::Range;
-use crate::ast::traits::GetRange;
+use crate::ast::get_range::GetRange;
 use crate::position::Position;
 use crate::punctuation_kind::PunctuationKind;
 

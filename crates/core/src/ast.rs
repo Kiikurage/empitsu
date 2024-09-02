@@ -13,7 +13,7 @@ pub mod parameter_declaration;
 pub mod property_declaration;
 pub mod parameter;
 pub mod program;
-pub mod traits;
+pub mod get_range;
 pub mod identifier;
 pub mod return_;
 pub mod break_;

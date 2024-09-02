@@ -15,7 +15,7 @@ use crate::ast::program::Program;
 use crate::ast::property_declaration::PropertyDeclaration;
 use crate::ast::return_::Return;
 use crate::ast::struct_declaration::StructDeclaration;
-use crate::ast::traits::GetRange;
+use crate::ast::get_range::GetRange;
 use crate::ast::type_expression::TypeExpression;
 use crate::ast::variable_declaration::VariableDeclaration;
 use crate::error::Error;
@@ -156,7 +156,7 @@ fn parse_statement(tokens: &mut TokenIterator) -> Result<Node, Error> {
         |tokens| parse_struct_declaration(tokens).map(Node::StructDeclaration),
         |tokens| parse_interface_declaration(tokens).map(Node::InterfaceDeclaration),
         |tokens| parse_impl_statement(tokens).map(Node::ImplStatement),
-        |tokens| parse_expression_statement(tokens),
+        parse_expression_statement,
     ], "statement");
     parse_semicolon(tokens);
 
@@ -328,7 +328,7 @@ fn parse_struct_declaration(tokens: &mut TokenIterator) -> Result<StructDeclarat
     };
 
     let range = struct_keyword.start()..match right_brace {
-        Some(ref right_brace) => right_brace.end(),
+        Some(right_brace) => right_brace.end(),
         None => right_paren.end(),
     };
 
@@ -532,7 +532,7 @@ fn parse_statement_expression(tokens: &mut TokenIterator) -> Result<Node, Error>
         |tokens| parse_return_expression(tokens).map(Node::Return),
         |tokens| parse_break_expression(tokens).map(Node::Break),
         |tokens| parse_function_expression(tokens).map(Node::FunctionExpression),
-        |tokens| parse_call_expression(tokens),
+        parse_call_expression,
     ], "expression")
 }
 

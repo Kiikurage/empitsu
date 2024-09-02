@@ -1,7 +1,7 @@
 use crate::analyzer::{analyze, AnalyzeResult, AnalyzedType};
 use crate::ast::node::Node;
 use crate::ast::program::Program;
-use crate::ast::traits::GetRange;
+use crate::ast::get_range::GetRange;
 use crate::bytecode::ByteCode;
 use crate::error::Error;
 use crate::position::Position;
