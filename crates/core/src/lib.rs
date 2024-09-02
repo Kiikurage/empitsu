@@ -14,5 +14,4 @@ mod code_generator;
 mod util;
 mod ast;
 mod analyzer;
-mod range;
 mod range_map;

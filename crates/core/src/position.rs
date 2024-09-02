@@ -1,5 +1,10 @@
 use std::fmt::{Debug, Display};
 
+#[inline(always)]
+pub fn pos(line: usize, character: usize) -> Position {
+    Position::new(line, character)
+}
+
 #[derive(PartialEq, Eq, Clone, Copy, Hash, Debug, Ord)]
 pub struct Position {
     pub line: usize,

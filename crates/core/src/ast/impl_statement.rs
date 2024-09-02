@@ -2,14 +2,15 @@ use crate::ast::function::Function;
 use crate::ast::identifier::Identifier;
 use crate::ast::node::Node;
 use crate::ast::traits::GetRange;
-use crate::range::Range;
+use crate::position::Position;
+use std::ops::Range;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ImplStatement {
     pub struct_name: Identifier,
     pub interface_name: Identifier,
     pub instance_methods: Vec<Function>,
-    pub range: Range,
+    pub range: Range<Position>,
 }
 
 impl From<ImplStatement> for Node {
@@ -19,7 +20,7 @@ impl From<ImplStatement> for Node {
 }
 
 impl GetRange for ImplStatement {
-    fn range(&self) -> Range {
-        self.range
+    fn range(&self) -> Range<Position> {
+        self.range.clone()
     }
 }

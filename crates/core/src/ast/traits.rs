@@ -1,8 +1,8 @@
+use std::ops::Range;
 use crate::position::Position;
-use crate::range::Range;
 
 pub trait GetRange {
-    fn range(&self) -> Range;
+    fn range(&self) -> Range<Position>;
 
     fn start(&self) -> Position {
         self.range().start

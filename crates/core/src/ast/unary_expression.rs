@@ -1,13 +1,14 @@
 use crate::ast::node::Node;
 use crate::ast::traits::GetRange;
+use crate::position::Position;
 use crate::punctuation_kind::PunctuationKind;
-use crate::range::Range;
+use std::ops::Range;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct UnaryExpression {
     pub operator: PunctuationKind,
     pub operand: Box<Node>,
-    pub range: Range,
+    pub range: Range<Position>,
 }
 
 impl From<UnaryExpression> for Node {
@@ -17,7 +18,7 @@ impl From<UnaryExpression> for Node {
 }
 
 impl GetRange for UnaryExpression {
-    fn range(&self) -> Range {
-        self.range
+    fn range(&self) -> Range<Position> {
+        self.range.clone()
     }
 }

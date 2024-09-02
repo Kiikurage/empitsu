@@ -1,7 +1,8 @@
+use std::ops::Range;
 use crate::ast::identifier::Identifier;
 use crate::ast::traits::GetRange;
 use crate::ast::type_expression::TypeExpression;
-use crate::range::Range;
+use crate::position::Position;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PropertyDeclaration {
@@ -10,7 +11,7 @@ pub struct PropertyDeclaration {
 }
 
 impl GetRange for PropertyDeclaration {
-    fn range(&self) -> Range {
-        self.name.range
+    fn range(&self) -> Range<Position> {
+        self.name.range()
     }
 }

@@ -1,11 +1,12 @@
+use std::ops::Range;
 use crate::ast::node::Node;
 use crate::ast::traits::GetRange;
-use crate::range::Range;
+use crate::position::Position;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StringLiteral {
     pub value: String,
-    pub range: Range,
+    pub range: Range<Position>,
 }
 
 impl From<StringLiteral> for Node {
@@ -15,7 +16,7 @@ impl From<StringLiteral> for Node {
 }
 
 impl GetRange for StringLiteral {
-    fn range(&self) -> Range {
-        self.range
+    fn range(&self) -> Range<Position> {
+        self.range.clone()
     }
 }

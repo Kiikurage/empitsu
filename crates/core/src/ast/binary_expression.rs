@@ -1,7 +1,8 @@
 use crate::ast::node::Node;
 use crate::ast::traits::GetRange;
+use crate::position::Position;
 use crate::punctuation_kind::PunctuationKind;
-use crate::range::Range;
+use std::ops::Range;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct BinaryExpression {
@@ -17,7 +18,7 @@ impl From<BinaryExpression> for Node {
 }
 
 impl GetRange for BinaryExpression {
-    fn range(&self) -> Range {
+    fn range(&self) -> Range<Position> {
         self.lhs.range()
     }
 }

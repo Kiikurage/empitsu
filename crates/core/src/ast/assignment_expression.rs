@@ -1,6 +1,7 @@
 use crate::ast::node::Node;
 use crate::ast::traits::GetRange;
-use crate::range::Range;
+use crate::position::Position;
+use std::ops::Range;
 
 /// Special node of binary expression since implementation is
 /// far different from other binary expressions.
@@ -17,7 +18,7 @@ impl From<AssignmentExpression> for Node {
 }
 
 impl GetRange for AssignmentExpression {
-    fn range(&self) -> Range {
+    fn range(&self) -> Range<Position> {
         self.lhs.range()
     }
 }

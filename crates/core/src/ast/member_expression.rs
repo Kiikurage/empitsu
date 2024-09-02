@@ -1,7 +1,8 @@
 use crate::ast::identifier::Identifier;
 use crate::ast::node::Node;
 use crate::ast::traits::GetRange;
-use crate::range::Range;
+use crate::position::Position;
+use std::ops::Range;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MemberExpression {
@@ -16,7 +17,7 @@ impl From<MemberExpression> for Node {
 }
 
 impl GetRange for MemberExpression {
-    fn range(&self) -> Range {
-        Range::new(self.object.start(), self.member.end())
+    fn range(&self) -> Range<Position> {
+        self.object.start()..self.member.end()
     }
 }

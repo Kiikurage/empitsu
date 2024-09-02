@@ -25,9 +25,9 @@ use crate::ast::traits::GetRange;
 use crate::ast::type_expression::TypeExpression;
 use crate::ast::unary_expression::UnaryExpression;
 use crate::ast::variable_declaration::VariableDeclaration;
-use crate::position::Position;
+use crate::position::{pos, Position};
 use crate::punctuation_kind::PunctuationKind;
-use crate::range::Range;
+use std::ops::Range;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Node {
@@ -70,20 +70,20 @@ impl Node {
         Node::Program(Node::program(statements))
     }
 
-    pub fn if_statement_node(range: Range, condition: Node, true_branch: Node, false_branch: Option<Node>) -> Node {
+    pub fn if_statement_node(range: Range<Position>, condition: Node, true_branch: Node, false_branch: Option<Node>) -> Node {
         Node::IfStatement(Node::if_statement(range, condition, true_branch, false_branch))
     }
 
-    pub fn for_statement_node(range: Range, variable: Identifier, iterable: Node, body: Node) -> Node {
+    pub fn for_statement_node(range: Range<Position>, variable: Identifier, iterable: Node, body: Node) -> Node {
         Node::ForStatement(Node::for_statement(range, variable, iterable, body))
     }
 
-    pub fn variable_declaration_node(range: Range, name: Identifier, type_: Option<TypeExpression>, initializer: Option<Node>) -> Node {
+    pub fn variable_declaration_node(range: Range<Position>, name: Identifier, type_: Option<TypeExpression>, initializer: Option<Node>) -> Node {
         Node::VariableDeclaration(Node::variable_declaration(range, name, type_, initializer))
     }
 
     pub fn function_declaration_node(
-        range: Range,
+        range: Range<Position>,
         interface: FunctionInterface,
         body: Vec<Node>,
     ) -> Node {
@@ -91,7 +91,7 @@ impl Node {
     }
 
     pub fn struct_declaration_node(
-        range: Range,
+        range: Range<Position>,
         name: Identifier,
         properties: Vec<PropertyDeclaration>,
         instance_methods: Vec<Function>,
@@ -100,12 +100,12 @@ impl Node {
         Node::StructDeclaration(Node::struct_declaration(range, name, properties, instance_methods, static_methods))
     }
 
-    pub fn interface_declaration_node(range: Range, name: Identifier, instance_methods: Vec<FunctionInterface>) -> Node {
+    pub fn interface_declaration_node(range: Range<Position>, name: Identifier, instance_methods: Vec<FunctionInterface>) -> Node {
         Node::InterfaceDeclaration(Node::interface_declaration(range, name, instance_methods))
     }
 
     pub fn impl_statement_node(
-        range: Range,
+        range: Range<Position>,
         struct_name: Identifier,
         interface_name: Identifier,
         instance_methods: Vec<Function>,
@@ -113,27 +113,27 @@ impl Node {
         Node::ImplStatement(Node::impl_statement(range, struct_name, interface_name, instance_methods))
     }
 
-    pub fn return_node(range: Range, value: Option<Node>) -> Node {
+    pub fn return_node(range: Range<Position>, value: Option<Node>) -> Node {
         Node::Return(Node::return_(range, value))
     }
 
-    pub fn break_node(range: Range) -> Node {
+    pub fn break_node(range: Range<Position>) -> Node {
         Node::Break(Node::break_(range))
     }
 
     pub fn function_expression_node(
-        range: Range,
+        range: Range<Position>,
         interface: FunctionInterface,
         body: Vec<Node>,
     ) -> Node {
         Node::FunctionExpression(Node::function(range, interface, body))
     }
 
-    pub fn if_expression_node(range: Range, condition: Node, true_branch: Node, false_branch: Node) -> Node {
+    pub fn if_expression_node(range: Range<Position>, condition: Node, true_branch: Node, false_branch: Node) -> Node {
         Node::IfExpression(Node::if_expression(range, condition, true_branch, false_branch))
     }
 
-    pub fn block_node(range: Range, nodes: Vec<Node>) -> Node {
+    pub fn block_node(range: Range<Position>, nodes: Vec<Node>) -> Node {
         Node::Block(Node::block(range, nodes))
     }
 
@@ -145,7 +145,7 @@ impl Node {
         Node::BinaryExpression(Node::binary_expression(lhs, operator, rhs))
     }
 
-    pub fn unary_expression_node(range: Range, operator: PunctuationKind, operand: Node) -> Node {
+    pub fn unary_expression_node(range: Range<Position>, operator: PunctuationKind, operand: Node) -> Node {
         Node::UnaryExpression(Node::unary_expression(range, operator, operand))
     }
 
@@ -157,23 +157,23 @@ impl Node {
         Node::MemberExpression(Node::member_expression(object, member))
     }
 
-    pub fn identifier_node(range: Range, name: impl Into<String>) -> Node {
+    pub fn identifier_node(range: Range<Position>, name: impl Into<String>) -> Node {
         Node::Identifier(Node::identifier(range, name))
     }
 
-    pub fn number_literal_node(range: Range, value: f64) -> Node {
+    pub fn number_literal_node(range: Range<Position>, value: f64) -> Node {
         Node::NumberLiteral(Node::number_literal(range, value))
     }
 
-    pub fn bool_literal_node(range: Range, value: bool) -> Node {
+    pub fn bool_literal_node(range: Range<Position>, value: bool) -> Node {
         Node::BoolLiteral(Node::bool_literal(range, value))
     }
 
-    pub fn string_literal_node(range: Range, value: impl Into<String>) -> Node {
+    pub fn string_literal_node(range: Range<Position>, value: impl Into<String>) -> Node {
         Node::StringLiteral(Node::string_literal(range, value))
     }
 
-    pub fn type_expression_node(range: Range, name: impl Into<String>) -> Node {
+    pub fn type_expression_node(range: Range<Position>, name: impl Into<String>) -> Node {
         Node::TypeExpression(Node::type_expression(range, name))
     }
 
@@ -183,20 +183,17 @@ impl Node {
         if statements.is_empty() {
             return Program {
                 statements: vec![],
-                range: Range::new(
-                    Position::new(0, 0),
-                    Position::new(0, 0),
-                ),
+                range: pos(0, 0)..pos(0, 0),
             };
         }
 
         let start = statements.first().unwrap().start();
         let end = statements.first().unwrap().end();
 
-        Program { statements, range: Range::new(start, end) }
+        Program { statements, range: start..end }
     }
 
-    pub fn if_statement(range: Range, condition: Node, true_branch: Node, false_branch: Option<Node>) -> IfStatement {
+    pub fn if_statement(range: Range<Position>, condition: Node, true_branch: Node, false_branch: Option<Node>) -> IfStatement {
         IfStatement {
             condition: Box::new(condition),
             true_branch: Box::new(true_branch),
@@ -205,7 +202,7 @@ impl Node {
         }
     }
 
-    pub fn for_statement(range: Range, variable: Identifier, iterable: Node, body: Node) -> ForStatement {
+    pub fn for_statement(range: Range<Position>, variable: Identifier, iterable: Node, body: Node) -> ForStatement {
         ForStatement {
             variable,
             iterable: Box::new(iterable),
@@ -214,7 +211,7 @@ impl Node {
         }
     }
 
-    pub fn variable_declaration(range: Range, name: Identifier, type_: Option<TypeExpression>, initializer: Option<Node>) -> VariableDeclaration {
+    pub fn variable_declaration(range: Range<Position>, name: Identifier, type_: Option<TypeExpression>, initializer: Option<Node>) -> VariableDeclaration {
         VariableDeclaration {
             name,
             type_,
@@ -224,19 +221,19 @@ impl Node {
     }
 
     pub fn function(
-        range: Range,
+        range: Range<Position>,
         interface: FunctionInterface,
         body: Vec<Node>,
     ) -> Function {
         Function {
             interface,
             body,
-            range
+            range,
         }
     }
 
     pub fn function_interface(
-        range: Range,
+        range: Range<Position>,
         name: Option<Identifier>,
         parameters: Vec<ParameterDeclaration>,
         return_type: TypeExpression,
@@ -254,7 +251,7 @@ impl Node {
     }
 
     pub fn struct_declaration(
-        range: Range,
+        range: Range<Position>,
         name: Identifier,
         properties: Vec<PropertyDeclaration>,
         instance_methods: Vec<Function>,
@@ -273,7 +270,7 @@ impl Node {
         PropertyDeclaration { name, type_ }
     }
 
-    pub fn interface_declaration(range: Range, name: Identifier, instance_methods: Vec<FunctionInterface>) -> InterfaceDeclaration {
+    pub fn interface_declaration(range: Range<Position>, name: Identifier, instance_methods: Vec<FunctionInterface>) -> InterfaceDeclaration {
         InterfaceDeclaration {
             name,
             instance_methods,
@@ -282,7 +279,7 @@ impl Node {
     }
 
     pub fn impl_statement(
-        range: Range,
+        range: Range<Position>,
         struct_name: Identifier,
         interface_name: Identifier,
         instance_methods: Vec<Function>,
@@ -295,20 +292,20 @@ impl Node {
         }
     }
 
-    pub fn return_(range: Range, value: Option<Node>) -> Return {
+    pub fn return_(range: Range<Position>, value: Option<Node>) -> Return {
         Return {
             value: value.map(Box::new),
             range,
         }
     }
 
-    pub fn break_(range: Range) -> Break {
+    pub fn break_(range: Range<Position>) -> Break {
         Break {
             range,
         }
     }
 
-    pub fn if_expression(range: Range, condition: Node, true_branch: Node, false_branch: Node) -> IfExpression {
+    pub fn if_expression(range: Range<Position>, condition: Node, true_branch: Node, false_branch: Node) -> IfExpression {
         IfExpression {
             condition: Box::new(condition),
             true_branch: Box::new(true_branch),
@@ -317,7 +314,7 @@ impl Node {
         }
     }
 
-    pub fn block(range: Range, nodes: Vec<Node>) -> Block {
+    pub fn block(range: Range<Position>, nodes: Vec<Node>) -> Block {
         Block {
             nodes,
             range,
@@ -339,7 +336,7 @@ impl Node {
         }
     }
 
-    pub fn unary_expression(range: Range, operator: PunctuationKind, operand: Node) -> UnaryExpression {
+    pub fn unary_expression(range: Range<Position>, operator: PunctuationKind, operand: Node) -> UnaryExpression {
         UnaryExpression {
             operator,
             operand: Box::new(operand),
@@ -368,35 +365,35 @@ impl Node {
         }
     }
 
-    pub fn identifier(range: Range, name: impl Into<String>) -> Identifier {
+    pub fn identifier(range: Range<Position>, name: impl Into<String>) -> Identifier {
         Identifier {
             name: name.into(),
             range,
         }
     }
 
-    pub fn number_literal(range: Range, value: f64) -> NumberLiteral {
+    pub fn number_literal(range: Range<Position>, value: f64) -> NumberLiteral {
         NumberLiteral {
             value,
             range,
         }
     }
 
-    pub fn bool_literal(range: Range, value: bool) -> BoolLiteral {
+    pub fn bool_literal(range: Range<Position>, value: bool) -> BoolLiteral {
         BoolLiteral {
             value,
             range,
         }
     }
 
-    pub fn string_literal(range: Range, value: impl Into<String>) -> StringLiteral {
+    pub fn string_literal(range: Range<Position>, value: impl Into<String>) -> StringLiteral {
         StringLiteral {
             value: value.into(),
             range,
         }
     }
 
-    pub fn type_expression(range: Range, name: impl Into<String>) -> TypeExpression {
+    pub fn type_expression(range: Range<Position>, name: impl Into<String>) -> TypeExpression {
         TypeExpression {
             name: name.into(),
             range,
@@ -405,7 +402,7 @@ impl Node {
 }
 
 impl GetRange for Node {
-    fn range(&self) -> Range {
+    fn range(&self) -> Range<Position> {
         match self {
             Node::Program(node) => node.range(),
             Node::IfStatement(node) => node.range(),

@@ -4,10 +4,10 @@ use crate::ast::program::Program;
 use crate::bytecode::ByteCode;
 use crate::error::Error;
 use crate::punctuation_kind::PunctuationKind;
-use crate::range::Range;
 use crate::util::AsU8Slice;
 use std::collections::HashMap;
-use std::ops::Deref;
+use std::ops::{Deref, Range};
+use crate::position::Position;
 
 impl AnalyzedType {
     fn size(&self) -> usize {
@@ -21,7 +21,7 @@ impl AnalyzedType {
 
 struct Variable {
     offset: usize,
-    range: Range,
+    range: Range<Position>,
 }
 
 struct StackFrame {
@@ -378,7 +378,7 @@ impl Generator {
     }
 
     /// Declare a new variable. Current stack top value is used as the initial value.
-    fn declare_variable(&mut self, name: String, range: Range) {
+    fn declare_variable(&mut self, name: String, range: Range<Position>) {
         let frame = self.frames.last_mut().unwrap();
         let size = &self.analyze_result.variables.get(&range).unwrap().type_.size();
 
