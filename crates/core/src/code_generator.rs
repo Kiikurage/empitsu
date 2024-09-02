@@ -21,25 +21,25 @@ impl AnalyzedType {
 }
 
 struct StackFrame {
+    /// Range of the node that produces this stack frame
+    range: Range<Position>,
+
     /// Maps of variable names to their stack offset in each scope
     variable_offset: HashMap<String, usize>,
     stack_offset: usize,
     stack_size: usize,
-
-    /// If this frame is breakable (i.e. frame made by for-loop)
-    breakable: bool,
 
     /// List of instruction pointer that requires to be patched with ip_end
     patch_ips: Vec<usize>,
 }
 
 impl StackFrame {
-    fn new(offset: usize, breakable: bool) -> Self {
+    fn new(offset: usize, range: Range<Position>) -> Self {
         Self {
+            range,
+            variable_offset: HashMap::new(),
             stack_offset: offset,
             stack_size: 0,
-            variable_offset: HashMap::new(),
-            breakable,
             patch_ips: vec![],
         }
     }
@@ -70,7 +70,7 @@ impl Generator {
         let mut generator = Self {
             literals: vec![],
             opcodes: vec![],
-            frames: vec![StackFrame::new(0, false)],
+            frames: vec![StackFrame::new(0, program.range())],
             analyze_result,
         };
 
@@ -137,7 +137,7 @@ impl Generator {
                 }
             }
             Node::ForStatement(for_) => {
-                self.enter_scope(true);
+                self.enter_scope(for_.range());
                 {
                     // initializer
                     self.write_constant_number(0.0);
@@ -148,27 +148,23 @@ impl Generator {
 
                     // condition
                     let ip_condition_start = self.opcodes.len();
-                    self.enter_scope(true);
-                    {
-                        self.load(&for_.variable.range());
-                        self.write_constant_number(5.0);
-                        self.write_code(ByteCode::LessThan);
-                        let ip_conditional_jump = self.write_jump_if_false(/*dummy*/ 0);
+                    self.load(&for_.variable.range());
+                    self.write_constant_number(5.0);
+                    self.write_code(ByteCode::LessThan);
+                    let ip_conditional_jump = self.write_jump_if_false(/*dummy*/ 0);
 
-                        // body
-                        self.generate_node(&for_.body);
+                    // body
+                    self.generate_node(&for_.body);
 
-                        // update
-                        self.load(&for_.variable.range());
-                        self.write_constant_number(1.0);
-                        self.write_code(ByteCode::Add);
-                        self.store(&for_.variable.range());
+                    // update
+                    self.load(&for_.variable.range());
+                    self.write_constant_number(1.0);
+                    self.write_code(ByteCode::Add);
+                    self.store(&for_.variable.range());
 
-                        // loop
-                        self.write_jump(ip_condition_start);
-                        self.patch_address(ip_conditional_jump);
-                    }
-                    self.exit_scope();
+                    // loop
+                    self.write_jump(ip_condition_start);
+                    self.patch_address(ip_conditional_jump);
                 }
                 self.exit_scope();
             }
@@ -197,9 +193,9 @@ impl Generator {
             Node::InterfaceDeclaration(_) => unreachable!("InterfaceDeclaration"),
             Node::ImplStatement(_) => unreachable!("ImplStatement"),
             Node::Return(_) => unreachable!("Return"),
-            Node::Break(..) => {
+            Node::Break(break_) => {
                 let ip_break = self.write_jump(/*dummy*/ 0);
-                self.register_break_to_patch(ip_break);
+                self.register_break_to_patch(break_.range(), ip_break);
             }
             Node::FunctionExpression(_) => unreachable!("FunctionExpression"),
             Node::IfExpression(if_expression) => {
@@ -215,7 +211,7 @@ impl Generator {
                 self.patch_address(ip_after_true_branch);
             }
             Node::Block(block) => {
-                self.enter_scope(false);
+                self.enter_scope(block.range());
                 for node in block.nodes.iter() {
                     self.generate_node(node);
                 }
@@ -388,9 +384,9 @@ impl Generator {
         frame.stack_size += size;
     }
 
-    fn enter_scope(&mut self, breakable: bool) {
+    fn enter_scope(&mut self, scope_range: Range<Position>) {
         let frame = self.frames.last().unwrap();
-        let new_frame = StackFrame::new(frame.stack_offset + frame.stack_size, breakable);
+        let new_frame = StackFrame::new(frame.stack_offset + frame.stack_size, scope_range);
         self.frames.push(new_frame);
     }
 
@@ -402,9 +398,11 @@ impl Generator {
         self.write_flush(frame.stack_offset);
     }
 
-    fn register_break_to_patch(&mut self, ip: usize) {
+    fn register_break_to_patch(&mut self, break_range: Range<Position>, ip: usize) {
+        let break_info = self.analyze_result.breaks.find(&break_range.start).unwrap();
+
         for frame in self.frames.iter_mut().rev() {
-            if frame.breakable {
+            if frame.range == break_info.scope_range {
                 frame.patch_ips.push(ip);
                 return;
             }

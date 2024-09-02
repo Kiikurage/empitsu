@@ -41,8 +41,6 @@ pub enum AnalyzedType {
     Bool,
 }
 
-/// TODO:
-///     - 種類: 値、変数、関数、型、etc.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SymbolInfo {
     pub range: Range<Position>,
@@ -58,12 +56,19 @@ pub struct VariableInfo {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct ExpressionInfo {
-    pub type_: AnalyzedType,
+pub struct BreakInfo {
+    /// Range of the break node itself
+    pub range: Range<Position>,
+
+    /// Range of the scope that break exits
+    pub scope_range: Range<Position>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Scope {
+    /// Range of the scope.
+    range: Range<Position>,
+
     /// Variables declared in this scope.
     declared_variables: HashMap<String, VariableInfo>,
 
@@ -80,9 +85,11 @@ pub struct Scope {
 struct Context {
     symbols: RangeMap<Position, SymbolInfo>,
     variables: HashMap<Range<Position>, VariableInfo>,
-    expressions: HashMap<Range<Position>, ExpressionInfo>,
+    breaks: RangeMap<Position, BreakInfo>,
     errors: Vec<Error>,
 
+    /// Temporary values for analysis
+    node_types: HashMap<Range<Position>, AnalyzedType>,
     scopes: Vec<Scope>,
 }
 
@@ -91,7 +98,8 @@ impl Context {
         Context {
             symbols: RangeMap::new(),
             variables: HashMap::new(),
-            expressions: HashMap::new(),
+            breaks: RangeMap::new(),
+            node_types: HashMap::new(),
             scopes: Vec::new(),
             errors: Vec::new(),
         }
@@ -136,7 +144,7 @@ impl Context {
     }
 
     fn analyze_program(&mut self, program: &Program) {
-        self.enter_scope(false);
+        self.enter_scope(program.range(), false);
         self.analyze_nodes(&program.statements);
         self.exit_scope();
     }
@@ -150,11 +158,11 @@ impl Context {
     }
 
     fn analyze_for_statement(&mut self, for_statement: &ForStatement) {
-        self.enter_scope(true);
+        self.enter_scope(for_statement.range(), true);
         self.define_variable(&for_statement.variable);
-        self.register_variable_type(&for_statement.variable, AnalyzedType::Number);
-        self.initialize_variable(&for_statement.variable);
-        self.register_symbol_info(
+        self.set_variable_type(&for_statement.variable.name, AnalyzedType::Number);
+        self.set_variable_initialized(&for_statement.variable);
+        self.set_symbol_info(
             for_statement.variable.range(),
             for_statement.variable.name.clone(),
             Some(for_statement.variable.range()),
@@ -171,14 +179,14 @@ impl Context {
         }
 
         self.define_variable(&variable_declaration.name);
-        self.register_symbol_info(
+        self.set_symbol_info(
             variable_declaration.name.range(),
             variable_declaration.name.name.clone(),
             Some(variable_declaration.name.range()),
         );
         if let Some(type_expression) = &variable_declaration.type_ {
             let type_ = self.evaluate_type_expression(type_expression);
-            self.register_variable_type(&variable_declaration.name, type_);
+            self.set_variable_type(&variable_declaration.name.name, type_);
         }
         if let Some(initializer) = &variable_declaration.initializer {
             let initializer_type = self.get_node_type(initializer);
@@ -186,8 +194,8 @@ impl Context {
                 let expected_type = self.evaluate_type_expression(type_expression);
                 self.report_if_not_assignable(&initializer_type, &expected_type, &initializer.range());
             }
-            self.register_variable_type(&variable_declaration.name, initializer_type);
-            self.initialize_variable(&variable_declaration.name);
+            self.set_variable_type(&variable_declaration.name.name, initializer_type);
+            self.set_variable_initialized(&variable_declaration.name);
         }
     }
 
@@ -215,13 +223,21 @@ impl Context {
     }
 
     fn analyze_break(&mut self, break_: &Break) {
-        if self.is_inside_of_loop() {
-            self.mark_scopes_as_exited_by_break();
-        } else {
-            self.errors.push(Error::invalid_syntax(
-                break_.range(),
-                "Break statement is not inside a loop",
-            ));
+        match self.get_current_breakable() {
+            Some(ref scope) => {
+                let scope_range = scope.range.clone();
+                self.mark_scopes_as_exited_by_break();
+                self.breaks.insert(break_.range(), BreakInfo {
+                    range: break_.range(),
+                    scope_range,
+                }).expect("Failed to insert break info");
+            }
+            None => {
+                self.errors.push(Error::invalid_syntax(
+                    break_.range(),
+                    "Break statement is not inside a loop",
+                ));
+            }
         }
     }
 
@@ -242,14 +258,14 @@ impl Context {
             &false_branch_type_,
             &if_expression.false_branch.range(),
         ) {
-            self.register_expression_type(if_expression.range(), true_branch_type_);
+            self.set_node_type(if_expression.range(), true_branch_type_);
         } else {
-            self.register_expression_type(if_expression.range(), AnalyzedType::Any);
+            self.set_node_type(if_expression.range(), AnalyzedType::Any);
         }
     }
 
     fn analyze_block(&mut self, block: &Block) {
-        self.enter_scope(false);
+        self.enter_scope(block.range(), false);
         self.analyze_nodes(&block.nodes);
         self.exit_scope();
     }
@@ -262,7 +278,7 @@ impl Context {
             Node::Identifier(identifier) => {
                 match self.get_variable_definition(&identifier.name) {
                     Some(variable_info) => {
-                        self.register_symbol_info(
+                        self.set_symbol_info(
                             identifier.range(),
                             identifier.name.clone(),
                             Some(variable_info.defined_at.clone()),
@@ -277,8 +293,8 @@ impl Context {
                     let lhs_type = self.get_variable_type(&identifier.name);
                     self.report_if_not_assignable(&rhs_type, &lhs_type, &assignment_expression.rhs.range());
                 } else {
-                    self.register_variable_type(identifier, rhs_type.clone());
-                    self.initialize_variable(identifier);
+                    self.set_variable_type(&identifier.name, rhs_type.clone());
+                    self.set_variable_initialized(identifier);
                 }
             }
             _ => {
@@ -289,7 +305,7 @@ impl Context {
             }
         }
 
-        self.register_expression_type(assignment_expression.range(), rhs_type);
+        self.set_node_type(assignment_expression.range(), rhs_type);
     }
 
     fn analyze_binary_expression(&mut self, binary_expression: &BinaryExpression) {
@@ -320,7 +336,7 @@ impl Context {
         self.report_if_not_assignable(&lhs_type, &expected_lhs_type, &binary_expression.lhs.range());
         self.report_if_not_assignable(&rhs_type, &expected_rhs_type, &binary_expression.rhs.range());
 
-        self.register_expression_type(binary_expression.range(), result_type);
+        self.set_node_type(binary_expression.range(), result_type);
     }
 
     fn analyze_unary_expression(&mut self, unary_expression: &UnaryExpression) {
@@ -335,7 +351,7 @@ impl Context {
 
         self.report_if_not_assignable(&operand_type, &expected_operand_type, &unary_expression.operand.range());
 
-        self.register_expression_type(unary_expression.range(), result_type);
+        self.set_node_type(unary_expression.range(), result_type);
     }
 
     fn analyze_call_expression(&mut self, _call_expression: &CallExpression) {
@@ -349,7 +365,7 @@ impl Context {
     fn analyze_identifier(&mut self, identifier: &Identifier) {
         match self.get_variable_definition(&identifier.name) {
             Some(variable_info) => {
-                self.register_symbol_info(
+                self.set_symbol_info(
                     identifier.range(),
                     identifier.name.clone(),
                     Some(variable_info.defined_at.clone()),
@@ -357,7 +373,7 @@ impl Context {
 
                 if !self.is_variable_initialized(&identifier.name) {
                     self.errors.push(Error::uninitialized_variable(identifier.range(), identifier.name.clone()));
-                    self.initialize_variable(identifier);
+                    self.set_variable_initialized(identifier);
                 }
             }
             None => {
@@ -366,20 +382,20 @@ impl Context {
             }
         }
 
-        self.register_expression_type(identifier.range(), self.get_variable_type(&identifier.name));
+        self.set_node_type(identifier.range(), self.get_variable_type(&identifier.name));
     }
 
     fn analyze_number_literal(&mut self, number_literal: &NumberLiteral) {
-        self.register_expression_type(number_literal.range(), AnalyzedType::Number);
+        self.set_node_type(number_literal.range(), AnalyzedType::Number);
     }
 
     fn analyze_bool_literal(&mut self, bool_literal: &BoolLiteral) {
-        self.register_expression_type(bool_literal.range(), AnalyzedType::Bool);
+        self.set_node_type(bool_literal.range(), AnalyzedType::Bool);
     }
 
     fn analyze_string_literal(&mut self, string_literal: &StringLiteral) {
         // TODO
-        self.register_expression_type(string_literal.range(), AnalyzedType::Any);
+        self.set_node_type(string_literal.range(), AnalyzedType::Any);
     }
 
     fn analyze_type_expression(&mut self, _type_expression: &TypeExpression) {
@@ -388,8 +404,9 @@ impl Context {
 
     // Scope
 
-    fn enter_scope(&mut self, is_breakable: bool) {
+    fn enter_scope(&mut self, range: Range<Position>, is_breakable: bool) {
         self.scopes.push(Scope {
+            range,
             declared_variables: HashMap::new(),
             initialized_variables: HashSet::new(),
             is_breakable,
@@ -403,7 +420,7 @@ impl Context {
 
     // Symbol
 
-    fn register_symbol_info(
+    fn set_symbol_info(
         &mut self,
         range: Range<Position>,
         name: String,
@@ -419,9 +436,9 @@ impl Context {
     // Variable
 
     fn define_variable(&mut self, identifier: &Identifier) {
-        let frame = self.scopes.last_mut().unwrap();
+        let scope = self.scopes.last_mut().unwrap();
 
-        frame.declared_variables.insert(identifier.name.clone(), VariableInfo {
+        scope.declared_variables.insert(identifier.name.clone(), VariableInfo {
             name: identifier.name.clone(),
             defined_at: identifier.range(),
             type_: AnalyzedType::NotInitialized,
@@ -429,8 +446,8 @@ impl Context {
     }
 
     fn get_variable_definition(&self, name: &String) -> Option<&VariableInfo> {
-        for frame in self.scopes.iter().rev() {
-            let option = frame.declared_variables.get(name);
+        for scope in self.scopes.iter().rev() {
+            let option = scope.declared_variables.get(name);
             if option.is_some() {
                 return option;
             }
@@ -438,7 +455,7 @@ impl Context {
         None
     }
 
-    fn initialize_variable(&mut self, identifier: &Identifier) {
+    fn set_variable_initialized(&mut self, identifier: &Identifier) {
         if !self.get_variable_definition(&identifier.name).is_some() {
             self.errors.push(Error::uninitialized_variable(identifier.range(), identifier.name.clone()));
         }
@@ -446,11 +463,11 @@ impl Context {
     }
 
     fn is_variable_initialized(&self, name: &String) -> bool {
-        for frame in self.scopes.iter().rev() {
-            if frame.initialized_variables.contains(name) {
+        for scope in self.scopes.iter().rev() {
+            if scope.initialized_variables.contains(name) {
                 return true;
             }
-            if frame.declared_variables.contains_key(name) {
+            if scope.declared_variables.contains_key(name) {
                 return false;
             }
         }
@@ -459,41 +476,23 @@ impl Context {
 
     // Loop
 
-    fn is_inside_of_loop(&self) -> bool {
-        for frame in self.scopes.iter().rev() {
-            if frame.is_breakable {
-                return true;
+    fn get_current_breakable(&self) -> Option<&Scope> {
+        for scope in self.scopes.iter().rev() {
+            if scope.is_breakable {
+                return Some(scope);
             }
         }
-        false
+        None
     }
 
     fn mark_scopes_as_exited_by_break(&mut self) {
-        for frame in self.scopes.iter_mut().rev() {
-            frame.exited = true;
-            if frame.is_breakable { break; }
+        for scope in self.scopes.iter_mut().rev() {
+            scope.exited = true;
+            if scope.is_breakable { break; }
         }
     }
 
     // Type
-
-    fn register_variable_type(&mut self, identifier: &Identifier, type_: AnalyzedType) {
-        for frame in self.scopes.iter_mut().rev() {
-            if let Some(symbol) = frame.declared_variables.get_mut(&identifier.name) {
-                symbol.type_ = type_;
-                self.variables.insert(symbol.defined_at.clone(), symbol.clone());
-                return;
-            }
-        }
-        panic!("Symbol {} is not declared", identifier.name);
-    }
-
-    // TODO: SymbolInfoに寄せる
-    fn register_expression_type(&mut self, range: Range<Position>, type_: AnalyzedType) {
-        self.expressions.insert(range, ExpressionInfo {
-            type_,
-        });
-    }
 
     fn is_assignable(&self, from: &AnalyzedType, to: &AnalyzedType) -> bool {
         match (from, to) {
@@ -516,22 +515,36 @@ impl Context {
         is_assignable
     }
 
-    fn get_variable_type(&self, name: &String) -> AnalyzedType {
-        for frame in self.scopes.iter().rev() {
-            if let Some(symbol) = frame.declared_variables.get(name) {
+    fn get_variable_type(&self, name: &str) -> AnalyzedType {
+        for scope in self.scopes.iter().rev() {
+            if let Some(symbol) = scope.declared_variables.get(name) {
                 return symbol.type_.clone();
             }
         }
         panic!("Symbol {:?} is not declared", name);
     }
 
+    fn set_variable_type(&mut self, name: &str, type_: AnalyzedType) {
+        for scope in self.scopes.iter_mut().rev() {
+            if let Some(symbol) = scope.declared_variables.get_mut(name) {
+                symbol.type_ = type_;
+                self.variables.insert(symbol.defined_at.clone(), symbol.clone());
+                return;
+            }
+        }
+        panic!("Symbol {:?} is not declared", name);
+    }
+
     fn get_node_type(&self, node: &Node) -> AnalyzedType {
-        let cached_info = self.expressions.get(&node.range());
-        if let Some(cache) = cached_info {
-            return cache.type_.clone();
+        if let Some(type_) = self.node_types.get(&node.range()) {
+            return type_.clone();
         }
 
         panic!("Expression {:?} is not yet analyzed", node.range());
+    }
+
+    fn set_node_type(&mut self, node_range: Range<Position>, type_: AnalyzedType) {
+        self.node_types.insert(node_range, type_);
     }
 
     fn evaluate_type_expression(&self, type_expression: &TypeExpression) -> AnalyzedType {
@@ -562,6 +575,7 @@ impl Context {
 pub struct AnalyzeResult {
     pub symbols: RangeMap<Position, SymbolInfo>,
     pub variables: HashMap<Range<Position>, VariableInfo>,
+    pub breaks: RangeMap<Position, BreakInfo>,
     pub errors: Vec<Error>,
 }
 
@@ -575,7 +589,7 @@ impl AnalyzeResult {
             Some(ref defined_at) => defined_at,
             None => return None,
         };
-        
+
         let variable = self.variables.get(defined_at)?;
 
         Some(&variable.type_)
@@ -590,6 +604,7 @@ pub fn analyze(program: &Program) -> AnalyzeResult {
     AnalyzeResult {
         symbols: context.symbols,
         variables: context.variables,
+        breaks: context.breaks,
         errors: context.errors,
     }
 }
