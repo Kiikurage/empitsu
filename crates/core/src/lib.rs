@@ -15,3 +15,4 @@ mod util;
 mod ast;
 mod analyzer;
 mod range;
+mod range_map;

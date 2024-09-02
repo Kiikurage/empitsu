@@ -481,6 +481,21 @@ impl Context {
     }
 }
 
+///
+/// AnalyzeResultへのクエリ
+/// - (Position) -> SymbolInfo
+///     - range: (シンボル全体の)範囲
+///     - 名前
+///     - 種類: 値、変数、関数、型、etc.
+///     - declaration: 宣言されている場所
+///     - definition: 定義されている場所
+///     - implementation: 実装されている場所
+///     - reference: プロジェクト内でのこのシンボルの参照
+///     - type: 型
+/// - (Position) -> ScopeInfo
+///     - 一覧(ネストが深い方からルートへ順番に)
+///     - break時に抜けるスコープ
+///
 pub struct AnalyzeResult {
     pub variables: HashMap<Range, SymbolInfo>,
     pub errors: Vec<Error>,

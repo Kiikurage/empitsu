@@ -1,6 +1,6 @@
 use std::fmt::{Debug, Display};
 
-#[derive(PartialEq, Eq, Clone, Copy, Hash, Debug)]
+#[derive(PartialEq, Eq, Clone, Copy, Hash, Debug, Ord)]
 pub struct Position {
     pub line: usize,
     pub character: usize,
@@ -27,3 +27,4 @@ impl PartialOrd for Position {
         }
     }
 }
+
