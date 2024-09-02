@@ -1,17 +1,16 @@
-use std::ops::Range;
-use crate::ast::node::Node;
 use crate::ast::traits::GetRange;
 use crate::position::Position;
+use std::ops::Range;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StringLiteral {
+    range: Range<Position>,
     pub value: String,
-    pub range: Range<Position>,
 }
 
-impl From<StringLiteral> for Node {
-    fn from(value: StringLiteral) -> Node {
-        Node::StringLiteral(value)
+impl StringLiteral {
+    pub fn new(range: Range<Position>, value: impl Into<String>) -> Self {
+        Self { range, value: value.into() }
     }
 }
 

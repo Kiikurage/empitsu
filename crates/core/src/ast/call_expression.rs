@@ -10,9 +10,12 @@ pub struct CallExpression {
     pub parameters: Vec<Parameter>,
 }
 
-impl From<CallExpression> for Node {
-    fn from(value: CallExpression) -> Node {
-        Node::CallExpression(value)
+impl CallExpression {
+    pub fn new(callee: Node, parameters: Vec<Parameter>) -> Self {
+        Self {
+            callee: Box::new(callee),
+            parameters,
+        }
     }
 }
 

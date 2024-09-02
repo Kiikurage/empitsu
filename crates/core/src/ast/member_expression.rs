@@ -10,9 +10,12 @@ pub struct MemberExpression {
     pub member: Identifier,
 }
 
-impl From<MemberExpression> for Node {
-    fn from(value: MemberExpression) -> Node {
-        Node::MemberExpression(value)
+impl MemberExpression {
+    pub fn new(object: Node, member: Identifier) -> Self {
+        Self {
+            object: Box::new(object),
+            member,
+        }
     }
 }
 

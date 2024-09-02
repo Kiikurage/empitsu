@@ -1,20 +1,27 @@
 use crate::ast::function_interface::FunctionInterface;
 use crate::ast::identifier::Identifier;
-use crate::ast::node::Node;
 use crate::ast::traits::GetRange;
 use crate::position::Position;
 use std::ops::Range;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct InterfaceDeclaration {
+    range: Range<Position>,
     pub name: Identifier,
     pub instance_methods: Vec<FunctionInterface>,
-    pub range: Range<Position>,
 }
 
-impl From<InterfaceDeclaration> for Node {
-    fn from(value: InterfaceDeclaration) -> Node {
-        Node::InterfaceDeclaration(value)
+impl InterfaceDeclaration {
+    pub fn new(
+        range: Range<Position>,
+        name: Identifier,
+        instance_methods: Vec<FunctionInterface>,
+    ) -> Self {
+        Self {
+            range,
+            name,
+            instance_methods,
+        }
     }
 }
 

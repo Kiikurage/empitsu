@@ -9,12 +9,17 @@ pub struct ForStatement {
     pub variable: Identifier,
     pub iterable: Box<Node>,
     pub body: Box<Node>,
-    pub range: Range<Position>,
+    range: Range<Position>,
 }
 
-impl From<ForStatement> for Node {
-    fn from(value: ForStatement) -> Node {
-        Node::ForStatement(value)
+impl ForStatement {
+    pub fn new(variable: Identifier, iterable: Node, body: Node, range: Range<Position>) -> Self {
+        Self {
+            variable,
+            iterable: Box::new(iterable),
+            body: Box::new(body),
+            range,
+        }
     }
 }
 

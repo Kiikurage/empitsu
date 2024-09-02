@@ -1,16 +1,15 @@
-use crate::ast::node::Node;
 use crate::ast::traits::GetRange;
 use crate::position::Position;
 use std::ops::Range;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Break {
-    pub range: Range<Position>,
+    range: Range<Position>,
 }
 
-impl From<Break> for Node {
-    fn from(value: Break) -> Node {
-        Node::Break(value)
+impl Break {
+    pub fn new(range: Range<Position>) -> Self {
+        Self { range }
     }
 }
 

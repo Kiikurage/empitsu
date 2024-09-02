@@ -1,6 +1,5 @@
 use crate::ast::function::Function;
 use crate::ast::identifier::Identifier;
-use crate::ast::node::Node;
 use crate::ast::property_declaration::PropertyDeclaration;
 use crate::ast::traits::GetRange;
 use crate::position::Position;
@@ -8,16 +7,28 @@ use std::ops::Range;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StructDeclaration {
+    range: Range<Position>,
     pub name: Identifier,
     pub properties: Vec<PropertyDeclaration>,
     pub instance_methods: Vec<Function>,
     pub static_methods: Vec<Function>,
-    pub range: Range<Position>,
 }
 
-impl From<StructDeclaration> for Node {
-    fn from(value: StructDeclaration) -> Node {
-        Node::StructDeclaration(value)
+impl StructDeclaration {
+    pub fn new(
+        range: Range<Position>,
+        name: Identifier,
+        properties: Vec<PropertyDeclaration>,
+        instance_methods: Vec<Function>,
+        static_methods: Vec<Function>,
+    ) -> Self {
+        Self {
+            range,
+            name,
+            properties,
+            instance_methods,
+            static_methods,
+        }
     }
 }
 

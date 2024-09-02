@@ -1,13 +1,14 @@
 use crate::analyzer::{analyze, AnalyzeResult, AnalyzedType};
 use crate::ast::node::Node;
 use crate::ast::program::Program;
+use crate::ast::traits::GetRange;
 use crate::bytecode::ByteCode;
 use crate::error::Error;
+use crate::position::Position;
 use crate::punctuation_kind::PunctuationKind;
 use crate::util::AsU8Slice;
 use std::collections::HashMap;
 use std::ops::{Deref, Range};
-use crate::position::Position;
 
 impl AnalyzedType {
     fn size(&self) -> usize {
@@ -148,7 +149,7 @@ impl Generator {
                     self.write_constant_number(0.0);
                     self.declare_variable(
                         for_.variable.name.clone(),
-                        for_.variable.range.clone(),
+                        for_.variable.range(),
                     );
 
                     // condition
@@ -178,7 +179,7 @@ impl Generator {
                 self.exit_scope();
             }
             Node::VariableDeclaration(ref variable_declaration) => {
-                let symbol_info = self.analyze_result.variables.get(&variable_declaration.name.range).unwrap();
+                let symbol_info = self.analyze_result.variables.get(&variable_declaration.name.range()).unwrap();
 
                 match &variable_declaration.initializer {
                     Some(initializer) => self.generate_node(initializer),
@@ -193,7 +194,7 @@ impl Generator {
 
                 self.declare_variable(
                     variable_declaration.name.name.clone(),
-                    variable_declaration.name.range.clone(),
+                    variable_declaration.name.range(),
                 );
             }
             Node::FunctionDeclaration(_) => unreachable!("FunctionDeclaration"),

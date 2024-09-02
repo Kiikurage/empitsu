@@ -1,17 +1,16 @@
-use crate::ast::node::Node;
 use crate::ast::traits::GetRange;
 use crate::position::Position;
 use std::ops::Range;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Identifier {
+    range: Range<Position>,
     pub name: String,
-    pub range: Range<Position>,
 }
 
-impl From<Identifier> for Node {
-    fn from(value: Identifier) -> Node {
-        Node::Identifier(value)
+impl Identifier {
+    pub fn new(range: Range<Position>, name: impl Into<String>) -> Self {
+        Self { range, name: name.into() }
     }
 }
 

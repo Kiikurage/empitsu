@@ -10,12 +10,22 @@ pub struct VariableDeclaration {
     pub name: Identifier,
     pub type_: Option<TypeExpression>,
     pub initializer: Option<Box<Node>>,
-    pub range: Range<Position>,
+    range: Range<Position>,
 }
 
-impl From<VariableDeclaration> for Node {
-    fn from(value: VariableDeclaration) -> Node {
-        Node::VariableDeclaration(value)
+impl VariableDeclaration {
+    pub fn new(
+        name: Identifier,
+        type_: Option<TypeExpression>,
+        initializer: Option<Node>,
+        range: Range<Position>,
+    ) -> Self {
+        Self {
+            name,
+            type_,
+            initializer: initializer.map(Box::new),
+            range,
+        }
     }
 }
 

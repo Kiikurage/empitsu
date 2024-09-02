@@ -5,15 +5,20 @@ use std::ops::Range;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct IfExpression {
+    range: Range<Position>,
     pub condition: Box<Node>,
     pub true_branch: Box<Node>,
     pub false_branch: Box<Node>,
-    pub range: Range<Position>,
 }
 
-impl From<IfExpression> for Node {
-    fn from(value: IfExpression) -> Node {
-        Node::IfExpression(value)
+impl IfExpression {
+    pub fn new(range: Range<Position>, condition: Node, true_branch: Node, false_branch: Node) -> Self {
+        Self {
+            range,
+            condition: Box::new(condition),
+            true_branch: Box::new(true_branch),
+            false_branch: Box::new(false_branch),
+        }
     }
 }
 

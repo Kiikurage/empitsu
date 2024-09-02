@@ -6,9 +6,15 @@ use std::ops::Range;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Function {
+    range: Range<Position>,
     pub interface: FunctionInterface,
     pub body: Vec<Node>,
-    pub range: Range<Position>,
+}
+
+impl Function {
+    pub fn new(range: Range<Position>, interface: FunctionInterface, body: Vec<Node>) -> Self {
+        Self { range, interface, body }
+    }
 }
 
 impl GetRange for Function {

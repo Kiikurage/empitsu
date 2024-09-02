@@ -8,12 +8,17 @@ pub struct IfStatement {
     pub condition: Box<Node>,
     pub true_branch: Box<Node>,
     pub false_branch: Option<Box<Node>>,
-    pub range: Range<Position>,
+    range: Range<Position>,
 }
 
-impl From<IfStatement> for Node {
-    fn from(value: IfStatement) -> Node {
-        Node::IfStatement(value)
+impl IfStatement {
+    pub fn new(condition: Node, true_branch: Node, false_branch: Option<Node>, range: Range<Position>) -> Self {
+        Self {
+            condition: Box::new(condition),
+            true_branch: Box::new(true_branch),
+            false_branch: false_branch.map(Box::new),
+            range,
+        }
     }
 }
 

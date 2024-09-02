@@ -10,6 +10,15 @@ pub struct Parameter {
     pub value: Box<Node>,
 }
 
+impl Parameter {
+    pub fn new(name: Option<Identifier>, value: Node) -> Self {
+        Self {
+            name,
+            value: Box::new(value),
+        }
+    }
+}
+
 impl GetRange for Parameter {
     fn range(&self) -> Range<Position> {
         if let Some(name) = &self.name {

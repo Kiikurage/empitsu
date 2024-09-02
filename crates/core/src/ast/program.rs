@@ -1,22 +1,22 @@
 use crate::ast::node::Node;
 use crate::ast::traits::GetRange;
-use crate::position::Position;
+use crate::position::{pos, Position};
 use std::ops::Range;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
     pub statements: Vec<Node>,
-    pub range: Range<Position>,
 }
 
-impl From<Program> for Node {
-    fn from(value: Program) -> Node {
-        Node::Program(value)
+impl Program {
+    pub fn new(statements: Vec<Node>) -> Self {
+        Self { statements }
     }
 }
 
 impl GetRange for Program {
     fn range(&self) -> Range<Position> {
-        self.range.clone()
+        self.statements.first().map(Node::start).unwrap_or(pos(0, 0))..
+            self.statements.last().map(Node::start).unwrap_or(pos(0, 0))
     }
 }

@@ -1,17 +1,16 @@
-use crate::ast::node::Node;
 use crate::ast::traits::GetRange;
 use crate::position::Position;
 use std::ops::Range;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TypeExpression {
+    range: Range<Position>,
     pub name: String,
-    pub range: Range<Position>,
 }
 
-impl From<TypeExpression> for Node {
-    fn from(value: TypeExpression) -> Node {
-        Node::TypeExpression(value)
+impl TypeExpression {
+    pub fn new(range: Range<Position>, name: impl Into<String>) -> Self {
+        Self { range, name: name.into() }
     }
 }
 

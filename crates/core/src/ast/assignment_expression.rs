@@ -11,9 +11,12 @@ pub struct AssignmentExpression {
     pub rhs: Box<Node>,
 }
 
-impl From<AssignmentExpression> for Node {
-    fn from(value: AssignmentExpression) -> Node {
-        Node::AssignmentExpression(value)
+impl AssignmentExpression {
+    pub fn new(lhs: Node, rhs: Node) -> Self {
+        Self {
+            lhs: Box::new(lhs),
+            rhs: Box::new(rhs),
+        }
     }
 }
 

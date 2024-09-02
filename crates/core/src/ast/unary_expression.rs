@@ -6,14 +6,18 @@ use std::ops::Range;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct UnaryExpression {
+    range: Range<Position>,
     pub operator: PunctuationKind,
     pub operand: Box<Node>,
-    pub range: Range<Position>,
 }
 
-impl From<UnaryExpression> for Node {
-    fn from(value: UnaryExpression) -> Node {
-        Node::UnaryExpression(value)
+impl UnaryExpression {
+    pub fn new(range: Range<Position>, operator: PunctuationKind, operand: Node) -> Self {
+        Self {
+            range,
+            operator,
+            operand: Box::new(operand),
+        }
     }
 }
 

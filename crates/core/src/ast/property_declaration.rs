@@ -10,6 +10,12 @@ pub struct PropertyDeclaration {
     pub type_: TypeExpression,
 }
 
+impl PropertyDeclaration {
+    pub fn new(name: Identifier, type_: TypeExpression) -> Self {
+        Self { name, type_ }
+    }
+}
+
 impl GetRange for PropertyDeclaration {
     fn range(&self) -> Range<Position> {
         self.name.range()

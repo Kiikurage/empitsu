@@ -5,13 +5,13 @@ use std::ops::Range;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Block {
+    range: Range<Position>,
     pub nodes: Vec<Node>,
-    pub range: Range<Position>,
 }
 
-impl From<Block> for Node {
-    fn from(value: Block) -> Node {
-        Node::Block(value)
+impl Block {
+    pub fn new(range: Range<Position>, nodes: Vec<Node>) -> Self {
+        Self { range, nodes }
     }
 }
 

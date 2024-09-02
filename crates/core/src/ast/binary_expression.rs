@@ -11,9 +11,13 @@ pub struct BinaryExpression {
     pub rhs: Box<Node>,
 }
 
-impl From<BinaryExpression> for Node {
-    fn from(value: BinaryExpression) -> Node {
-        Node::BinaryExpression(value)
+impl BinaryExpression {
+    pub fn new(lhs: Node, operator: PunctuationKind, rhs: Node) -> Self {
+        Self {
+            lhs: Box::new(lhs),
+            operator,
+            rhs: Box::new(rhs),
+        }
     }
 }
 
