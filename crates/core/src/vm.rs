@@ -1,8 +1,12 @@
-use crate::bytecode::{ByteCode, EMBool, EMNumber};
-use crate::code_generator::Generator;
+pub mod bytecode;
+pub mod generator;
+mod bytecode_like;
+
 use crate::error::Error;
 use crate::parser::parse;
 use crate::util::{AsU8Slice, ParseAs};
+use crate::vm::bytecode::{ByteCode, EMBool, EMNumber};
+use crate::vm::generator::Generator;
 use std::collections::HashMap;
 use std::fmt::Debug;
 
@@ -195,7 +199,7 @@ impl VM {
                     let lhs = self.pop::<EMNumber>();
                     self.push(lhs > rhs);
                 }
-                ByteCode::GreaterThanEqual => {
+                ByteCode::GreaterThanOrEqual => {
                     let rhs = self.pop::<EMNumber>();
                     let lhs = self.pop::<EMNumber>();
                     self.push(lhs >= rhs);
@@ -227,8 +231,8 @@ impl VM {
 
 #[cfg(test)]
 mod tests {
-    use crate::code_generator::Generator;
     use crate::parser::parse;
+    use crate::vm::Generator;
     use crate::vm::VM;
     use std::fmt::Debug;
 
@@ -346,17 +350,17 @@ mod tests {
 
     #[test]
     fn block() {
-        test("let x=1 {1+1}", 1.0);
+        test("let x=1 {1+1}", 2.0);
     }
 
     #[test]
     fn block_scope() {
-        test("let x=1 { let x = 2 { x = 10 } }", 1.0);
+        test("let x=1 { let x = 2 { x = 10 } }", 10.0);
     }
 
     #[test]
     fn nested_block() {
-        test("let x = 0 {1 { 1+1 } 2+1 }", 0.0);
+        test("let x = 0 {1 { 1+1 } 2+1 }", 3.0);
     }
 
     #[test]
@@ -484,5 +488,39 @@ mod tests {
         assert_eq!(vm.heap.len(), 2);
         println!("heap: {:?}", vm.heap);
         println!("stack: {:?}", vm.stack);
+    }
+
+    #[test]
+    fn block_expression_must_return_a_value() {
+        test(r#"
+    let x = {
+        1
+        2
+        3
+    }
+    x
+"#, 3f64);
+    }
+
+    #[test]
+    fn if_expression_must_return_a_value() {
+        test(r#"
+    let x = if (true) { 1 } else { 2 }
+    x
+"#, 1f64);
+    }
+
+    #[test]
+    fn initialize_in_child_scope() {
+        // TODO: 子スコープでの初期化情報を親スコープへ引き継ぐ
+        test(r#"
+    let x
+    if (true) {
+        x = 1
+    } else {
+        x = 2
+    }
+    x
+"#, 1f64);
     }
 }

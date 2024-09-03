@@ -23,6 +23,6 @@ impl BinaryExpression {
 
 impl GetRange for BinaryExpression {
     fn range(&self) -> Range<Position> {
-        self.lhs.range()
+        self.lhs.start()..self.rhs.end()
     }
 }

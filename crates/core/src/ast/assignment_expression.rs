@@ -22,6 +22,6 @@ impl AssignmentExpression {
 
 impl GetRange for AssignmentExpression {
     fn range(&self) -> Range<Position> {
-        self.lhs.range()
+        self.lhs.start()..self.rhs.end()
     }
 }

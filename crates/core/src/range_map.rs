@@ -49,6 +49,15 @@ where
         self.values.get(start)
     }
 
+    pub fn find_mut(&mut self, p: &K) -> Option<&mut V> {
+        let (start, end) = self.ranges.range(..=p).next_back()?;
+        if !(start <= p && p < end) {
+            return None;
+        }
+
+        self.values.get_mut(start)
+    }
+
     pub fn values(&self) -> Values<'_, K, V> {
         self.values.values()
     }

@@ -19,9 +19,9 @@ pub enum ByteCode {
     StoreNumber,
     StoreBool,
 
-    /// Read next 4 bytes from bytecode as index, load literal binary
-    /// of given literal index, store it in heap, and push the ref to
-    /// the stack
+    /// Read next 4 bytes from bytecode as index, load binary from
+    /// the given literal index, store it in heap, and push the ref 
+    /// to the stack
     LoadLiteral,
 
     /// Load next (usize)bytes from bytecode as index, and jump to
@@ -36,7 +36,8 @@ pub enum ByteCode {
     /// stack size equals to the given size.
     Flush,
 
-    /// Binary operations
+    /// Pop next 2 elements in appropriate byte size from stack, and
+    /// push the result of operation to the stack
     Add,
     Subtract,
     Multiply,
@@ -46,11 +47,12 @@ pub enum ByteCode {
     LessThan,
     LessThanOrEqual,
     GreaterThan,
-    GreaterThanEqual,
+    GreaterThanOrEqual,
     Equal,
     NotEqual,
 
-    /// Unary operations
+    /// Unary operations. Pop next 1 element in appropriate byte size
+    /// from stack, and push the result of operation to the stack
     Negative,
     LogicalNot,
 }

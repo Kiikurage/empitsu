@@ -1,7 +1,7 @@
-use std::ops::Range;
-use crate::analyzer::AnalyzedType;
+use crate::analysis::type_::Type;
 use crate::ast::get_range::GetRange;
 use crate::position::Position;
+use std::ops::Range;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Error {
@@ -16,12 +16,12 @@ impl Error {
     }
 
     #[inline(always)]
-    pub fn unexpected_type(range: Range<Position>, expected: &AnalyzedType, actual: &AnalyzedType) -> Error {
+    pub fn unexpected_type(range: Range<Position>, expected: &Type, actual: &Type) -> Error {
         Error { range, message: format!("Expected type is {:?}, but actual type is {:?}", expected, actual) }
     }
 
     #[inline(always)]
-    pub fn unexpected_type_in_if_condition(range: Range<Position>, actual: &AnalyzedType) -> Error {
+    pub fn unexpected_type_in_if_condition(range: Range<Position>, actual: &Type) -> Error {
         Error { range, message: format!("Condition must be a boolean, but found {:?}", actual) }
     }
 
@@ -63,6 +63,16 @@ impl Error {
     #[inline(always)]
     pub fn uninitialized_variable(range: Range<Position>, name: impl Into<String>) -> Error {
         Error { range, message: format!("Variable \"{}\" is used before initialization", name.into()) }
+    }
+
+    #[inline(always)]
+    pub fn conditionally_initialized_variable(range: Range<Position>, name: impl Into<String>) -> Error {
+        Error { range, message: format!("Variable \"{}\" is not initialized in some case", name.into()) }
+    }
+
+    #[inline(always)]
+    pub fn conditionally_initialized_as_different_type(range: Range<Position>, name: impl Into<String>) -> Error {
+        Error { range, message: format!("Variable \"{}\" is conditionally initialized as different types", name.into()) }
     }
 }
 
