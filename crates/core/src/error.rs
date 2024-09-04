@@ -66,13 +66,18 @@ impl Error {
     }
 
     #[inline(always)]
-    pub fn conditionally_initialized_variable(range: Range<Position>, name: impl Into<String>) -> Error {
-        Error { range, message: format!("Variable \"{}\" is not initialized in some case", name.into()) }
+    pub fn conditional_if_expression_type(range: Range<Position>, true_type: Type, false_type: Type) -> Error {
+        Error { range, message: format!("If expression must have the same type, but found {:?} and {:?}", true_type, false_type) }
     }
 
     #[inline(always)]
-    pub fn conditionally_initialized_as_different_type(range: Range<Position>, name: impl Into<String>) -> Error {
-        Error { range, message: format!("Variable \"{}\" is conditionally initialized as different types", name.into()) }
+    pub fn conditionally_initialized_variable(range: Range<Position>) -> Error {
+        Error { range, message: "Not all cases initialize this variable".to_string() }
+    }
+
+    #[inline(always)]
+    pub fn conditionally_initialized_as_different_type(range: Range<Position>, type_in_other_branch: Type, type_in_this_branch: Type) -> Error {
+        Error { range, message: format!("Variable is initialized as {:?} in other branch, but as {:?} in this branch", type_in_other_branch, type_in_this_branch) }
     }
 }
 

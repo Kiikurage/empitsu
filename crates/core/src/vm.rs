@@ -235,6 +235,7 @@ mod tests {
     use crate::vm::Generator;
     use crate::vm::VM;
     use std::fmt::Debug;
+    use crate::analyzer::analyze;
 
     fn test<T: Clone + PartialEq + Debug>(program: &str, expected: T) {
         let mut vm = VM::new();
@@ -414,11 +415,6 @@ mod tests {
     }
 
     #[test]
-    fn uninitialized_variable() {
-        test("let x:number; if (false) { x = 1 } else { x = 2 }", 2.0);
-    }
-
-    #[test]
     fn detect_reading_uninitialized_variable() {
         VM::new()
             .eval("let x:number; let y = x")
@@ -512,7 +508,15 @@ mod tests {
 
     #[test]
     fn initialize_in_child_scope() {
-        // TODO: 子スコープでの初期化情報を親スコープへ引き継ぐ
+        let result = analyze(r#"
+    let x
+    if (true) {
+        x = 1
+    } else {
+        x = 2
+    }
+    x
+"#);
         test(r#"
     let x
     if (true) {

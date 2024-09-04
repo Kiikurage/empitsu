@@ -1,10 +1,10 @@
 #[derive(Clone, Debug, PartialEq)]
 pub enum Type {
-    /// Type for variables not yet initialized.
+    /// Type for values the shouldn't be used (e.g. unreachable code)
     Never,
 
-    /// Type cannot be determined due to an error.
-    Any,
+    /// Type cannot be determined.
+    Unknown,
 
     Void,
     Number,

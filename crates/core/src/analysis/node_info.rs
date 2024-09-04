@@ -2,6 +2,7 @@ use crate::analysis::break_info::BreakInfo;
 use crate::analysis::expression_info::ExpressionInfo;
 use crate::analysis::identifier_info::IdentifierInfo;
 use crate::analysis::type_::Type;
+use crate::analysis::type_expression_info::TypeExpressionInfo;
 use crate::analysis::variable_info::VariableInfo;
 use crate::ast::get_range::GetRange;
 use crate::position::Position;
@@ -13,6 +14,7 @@ pub enum NodeInfo {
     Identifier(IdentifierInfo),
     Break(BreakInfo),
     Expression(ExpressionInfo),
+    TypeExpression(TypeExpressionInfo),
 }
 
 impl NodeInfo {
@@ -31,6 +33,10 @@ impl NodeInfo {
     pub fn expression(range: Range<Position>, type_: Type) -> Self {
         NodeInfo::Expression(ExpressionInfo::new(range, type_))
     }
+
+    pub fn type_expression(range: Range<Position>, type_: Type) -> Self {
+        NodeInfo::TypeExpression(TypeExpressionInfo::new(range, type_))
+    }
 }
 
 impl GetRange for NodeInfo {
@@ -40,6 +46,7 @@ impl GetRange for NodeInfo {
             NodeInfo::Identifier(identifier) => identifier.range(),
             NodeInfo::Break(break_) => break_.range(),
             NodeInfo::Expression(expression) => expression.range(),
+            NodeInfo::TypeExpression(type_) => type_.range(),
         }
     }
 }

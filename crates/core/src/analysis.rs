@@ -1,13 +1,14 @@
-pub mod leaf_node_info;
+pub mod node_info;
 pub mod identifier_info;
 pub mod break_info;
 pub mod variable_info;
 pub mod type_;
 pub mod scope_info;
 pub mod expression_info;
+pub mod type_expression_info;
 
 use crate::analysis::break_info::BreakInfo;
-use crate::analysis::leaf_node_info::NodeInfo;
+use crate::analysis::node_info::NodeInfo;
 use crate::analysis::type_::Type;
 use crate::analysis::variable_info::VariableInfo;
 use crate::error::Error;
@@ -32,11 +33,18 @@ use std::ops::Range;
 ///
 #[derive(Debug)]
 pub struct Analysis {
-    pub tokens: HashMap<Range<Position>, NodeInfo>,
+    tokens: HashMap<Range<Position>, NodeInfo>,
     pub errors: Vec<Error>,
 }
 
 impl Analysis {
+    pub fn new(
+        tokens: HashMap<Range<Position>, NodeInfo>,
+        errors: Vec<Error>,
+    ) -> Self {
+        Self { tokens, errors }
+    }
+
     pub fn get_variable_info(&self, range: &Range<Position>) -> Option<&VariableInfo> {
         match self.tokens.get(range) {
             Some(NodeInfo::Variable(variable)) => Some(variable),

@@ -177,7 +177,7 @@ impl Generator {
             }
             Node::VariableDeclaration(ref variable_declaration) => {
                 let variable = self.analysis
-                    .get_variable_info(&variable_declaration.name.range()).unwrap();
+                    .get_variable_info(&variable_declaration.range()).unwrap();
 
                 match &variable_declaration.initializer {
                     Some(initializer) => self.generate_node(initializer),
@@ -190,7 +190,7 @@ impl Generator {
                     }
                 }
 
-                self.allocate_variable_in_stack(&variable_declaration.name.range());
+                self.allocate_variable_in_stack(&variable_declaration.range());
             }
             Node::FunctionDeclaration(_) => unreachable!("FunctionDeclaration"),
             Node::StructDeclaration(_) => unreachable!("StructDeclaration"),
