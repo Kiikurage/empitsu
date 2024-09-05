@@ -5,12 +5,11 @@ use std::ops::Range;
 #[derive(Clone, Debug, PartialEq)]
 pub struct BreakInfo {
     range: Range<Position>,
-    pub scope_range: Range<Position>,
 }
 
 impl BreakInfo {
-    pub fn new(range: Range<Position>, scope_range: Range<Position>) -> Self {
-        BreakInfo { range, scope_range }
+    pub fn new(range: Range<Position>) -> Self {
+        BreakInfo { range }
     }
 }
 

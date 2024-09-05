@@ -481,8 +481,6 @@ mod tests {
         "#).unwrap();
 
         assert_eq!(vm.heap.len(), 2);
-        println!("heap: {:?}", vm.heap);
-        println!("stack: {:?}", vm.stack);
     }
 
     #[test]

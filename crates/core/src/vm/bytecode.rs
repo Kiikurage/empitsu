@@ -1,5 +1,6 @@
 pub type EMNumber = f64;
 pub type EMBool = bool;
+pub type EMRef = usize;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ByteCode {

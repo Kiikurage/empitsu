@@ -192,7 +192,10 @@ impl Generator {
 
                 self.allocate_variable_in_stack(&variable_declaration.range());
             }
-            Node::FunctionDeclaration(_) => unreachable!("FunctionDeclaration"),
+            Node::FunctionDeclaration(_function) => {
+                // 関数本体
+                // 戻り値をスタックフレームの一番下に配置
+            }
             Node::StructDeclaration(_) => unreachable!("StructDeclaration"),
             Node::InterfaceDeclaration(_) => unreachable!("InterfaceDeclaration"),
             Node::ImplStatement(_) => unreachable!("ImplStatement"),
@@ -276,7 +279,49 @@ impl Generator {
                     _ => unreachable!("Unsupported unary operator: {:?}", expression.operator),
                 }
             }
-            Node::CallExpression(_expression) => unreachable!("CallExpression"),
+            Node::CallExpression(_expression) => {
+                // Analyzerに必要な機能
+                // - function type
+                //      - 引数の順番を正規化したうえで、すべての引数及び戻り値が同じ変数は同じ型とみなす
+                // - function declaration
+                //      - 引数の順番を正規化する
+                //
+                // f(x:number, z:number=1, y:number=2)
+                //
+                // f(arg: { x:number, z:number, y:number })
+                // f(arg: (number, number, number))
+                //
+                // f(x=3, y=true, z=4)  // O: 正規の順番、名前あり
+                // f(3, true, 1)        // O: 正規の順番、名前なし
+                // f(x=3, y=true, 1)    // X: 正規の順番、一部名前なし、名前なしが後に位置する
+                // f(1, x=3)            // O: 正規の順番、一部名前なし、名前なしが前に位置する
+                // f(x=3, z=4, y=true)  // O: 異なる順番、名前あり
+                // f(3, 1, true)        // O: 異なる順番、名前なし (型エラー)
+                // f(y=true, x=3, 1)    // X: 異なる順番、一部名前なし、名前なしが後に位置する
+                // f(1, z=3, y=true)    // O: 異なる順番、一部名前なし、名前なしが前に位置する
+                //
+                // 名前付きは引数リストの後ろ側になければいけない
+                //
+                // 解析: - 呼び出し時に与えたパラメータを順番に解析する
+                //   　　- 名前なし引数は、関数宣言の引数リストの順番に従って解析する
+
+                // どうやってスタックに配置する順番を特定するか
+                // - 関数宣言の引数の順番を正規化する
+
+                // TODO: 期待されている引数の順番
+                // let expected_parameter_names = vec![];
+                //
+                // for name in expected_parameter_names.iter() {
+                //     expression.parameters.iter()
+                //         .find(|parameter| parameter.name == *name)
+                //     for parameter in .iter() {
+                //         self.generate_node(parameter.value.deref());
+                //     }
+                // }
+
+                // 残りをクリーンアップ
+                // ipを呼び出し元へ戻す
+            }
             Node::MemberExpression(_expression) => unreachable!("MemberExpression"),
             Node::Identifier(name) => {
                 self.load(&name.range());
@@ -288,6 +333,7 @@ impl Generator {
                 self.push_constant_bool(value.value);
             }
             Node::StringLiteral(string_literal) => {
+                // unreachable!("TypeExpression")
                 self.load_literal(string_literal.value.as_bytes().to_vec());
             }
             Node::TypeExpression(_) => unreachable!("TypeExpression"),
@@ -355,6 +401,7 @@ impl Generator {
     }
 
     fn load_literal(&mut self, value: Vec<u8>) {
+        // unimplemented!()
         let literal_id = self.literals.len() as u32;
         self.literals.push(value);
         self.opcodes.push(ByteCodeLike::LoadLiteral(literal_id));

@@ -6,6 +6,8 @@ pub mod type_;
 pub mod scope_info;
 pub mod expression_info;
 pub mod type_expression_info;
+pub mod function_info;
+pub mod return_info;
 
 use crate::analysis::break_info::BreakInfo;
 use crate::analysis::node_info::NodeInfo;

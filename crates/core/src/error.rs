@@ -16,13 +16,18 @@ impl Error {
     }
 
     #[inline(always)]
+    pub fn break_not_in_loop(range: Range<Position>) -> Error {
+        Error { range, message: "Break statement must be inside a loop".to_string() }
+    }
+    
+    #[inline(always)]
     pub fn unexpected_type(range: Range<Position>, expected: &Type, actual: &Type) -> Error {
-        Error { range, message: format!("Expected type is {:?}, but actual type is {:?}", expected, actual) }
+        Error { range, message: format!("Expected type is {}, but actual type is {}", expected, actual) }
     }
 
     #[inline(always)]
     pub fn unexpected_type_in_if_condition(range: Range<Position>, actual: &Type) -> Error {
-        Error { range, message: format!("Condition must be a boolean, but found {:?}", actual) }
+        Error { range, message: format!("Condition must be a boolean, but found {}", actual) }
     }
 
     #[inline(always)]
@@ -67,7 +72,7 @@ impl Error {
 
     #[inline(always)]
     pub fn conditional_if_expression_type(range: Range<Position>, true_type: Type, false_type: Type) -> Error {
-        Error { range, message: format!("If expression must have the same type, but found {:?} and {:?}", true_type, false_type) }
+        Error { range, message: format!("If expression must have the same type, but found {} and {}", true_type, false_type) }
     }
 
     #[inline(always)]
@@ -77,7 +82,7 @@ impl Error {
 
     #[inline(always)]
     pub fn conditionally_initialized_as_different_type(range: Range<Position>, type_in_other_branch: Type, type_in_this_branch: Type) -> Error {
-        Error { range, message: format!("Variable is initialized as {:?} in other branch, but as {:?} in this branch", type_in_other_branch, type_in_this_branch) }
+        Error { range, message: format!("Variable is initialized as {} in other branch, but as {} in this branch", type_in_other_branch, type_in_this_branch) }
     }
 }
 

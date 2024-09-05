@@ -7,6 +7,8 @@ use crate::analysis::variable_info::VariableInfo;
 use crate::ast::get_range::GetRange;
 use crate::position::Position;
 use std::ops::Range;
+use crate::analysis::function_info::FunctionInfo;
+use crate::analysis::return_info::ReturnInfo;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum NodeInfo {
@@ -15,6 +17,8 @@ pub enum NodeInfo {
     Break(BreakInfo),
     Expression(ExpressionInfo),
     TypeExpression(TypeExpressionInfo),
+    FunctionInfo(FunctionInfo),
+    Return(ReturnInfo),
 }
 
 impl NodeInfo {
@@ -26,8 +30,8 @@ impl NodeInfo {
         NodeInfo::Identifier(IdentifierInfo::new(range, name, defined_at))
     }
 
-    pub fn break_(range: Range<Position>, scope_range: Range<Position>) -> Self {
-        NodeInfo::Break(BreakInfo::new(range, scope_range))
+    pub fn break_(range: Range<Position>) -> Self {
+        NodeInfo::Break(BreakInfo::new(range))
     }
 
     pub fn expression(range: Range<Position>, type_: Type) -> Self {
@@ -36,6 +40,14 @@ impl NodeInfo {
 
     pub fn type_expression(range: Range<Position>, type_: Type) -> Self {
         NodeInfo::TypeExpression(TypeExpressionInfo::new(range, type_))
+    }
+
+    pub fn function(range: Range<Position>, name: impl Into<String>, type_: Type) -> Self {
+        NodeInfo::FunctionInfo(FunctionInfo::new(range, name, type_))
+    }
+
+    pub fn return_info(range: Range<Position>, return_value_type: Type) -> Self {
+        NodeInfo::Return(ReturnInfo::new(range, return_value_type))
     }
 }
 
@@ -47,6 +59,8 @@ impl GetRange for NodeInfo {
             NodeInfo::Break(break_) => break_.range(),
             NodeInfo::Expression(expression) => expression.range(),
             NodeInfo::TypeExpression(type_) => type_.range(),
+            NodeInfo::FunctionInfo(function_info) => function_info.range(),
+            NodeInfo::Return(return_info) => return_info.range(),
         }
     }
 }
