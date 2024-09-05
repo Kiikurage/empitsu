@@ -235,7 +235,6 @@ mod tests {
     use crate::vm::Generator;
     use crate::vm::VM;
     use std::fmt::Debug;
-    use crate::analyzer::analyze;
 
     fn test<T: Clone + PartialEq + Debug>(program: &str, expected: T) {
         let mut vm = VM::new();
@@ -508,15 +507,6 @@ mod tests {
 
     #[test]
     fn initialize_in_child_scope() {
-        let result = analyze(r#"
-    let x
-    if (true) {
-        x = 1
-    } else {
-        x = 2
-    }
-    x
-"#);
         test(r#"
     let x
     if (true) {
@@ -526,5 +516,23 @@ mod tests {
     }
     x
 "#, 1f64);
+    }
+
+    #[test]
+    fn redeclare_variable() {
+        test(r#"
+    let x = true;
+    let x = 123;
+    x
+"#, 123f64);
+    }
+
+    #[test]
+    fn redeclare_variable_with_initializing_with_old_value() {
+        test(r#"
+    let x = 123;
+    let x = x + 100;
+    x
+"#, 223f64);
     }
 }
