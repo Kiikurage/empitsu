@@ -8,11 +8,12 @@ pub struct VariableInfo {
     range: Range<Position>,
     pub name: String,
     pub type_: Type,
+    pub captured: bool,
 }
 
 impl VariableInfo {
-    pub fn new(range: Range<Position>, name: impl Into<String>, type_: Type) -> Self {
-        VariableInfo { range, name: name.into(), type_ }
+    pub fn new(range: Range<Position>, name: impl Into<String>, type_: Type, captured: bool) -> Self {
+        VariableInfo { range, name: name.into(), type_, captured }
     }
 }
 

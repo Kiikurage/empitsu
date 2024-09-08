@@ -215,6 +215,10 @@ impl AnalyzerContext {
         false
     }
 
+    pub fn mark_variable_as_used(&mut self, defined_at: Range<Position>) {
+        self.current_env_mut().mark_variable_as_used(defined_at);
+    }
+
     // Static information
 
     pub fn add_expression(&mut self, info: ExpressionInfo) {
@@ -283,6 +287,10 @@ impl AnalyzerContext {
 
     pub fn is_assignable(&self, actual: &Type, expected: &Type) -> bool {
         match (actual, expected) {
+            // Any can assign and accept anything
+            (Type::Any, _) => true,
+            (_, Type::Any) => true,
+
             // Never values cannot be assigned to any type
             // since they shouldn't be used as values.
             (Type::Never, _) => false,
@@ -334,7 +342,7 @@ impl AnalyzerContext {
     }
 
     pub fn assert_callable(&mut self, actual: &Type, range: &Range<Position>) {
-        if !matches!(actual, Type::Function(..)) {
+        if !matches!(actual, Type::Function(..) | Type::Any) {
             self.add_error(Error::call_non_callable_value(range.clone()));
         }
     }

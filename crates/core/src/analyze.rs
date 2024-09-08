@@ -418,7 +418,7 @@ fn analyze_call_expression(ctx: &mut AnalyzerContext, call_expression: &CallExpr
                     let defined_at = defined_at.clone();
                     let function_info = ctx.get_function(&defined_at).unwrap();
                     function_info.type_.clone()
-                },
+                }
                 None => Type::Unknown,
             }
         }
@@ -434,31 +434,27 @@ fn analyze_call_expression(ctx: &mut AnalyzerContext, call_expression: &CallExpr
         None => panic!("Callee is not found")
     };
 
+    ctx.assert_callable(&function_type_, &call_expression.callee.range());
 
-    match function_type_ {
-        Type::Function(parameter_types, return_type) => {
-            if call_expression.parameters.len() != parameter_types.len() {
-                ctx.add_error(Error::invalid_parameter_count(
-                    call_expression.range(),
-                    parameter_types.len(),
-                    call_expression.parameters.len(),
-                ));
-            }
-
-            for parameter in &call_expression.parameters {
-                analyze_node(ctx, parameter.value.deref());
-            }
-            for (parameter, expected_type) in call_expression.parameters.iter().zip(parameter_types.iter()) {
-                let actual_type = ctx.get_expression_type(&parameter.value.range()).unwrap_or(Type::Unknown);
-
-                ctx.assert_assignable(&actual_type, expected_type, &parameter.value.range());
-            }
-
-            ctx.add_expression(ExpressionInfo::temp_value(call_expression.range(), return_type.deref().clone()));
-        },
-        _ => {
-            ctx.add_error(Error::call_non_callable_value(call_expression.callee.range()));
+    if let Type::Function(parameter_types, return_type) = function_type_ {
+        if call_expression.parameters.len() != parameter_types.len() {
+            ctx.add_error(Error::invalid_parameter_count(
+                call_expression.range(),
+                parameter_types.len(),
+                call_expression.parameters.len(),
+            ));
         }
+
+        for parameter in &call_expression.parameters {
+            analyze_node(ctx, parameter.value.deref());
+        }
+        for (parameter, expected_type) in call_expression.parameters.iter().zip(parameter_types.iter()) {
+            let actual_type = ctx.get_expression_type(&parameter.value.range()).unwrap_or(Type::Unknown);
+
+            ctx.assert_assignable(&actual_type, expected_type, &parameter.value.range());
+        }
+
+        ctx.add_expression(ExpressionInfo::temp_value(call_expression.range(), return_type.deref().clone()));
     };
 }
 
@@ -472,6 +468,7 @@ fn analyze_identifier(ctx: &mut AnalyzerContext, identifier: &Identifier) {
             let defined_at = symbol.defined_at.clone();
             match symbol.kind {
                 SymbolKind::Variable => {
+                    ctx.mark_variable_as_used(defined_at.clone());
                     ctx.add_expression(ExpressionInfo::variable(identifier.range(), Some(defined_at.clone())));
 
                     if !ctx.is_variable_initialized(defined_at.clone()) {
@@ -513,6 +510,7 @@ fn analyze_type_expression(ctx: &mut AnalyzerContext, type_expression: &TypeExpr
     let type_ = match type_expression.name.as_str() {
         "number" => Type::Number,
         "bool" => Type::Bool,
+        "any" => Type::Any,
         _ => {
             unimplemented!("Type analysis for identifier is not implemented yet");
         }
@@ -1103,7 +1101,7 @@ mod test {
             fn f(p1: number, p2: number): number { return 1 }
             f(1, true)
             "#).assert_errors(vec![
-                Error::unexpected_type(pos(2,17)..pos(2, 21), &Type::Number, &Type::Bool)
+                Error::unexpected_type(pos(2, 17)..pos(2, 21), &Type::Number, &Type::Bool)
             ])
         }
 
@@ -1115,7 +1113,7 @@ mod test {
 
             x = f()
             "#).assert_errors(vec![
-                Error::unexpected_type(pos(4,16)..pos(4, 19), &Type::Number, &Type::Bool)
+                Error::unexpected_type(pos(4, 16)..pos(4, 19), &Type::Number, &Type::Bool)
             ])
         }
     }

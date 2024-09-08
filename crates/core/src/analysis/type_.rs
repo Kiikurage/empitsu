@@ -8,6 +8,9 @@ pub enum Type {
     /// Type cannot be determined.
     Unknown,
 
+    /// Only for testing purpose.
+    Any,
+
     Void,
     Number,
     Bool,
@@ -17,6 +20,7 @@ pub enum Type {
 impl Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Type::Any => write!(f, "any"),
             Type::Never => write!(f, "never"),
             Type::Unknown => write!(f, "unknown"),
             Type::Void => write!(f, "void"),

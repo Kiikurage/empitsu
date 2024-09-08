@@ -38,6 +38,22 @@ pub enum ByteCodeLike {
     /// stack
     Store(usize),
 
+    /// Pop a value from the top of stack, and store it to a new heap entry.
+    /// Push the address of the heap entry to the stack
+    AllocateHeap(usize),
+
+    /// Load next (usize)bytes from bytecode as index, get the heap
+    /// address of captured variable from function frame data. Peak
+    /// a value from the given position of heap, and push it to the
+    /// top of stack
+    LoadHeap(usize),
+
+    /// Load next (usize)bytes from bytecode as index, get the heap
+    /// address of captured variable from function frame data. Peak
+    /// a value from the top of stack, and store it to the given
+    /// position of heap
+    StoreHeap(usize),
+
     /// Load next (usize)bytes from bytecode as index, and jump to
     /// the given position of IP
     Jump(usize),

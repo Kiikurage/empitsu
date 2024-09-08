@@ -7,7 +7,7 @@ use crate::analysis::type_expression_info::TypeExpressionInfo;
 use crate::analysis::variable_info::VariableInfo;
 use crate::ast::get_range::GetRange;
 use crate::position::Position;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,6 +36,8 @@ pub struct Env {
 
     symbols: Vec<Symbol>,
     variables_initialized_at: HashMap<Range<Position>, Range<Position>>,
+    variables_used: HashSet<Range<Position>>,
+    variables_captured: HashSet<Range<Position>>,
     variable_types: HashMap<Range<Position>, Type>,
     pub exit_reason: ExitReason,
     pub pending_returns: Vec<Range<Position>>,
@@ -60,6 +62,8 @@ impl Env {
 
             symbols: Vec::new(),
             variables_initialized_at: HashMap::new(),
+            variables_used: HashSet::new(),
+            variables_captured: HashSet::new(),
             variable_types: HashMap::new(),
             pending_returns: Vec::new(),
 
@@ -77,6 +81,7 @@ impl Env {
 
         self.variables_initialized_at.extend(child_env.variables_initialized_at);
         self.variable_types.extend(child_env.variable_types);
+        self.variables_captured.extend(child_env.variables_captured);
 
         self.exit_reason = child_env.exit_reason;
         self.pending_returns.extend(child_env.pending_returns);
@@ -97,15 +102,25 @@ impl Env {
                 SymbolKind::Function => {}
                 SymbolKind::Variable => {
                     let type_ = self.variable_types.get(&symbol.defined_at).unwrap_or(&Type::Unknown).clone();
+                    let captured = self.variables_captured.contains(&symbol.defined_at);
                     self.variables.insert(symbol.defined_at.clone(), VariableInfo::new(
                         symbol.defined_at.clone(),
                         symbol.name.clone(),
                         type_,
+                        captured,
                     ));
                     self.variable_types.remove(&symbol.defined_at);
+                    self.variables_used.remove(&symbol.defined_at);
                     self.variables_initialized_at.remove(&symbol.defined_at);
                 }
             }
+        }
+
+        if self.is_function {
+            for range in self.variables_used.iter() {
+                self.variables_captured.insert(range.clone());
+            }
+            self.variables_used.clear();
         }
         self.symbols.clear();
     }
@@ -149,6 +164,10 @@ impl Env {
 
     pub fn get_variable_type(&self, defined_at: &Range<Position>) -> Option<&Type> {
         self.variable_types.get(defined_at)
+    }
+
+    pub fn mark_variable_as_used(&mut self, defined_at: Range<Position>) {
+        self.variables_used.insert(defined_at);
     }
 
     pub fn add_break(&mut self, range: Range<Position>) {

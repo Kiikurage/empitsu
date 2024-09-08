@@ -42,11 +42,13 @@ impl Scope {
 
 struct StackItem {
     offset: usize,
+    at_heap: bool,
 }
 
 struct StackFrame {
     scopes: Vec<Scope>,
     offsets: HashMap<Range<Position>, StackItem>,
+    closure_variables: Vec<(Range<Position>, usize)>,
     stack_size: usize,
 }
 
@@ -55,6 +57,7 @@ impl StackFrame {
         Self {
             scopes: vec![],
             offsets: HashMap::new(),
+            closure_variables: Vec::new(),
             stack_size: 0,
         }
     }
@@ -145,7 +148,7 @@ impl Generator {
                 {
                     // initializer
                     self.push_constant(Value::Number(0.0));
-                    self.allocate_symbol_in_stack(for_.variable.range());
+                    self.allocate_stack_item(for_.variable.range());
 
                     // condition
                     self.insert_label(label_main_loop);
@@ -174,6 +177,7 @@ impl Generator {
             Node::VariableDeclaration(ref variable_declaration) => {
                 let variable = self.analysis
                     .get_variable_info(&variable_declaration.range()).unwrap();
+                let captured = variable.captured;
 
                 match &variable_declaration.initializer {
                     Some(initializer) => self.generate_node(initializer),
@@ -186,7 +190,11 @@ impl Generator {
                     }
                 }
 
-                self.allocate_symbol_in_stack(variable_declaration.range());
+                if captured {
+                    self.allocate_variable_in_heap(variable_declaration.range());
+                } else {
+                    self.allocate_stack_item(variable_declaration.range());
+                }
             }
             Node::FunctionDeclaration(function) => self.define_function(function),
             Node::StructDeclaration(_) => unreachable!("StructDeclaration"),
@@ -272,7 +280,6 @@ impl Generator {
             Node::CallExpression(expression) => {
                 let stack_address = self.get_current_frame().stack_size;
 
-                // calleeの評価
                 self.generate_node(expression.callee.deref());
 
                 // 引数をスタックに積む
@@ -282,17 +289,8 @@ impl Generator {
 
                 self.call(stack_address);
 
-                // fn_addr
-                // - 関数本体
-                // - 戻り先ip
-                // - スタックのオフセット
-
-                // CALL(fn_addr)
-                // - 関数本体へジャンプ
-                // - 変数の解決時は、関数のスタックフレームを参照する
-                // - 戻り値をスタックの一番下に配置
-                // - スタックをクリーンアップ
-                // - 元の場所へジャンプ
+                // +1 for return value
+                self.get_current_frame_mut().stack_size = stack_address + 1;
             }
             Node::MemberExpression(_expression) => unreachable!("MemberExpression"),
             Node::Identifier(name) => {
@@ -319,32 +317,92 @@ impl Generator {
     }
 
     fn store(&mut self, range: &Range<Position>) {
-        let variable = self.analysis
-            .get_variable_info(range).unwrap();
+        println!("store {:?}", range);
+        let (captured, defined_at) = match self.analysis.get_expression_info(range) {
+            Some(ExpressionInfo::Variable(ref symbol_ref)) => {
+                let defined_at = symbol_ref.defined_at.clone().unwrap();
+                let variable = self.analysis.get_variable_info(&defined_at).unwrap();
+                (variable.captured, defined_at)
+            }
+            Some(ExpressionInfo::Function(symbol_ref)) => {
+                let defined_at = symbol_ref.defined_at.clone().unwrap();
+                let _function = self.analysis.get_function_info(&defined_at).unwrap();
+                (false, defined_at)  // TODO
+            }
+            _ => unreachable!("Expected function or variable"),
+        };
 
-        let range = variable.range();
-        let frame = self.get_current_frame();
-        if let Some(stack_item) = frame.offsets.get(&range) {
-            let offset = stack_item.offset;
-            self.opcodes.push(ByteCodeLike::Store(offset));
-            return;
+        if captured {
+            self.store_heap(&defined_at);
+        } else {
+            self.store_stack(&defined_at);
+        }
+    }
+
+    fn store_stack(&mut self, defined_at: &Range<Position>) {
+        for frame in self.frames.iter().rev() {
+            if let Some(stack_item) = frame.offsets.get(defined_at) {
+                self.opcodes.push(ByteCodeLike::Store(stack_item.offset));
+                return;
+            }
+        }
+
+        unreachable!("Variable is not declared")
+    }
+
+    fn store_heap(&mut self, defined_at: &Range<Position>) {
+        for frame in self.frames.iter_mut().rev() {
+            for (defined_at2, id) in frame.closure_variables.iter() {
+                if defined_at2 == defined_at {
+                    self.opcodes.push(ByteCodeLike::StoreHeap(*id));
+                    return;
+                }
+            }
         }
 
         unreachable!("Variable is not declared")
     }
 
     fn load(&mut self, range: &Range<Position>) {
-        let defined_at = match self.analysis.get_expression_info(range) {
-            Some(ExpressionInfo::Function(symbol_ref)) => symbol_ref.defined_at.clone().unwrap(),
-            Some(ExpressionInfo::Variable(symbol_ref)) => symbol_ref.defined_at.clone().unwrap(),
+        let (captured, defined_at) = match self.analysis.get_expression_info(range) {
+            Some(ExpressionInfo::Variable(ref symbol_ref)) => {
+                let defined_at = symbol_ref.defined_at.clone().unwrap();
+                let variable = self.analysis.get_variable_info(&defined_at).unwrap();
+                (variable.captured, defined_at)
+            }
+            Some(ExpressionInfo::Function(symbol_ref)) => {
+                let defined_at = symbol_ref.defined_at.clone().unwrap();
+                let _function = self.analysis.get_function_info(&defined_at).unwrap();
+                (false, defined_at)  // TODO
+            }
             _ => unreachable!("Expected function or variable"),
         };
 
-        let stack_item = self.get_current_frame().offsets.get(&defined_at).unwrap();
-        let offset = stack_item.offset;
+        if captured {
+            self.load_heap(&defined_at);
+        } else {
+            self.load_stack(&defined_at);
+        }
+    }
 
-        self.opcodes.push(ByteCodeLike::Load(offset));
+    fn load_stack(&mut self, defined_at: &Range<Position>) {
+        let stack_item = self.get_current_frame().offsets.get(defined_at).unwrap();
+        self.opcodes.push(ByteCodeLike::Load(stack_item.offset));
         self.get_current_frame_mut().stack_size += 1;
+    }
+
+    fn load_heap(&mut self, defined_at: &Range<Position>) {
+        for frame in self.frames.iter_mut().rev() {
+            for (defined_at2, id) in frame.closure_variables.iter() {
+                if defined_at2 == defined_at {
+                    self.opcodes.push(ByteCodeLike::LoadHeap(*id));
+                    self.get_current_frame_mut().stack_size += 1;
+                    return;
+                }
+            }
+        }
+
+        unreachable!("Variable is not declared")
     }
 
     fn jump(&mut self, label_id: LabelId) {
@@ -362,7 +420,7 @@ impl Generator {
         self.frames.push(StackFrame::new());
         for parameter in function.interface.parameters.iter() {
             self.get_current_frame_mut().stack_size += 1;
-            self.allocate_symbol_in_stack(parameter.range());
+            self.allocate_stack_item(parameter.range());
         }
         self.generate_nodes(&function.body);
         self.opcodes.push(ByteCodeLike::PopCallStack);
@@ -372,7 +430,7 @@ impl Generator {
 
         self.opcodes.insert(opcodes_start, ByteCodeLike::DefineFunction(body_size));
         self.get_current_frame_mut().stack_size += 1;
-        self.allocate_symbol_in_stack(function.range());
+        self.allocate_stack_item(function.range());
     }
 
     fn call(&mut self, stack_address: usize) {
@@ -458,10 +516,32 @@ impl Generator {
         self.opcodes.push(ByteCodeLike::Label(label_id));
     }
 
-    fn allocate_symbol_in_stack(&mut self, defined_at: Range<Position>) {
+    fn allocate_stack_item(&mut self, defined_at: Range<Position>) {
         let frame = self.get_current_frame_mut();
         let offset = frame.stack_size - 1;
-        frame.offsets.insert(defined_at, StackItem { offset });
+        frame.offsets.insert(defined_at, StackItem { offset, at_heap: false });
+    }
+
+    fn allocate_variable_in_heap(&mut self, defined_at: Range<Position>) {
+        for frame in self.frames.iter_mut().rev() {
+            if let Some((.., id)) = frame.closure_variables.last() {
+                let id = *id;
+                frame.closure_variables.push((defined_at.clone(), id + 1));
+                self.opcodes.push(ByteCodeLike::AllocateHeap(id + 1));
+
+                let offset = frame.stack_size - 1;
+                frame.offsets.insert(defined_at, StackItem { offset, at_heap: true });
+                return;
+            }
+        }
+
+        self.opcodes.push(ByteCodeLike::AllocateHeap(0));
+
+        let frame = self.get_current_frame_mut();
+        frame.closure_variables.push((defined_at.clone(), 0));
+
+        let offset = frame.stack_size - 1;
+        frame.offsets.insert(defined_at, StackItem { offset, at_heap: true });
     }
 
     fn get_current_frame(&self) -> &StackFrame {
@@ -532,6 +612,15 @@ impl Generator {
                 }
                 ByteCodeLike::Store(address) => {
                     buffer.push(ByteCode::Store(*address));
+                }
+                ByteCodeLike::AllocateHeap(address) => {
+                    buffer.push(ByteCode::AllocateHeap(*address));
+                }
+                ByteCodeLike::LoadHeap(address) => {
+                    buffer.push(ByteCode::LoadHeap(*address));
+                }
+                ByteCodeLike::StoreHeap(address) => {
+                    buffer.push(ByteCode::StoreHeap(*address));
                 }
                 ByteCodeLike::Jump(label_id) => {
                     buffer.push(ByteCode::Jump(label_to_ip[label_id]));

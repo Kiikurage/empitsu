@@ -2,16 +2,19 @@ pub mod bytecode;
 pub mod generator;
 mod bytecode_like;
 
+use std::cell::RefCell;
 use crate::error::Error;
 use crate::parser::parse;
 use crate::vm::bytecode::ByteCode;
 use crate::vm::generator::Generator;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display};
+use std::rc::Rc;
 
 #[derive(Debug, Clone, PartialEq)]
 enum EMObject {
     String(EMString),
+    Box(EMBox),
     UserFunction(EMUserFunction),
 }
 
@@ -21,8 +24,20 @@ pub struct EMString {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct EMBox {
+    value: Value,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct EMUserFunction {
     body_ip: usize,
+    parent_closure: Option<Rc<RefCell<Closure>>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Closure {
+    captured_variables: HashMap<usize, usize>,
+    parent: Option<Rc<RefCell<Closure>>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -69,6 +84,7 @@ impl Display for Value {
 struct StackFrame {
     stack_offset: usize,
     return_ip: usize,
+    closure: Rc<RefCell<Closure>>,
 }
 
 pub struct VM {
@@ -109,6 +125,10 @@ impl VM {
         self.call_stack.push(StackFrame {
             stack_offset: 0,
             return_ip: 0,
+            closure: Rc::new(RefCell::new(Closure {
+                captured_variables: HashMap::new(),
+                parent: None,
+            })),
         });
 
         self.eval_op_codes()?;
@@ -122,6 +142,10 @@ impl VM {
 
     fn pop(&mut self) -> Value {
         self.stack.pop().unwrap()
+    }
+
+    fn peak(&self, index: usize) -> &Value {
+        &self.stack[index]
     }
 
     fn truncate(&mut self, size: usize) {
@@ -154,6 +178,56 @@ impl VM {
                 ByteCode::Store(index) => {
                     self.store(*index);
                 }
+                ByteCode::AllocateHeap(index) => {
+                    let value = self.stack.pop().unwrap().clone();
+
+                    let address = self.heap.len();
+                    self.heap.insert(address, EMObject::Box(EMBox {
+                        value
+                    }));
+
+                    let frame = self.call_stack.last_mut().unwrap();
+                    frame.closure.borrow_mut().captured_variables.insert(*index, address);
+
+                    self.stack.push(Value::Ref(address));
+                }
+                ByteCode::LoadHeap(index) => {
+                    let mut closure = self.call_stack.last_mut().unwrap().closure.clone();
+                    loop {
+                        if let Some(address) = closure.borrow().captured_variables.get(index) {
+                            if let Some(EMObject::Box(box_)) = self.heap.get(address) {
+                                self.stack.push(box_.value.clone());
+                                break;
+                            } else {
+                                panic!("Not an EMObject");
+                            }
+                        }
+                        let parent = match closure.borrow().parent {
+                            Some(ref parent) => parent.clone(),
+                            None => unreachable!("No parent closure")
+                        };
+                        closure = parent;
+                    }
+                }
+                ByteCode::StoreHeap(index) => {
+                    let value = self.stack.last().unwrap().clone();
+                    let mut closure = self.call_stack.last_mut().unwrap().closure.clone();
+                    loop {
+                        if let Some(address) = closure.borrow().captured_variables.get(index) {
+                            if let Some(EMObject::Box(ref mut box_)) = self.heap.get_mut(address) {
+                                box_.value = value;
+                                break;
+                            } else {
+                                panic!("Not an EMObject");
+                            }
+                        }
+                        let parent = match closure.borrow().parent {
+                            Some(ref parent) => parent.clone(),
+                            None => unreachable!("No parent closure")
+                        };
+                        closure = parent;
+                    }
+                }
                 ByteCode::Jump(address) => {
                     self.ip = *address;
                 }
@@ -166,7 +240,8 @@ impl VM {
                 }
                 ByteCode::DefineFunction(body_size) => {
                     let function = EMObject::UserFunction(EMUserFunction {
-                        body_ip: self.ip
+                        body_ip: self.ip,
+                        parent_closure: Some(self.call_stack.last().unwrap().closure.clone()),
                     });
                     self.ip += body_size;
                     let ref_ = self.heap.len();
@@ -184,6 +259,10 @@ impl VM {
                     self.call_stack.push(StackFrame {
                         stack_offset: stack_offset + stack_address_of_fn_address + 1,
                         return_ip: self.ip,
+                        closure: Rc::new(RefCell::new(Closure {
+                            captured_variables: HashMap::new(),
+                            parent: function.parent_closure.clone(),
+                        }))
                     });
                     self.ip = function.body_ip;
                 }
@@ -623,6 +702,40 @@ mod tests {
 
                 triple_double(5)
             "#, Value::Number(30f64));
+        }
+
+        #[test]
+        fn closure() {
+            test(r#"
+                fn builder(): any {
+                    let x = 10
+                    fn inc(): number { x = x + 1 }
+                    inc
+                }
+
+                let inc1 = builder(); let inc2 = builder()
+                let v1:any = inc1(); v1 = inc1(); v1 = inc1()
+                let v2:any = inc2()
+
+                v1 == 13 && v2 == 11
+            "#, Value::Bool(true));
+        }
+
+        #[test]
+        fn closure_with_parameter() {
+            test(r#"
+                fn builder(initialValue: number): any {
+                    let x = initialValue
+                    fn inc(): number { x = x + 1 }
+                    inc
+                }
+
+                let inc1 = builder(10); let inc2 = builder(100)
+                let v1:any = inc1(); v1 = inc1(); v1 = inc1()
+                let v2:any = inc2()
+
+                v1 == 13 && v2 == 101
+            "#, Value::Bool(true));
         }
     }
 }
