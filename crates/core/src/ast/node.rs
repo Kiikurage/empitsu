@@ -145,8 +145,8 @@ impl Node {
         Node::UnaryExpression(UnaryExpression::new(range, operator, operand))
     }
 
-    pub fn call_expression(callee: Node, parameters: Vec<Parameter>) -> Node {
-        Node::CallExpression(CallExpression::new(callee, parameters))
+    pub fn call_expression(range: Range<Position>, callee: Node, parameters: Vec<Parameter>) -> Node {
+        Node::CallExpression(CallExpression::new(range, callee, parameters))
     }
 
     pub fn member_expression(object: Node, member: Identifier) -> Node {

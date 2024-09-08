@@ -8,7 +8,7 @@ pub mod token;
 pub mod parser;
 pub mod ast;
 pub mod analysis;
-pub mod analyzer;
+pub mod analyze;
 pub mod vm;
 mod char_iterator;
 mod error;

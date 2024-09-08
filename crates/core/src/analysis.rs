@@ -1,17 +1,21 @@
-pub mod node_info;
 pub mod identifier_info;
 pub mod break_info;
 pub mod variable_info;
 pub mod type_;
 pub mod scope_info;
-pub mod expression_info;
 pub mod type_expression_info;
 pub mod function_info;
 pub mod return_info;
+pub mod analyzer_context;
+pub mod env;
+pub mod expression_info;
 
 use crate::analysis::break_info::BreakInfo;
-use crate::analysis::node_info::NodeInfo;
+use crate::analysis::expression_info::ExpressionInfo;
+use crate::analysis::function_info::FunctionInfo;
+use crate::analysis::return_info::ReturnInfo;
 use crate::analysis::type_::Type;
+use crate::analysis::type_expression_info::TypeExpressionInfo;
 use crate::analysis::variable_info::VariableInfo;
 use crate::error::Error;
 use crate::position::Position;
@@ -35,55 +39,68 @@ use std::ops::Range;
 ///
 #[derive(Debug)]
 pub struct Analysis {
-    tokens: HashMap<Range<Position>, NodeInfo>,
+    variables: HashMap<Range<Position>, VariableInfo>,
+    breaks: HashMap<Range<Position>, BreakInfo>,
+    expressions: HashMap<Range<Position>, ExpressionInfo>,
+    type_expressions: HashMap<Range<Position>, TypeExpressionInfo>,
+    functions: HashMap<Range<Position>, FunctionInfo>,
+    returns: HashMap<Range<Position>, ReturnInfo>,
     pub errors: Vec<Error>,
 }
 
 impl Analysis {
     pub fn new(
-        tokens: HashMap<Range<Position>, NodeInfo>,
+        variables: HashMap<Range<Position>, VariableInfo>,
+        breaks: HashMap<Range<Position>, BreakInfo>,
+        expressions: HashMap<Range<Position>, ExpressionInfo>,
+        type_expressions: HashMap<Range<Position>, TypeExpressionInfo>,
+        functions: HashMap<Range<Position>, FunctionInfo>,
+        returns: HashMap<Range<Position>, ReturnInfo>,
         errors: Vec<Error>,
     ) -> Self {
-        Self { tokens, errors }
+        Self {
+            variables,
+            breaks,
+            expressions,
+            type_expressions,
+            functions,
+            returns,
+            errors,
+        }
     }
 
     pub fn get_variable_info(&self, range: &Range<Position>) -> Option<&VariableInfo> {
-        match self.tokens.get(range) {
-            Some(NodeInfo::Variable(variable)) => Some(variable),
-            Some(NodeInfo::Identifier(identifier)) => {
-                let defined_at = match identifier.defined_at {
-                    Some(ref defined_at) => defined_at,
-                    None => return None,
-                };
-                match self.tokens.get(defined_at) {
-                    Some(NodeInfo::Variable(variable)) => Some(variable),
-                    _ => None,
+        if self.variables.get(range).is_some() {
+            return self.variables.get(range);
+        }
+
+        match self.expressions.get(range) {
+            Some(ExpressionInfo::Variable(symbol_ref)) => {
+                if let Some(ref defined_at) = symbol_ref.defined_at {
+                    return self.variables.get(defined_at);
                 }
             }
-            _ => None,
+            _ => {}
         }
+
+        None
     }
 
     pub fn get_break_info(&self, range: &Range<Position>) -> Option<&BreakInfo> {
-        match self.tokens.get(range) {
-            Some(NodeInfo::Break(break_info)) => Some(break_info),
-            _ => None,
-        }
+        self.breaks.get(range)
     }
 
     pub fn get_expression_type(&self, range: &Range<Position>) -> Option<&Type> {
-        match self.tokens.get(range) {
-            Some(NodeInfo::Identifier(identifier_info)) => {
-                let defined_at = match identifier_info.defined_at {
-                    Some(ref defined_at) => defined_at,
-                    None => return None,
-                };
-                match self.tokens.get(defined_at) {
-                    Some(NodeInfo::Variable(variable_info)) => Some(&variable_info.type_),
-                    _ => None,
+        match self.expressions.get(range) {
+            Some(ExpressionInfo::TempValue(temp_value)) => Some(&temp_value.type_),
+            Some(ExpressionInfo::Variable(symbol_ref)) => {
+                if let Some(ref defined_at) = symbol_ref.defined_at {
+                    if let Some(variable) = self.variables.get(defined_at) {
+                        return Some(&variable.type_);
+                    }
                 }
+                None
             }
-            Some(NodeInfo::Expression(expression_info)) => Some(&expression_info.type_),
             _ => None,
         }
     }

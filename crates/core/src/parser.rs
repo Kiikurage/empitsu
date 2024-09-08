@@ -653,9 +653,9 @@ fn parse_call_expression(tokens: &mut TokenIterator) -> Result<Node, Error> {
             break;
         }
     }
-    assert_punctuation!(tokens.next(), RightParen)?;
+    let right_paren = assert_punctuation!(tokens.next(), RightParen)?;
 
-    Ok(Node::call_expression(callee, parameters))
+    Ok(Node::call_expression(callee.start()..right_paren.end(), callee, parameters))
 }
 
 fn parse_parameter(tokens: &mut TokenIterator) -> Result<Parameter, Error> {
@@ -1614,7 +1614,8 @@ mod tests {
         #[test]
         fn newline_at_middle() {
             assert_eq!(
-                parse("1\n+2").program,
+                parse(r#"1
++2"#).program,
                 Program::new(vec![
                     Node::binary_expression(
                         Node::number_literal(pos(0, 0)..pos(0, 1), 1f64),
@@ -1817,6 +1818,7 @@ mod tests {
                 parse("func()").program,
                 Program::new(vec![
                     Node::call_expression(
+                        pos(0,0)..pos(0, 6),
                         Node::identifier(pos(0, 0)..pos(0, 4), "func"),
                         vec![],
                     )
@@ -1830,6 +1832,7 @@ mod tests {
                 parse("func(1, 2, 3)").program,
                 Program::new(vec![
                     Node::call_expression(
+                        pos(0,0)..pos(0, 13),
                         Node::identifier(pos(0, 0)..pos(0, 4), "func"),
                         vec![
                             Parameter::new(None, Node::number_literal(pos(0, 5)..pos(0, 6), 1f64)),
@@ -1847,6 +1850,7 @@ mod tests {
                 parse("func(1, 2*(3+4))").program,
                 Program::new(vec![
                     Node::call_expression(
+                        pos(0,0)..pos(0, 16),
                         Node::identifier(pos(0, 0)..pos(0, 4), "func"),
                         vec![
                             Parameter::new(None, Node::number_literal(pos(0, 5)..pos(0, 6), 1f64)),
@@ -1871,15 +1875,18 @@ mod tests {
                 parse("f(g(1), h(2))").program,
                 Program::new(vec![
                     Node::call_expression(
+                        pos(0,0)..pos(0, 13),
                         Node::identifier(pos(0, 0)..pos(0, 1), "f"),
                         vec![
                             Parameter::new(None, Node::call_expression(
+                                pos(0,2)..pos(0, 6),
                                 Node::identifier(pos(0, 2)..pos(0, 3), "g"),
                                 vec![
                                     Parameter::new(None, Node::number_literal(pos(0, 4)..pos(0, 5), 1f64)),
                                 ],
                             )),
                             Parameter::new(None, Node::call_expression(
+                                pos(0,8)..pos(0, 12),
                                 Node::identifier(pos(0, 8)..pos(0, 9), "h"),
                                 vec![
                                     Parameter::new(None, Node::number_literal(pos(0, 10)..pos(0, 11), 2f64)),
@@ -1922,6 +1929,7 @@ mod tests {
                 parse("x.y()").program,
                 Program::new(vec![
                     Node::call_expression(
+                        pos(0,0)..pos(0, 5),
                         Node::member_expression(
                             Node::identifier(pos(0, 0)..pos(0, 1), "x"),
                             Identifier::new(pos(0, 2)..pos(0, 3), "y"),
@@ -2010,9 +2018,10 @@ mod tests {
         #[test]
         fn string() {
             assert_eq!(
-                parse("print(\"hello\")").program,
+                parse(r#"print("hello")"#).program,
                 Program::new(vec![
                     Node::call_expression(
+                        pos(0,0)..pos(0, 14),
                         Node::identifier(pos(0, 0)..pos(0, 5), "print"),
                         vec![
                             Parameter::new(None, Node::string_literal(pos(0, 6)..pos(0, 13), "hello")),
@@ -2111,6 +2120,7 @@ mod tests {
                         vec![],
                     ),
                     Node::call_expression(
+                        pos(0,14)..pos(0, 19),
                         Node::identifier(pos(0, 14)..pos(0, 17), "Obj"),
                         vec![],
                     ),
@@ -2121,7 +2131,7 @@ mod tests {
         #[test]
         fn object_having_properties() {
             assert_eq!(
-                parse("struct Obj(x: number, y: string); Obj(x=1, y=\"hello\")").program,
+                parse(r#"struct Obj(x: number, y: string); Obj(x=1, y="hello")"#).program,
                 Program::new(vec![
                     Node::struct_declaration(
                         pos(0, 0)..pos(0, 32),
@@ -2140,6 +2150,7 @@ mod tests {
                         vec![],
                     ),
                     Node::call_expression(
+                        pos(0,34)..pos(0, 53),
                         Node::identifier(pos(0, 34)..pos(00, 37), "Obj"),
                         vec![
                             Parameter::new(
@@ -2159,11 +2170,11 @@ mod tests {
         #[test]
         fn nested_object() {
             assert_eq!(
-                parse("
+                parse(r#"
                     struct Obj1(x: Obj2, z: string)
                     struct Obj2(y: number)
-                    Obj1(x=Obj2(y=1), z=\"hello\")
-                ").program,
+                    Obj1(x=Obj2(y=1), z="hello")
+                "#).program,
                 Program::new(vec![
                     Node::struct_declaration(
                         pos(1, 20)..pos(1, 51),
@@ -2194,11 +2205,13 @@ mod tests {
                         vec![],
                     ),
                     Node::call_expression(
+                        pos(3,20)..pos(3, 48),
                         Node::identifier(pos(3, 20)..pos(3, 24), "Obj1"),
                         vec![
                             Parameter::new(
                                 Some(Identifier::new(pos(3, 25)..pos(3, 26), "x")),
                                 Node::call_expression(
+                                    pos(3,27)..pos(3, 36),
                                     Node::identifier(pos(3, 27)..pos(3, 31), "Obj2"),
                                     vec![
                                         Parameter::new(
@@ -2238,6 +2251,7 @@ mod tests {
                     Node::assignment_expression(
                         Node::identifier(pos(0, 23)..pos(0, 24), "x"),
                         Node::call_expression(
+                            pos(0,27)..pos(0, 35),
                             Node::identifier(pos(0, 27)..pos(0, 30), "Obj"),
                             vec![
                                 Parameter::new(

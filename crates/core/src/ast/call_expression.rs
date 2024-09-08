@@ -8,19 +8,21 @@ use std::ops::Range;
 pub struct CallExpression {
     pub callee: Box<Node>,
     pub parameters: Vec<Parameter>,
+    range: Range<Position>,
 }
 
 impl CallExpression {
-    pub fn new(callee: Node, parameters: Vec<Parameter>) -> Self {
+    pub fn new(range: Range<Position>, callee: Node, parameters: Vec<Parameter>) -> Self {
         Self {
             callee: Box::new(callee),
             parameters,
+            range,
         }
     }
 }
 
 impl GetRange for CallExpression {
     fn range(&self) -> Range<Position> {
-        self.callee.range()
+        self.range.clone()
     }
 }

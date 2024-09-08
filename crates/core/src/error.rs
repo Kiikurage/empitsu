@@ -16,6 +16,11 @@ impl Error {
     }
 
     #[inline(always)]
+    pub fn assign_to_non_variable(range: Range<Position>, actual: impl Into<String>) -> Error {
+        Error { range, message: format!("Cannot assign to {}", actual.into()) }
+    }
+
+    #[inline(always)]
     pub fn break_not_in_loop(range: Range<Position>) -> Error {
         Error { range, message: "Break statement must be inside a loop".to_string() }
     }
@@ -24,6 +29,17 @@ impl Error {
     pub fn unexpected_type(range: Range<Position>, expected: &Type, actual: &Type) -> Error {
         Error { range, message: format!("Expected type is {}, but actual type is {}", expected, actual) }
     }
+
+    #[inline(always)]
+    pub fn call_non_callable_value(range: Range<Position>) -> Error {
+        Error { range, message: "Cannot call non-callable value".to_string() }
+    }
+
+    #[inline(always)]
+    pub fn invalid_parameter_count(range: Range<Position>, expected: usize, actual: usize) -> Error {
+        Error { range, message: format!("Expected {} parameters, but found {}", expected, actual) }
+    }
+    
 
     #[inline(always)]
     pub fn unexpected_type_in_if_condition(range: Range<Position>, actual: &Type) -> Error {

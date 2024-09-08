@@ -7,7 +7,7 @@ use crate::position::Position;
 pub struct FunctionInfo {
     range: Range<Position>,
     name: String,
-    type_: Type,
+    pub type_: Type,
 }
 
 impl FunctionInfo {

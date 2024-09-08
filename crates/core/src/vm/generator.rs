@@ -1,6 +1,6 @@
 use crate::analysis::type_::Type;
 use crate::analysis::Analysis;
-use crate::analyzer::analyze_program;
+use crate::analyze::analyze_program;
 use crate::ast::get_range::GetRange;
 use crate::ast::node::Node;
 use crate::ast::program::Program;
