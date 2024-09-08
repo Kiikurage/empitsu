@@ -106,6 +106,7 @@ fn analyze_for_statement(ctx: &mut AnalyzerContext, for_statement: &ForStatement
     ctx.define_symbol(for_statement.variable.range(), for_statement.variable.name.clone(), SymbolKind::Variable);
     ctx.set_variable_type(for_statement.variable.range(), Type::Number);
     ctx.set_variable_initialized(for_statement.variable.range(), for_statement.variable.range());
+    ctx.add_expression(ExpressionInfo::variable(for_statement.variable.range(), Some(for_statement.variable.range())));
 
     // analyze_node(&ctx, for_statement.iterable); // TODO
     analyze_node(ctx, &for_statement.body);
@@ -169,6 +170,11 @@ fn analyze_function(ctx: &mut AnalyzerContext, function: &Function) {
 
     // Function body
     ctx.enter_env(Env::new(false, true));
+    for parameter in &function.interface.parameters {
+        ctx.define_symbol(parameter.range(), parameter.name.name.clone(), SymbolKind::Variable);
+        ctx.set_variable_type(parameter.range(), ctx.get_type_expression_type(&parameter.type_.range()));
+        ctx.set_variable_initialized(parameter.range(), parameter.range());
+    }
     analyze_nodes(ctx, &function.body);
 
     // Check return expression's type

@@ -69,18 +69,23 @@ impl Analysis {
         }
     }
 
+    pub fn get_expression_info(&self, range: &Range<Position>) -> Option<&ExpressionInfo> {
+        self.expressions.get(range)
+    }
+
+    pub fn get_function_info(&self, range: &Range<Position>) -> Option<&FunctionInfo> {
+        self.functions.get(range)
+    }
+
     pub fn get_variable_info(&self, range: &Range<Position>) -> Option<&VariableInfo> {
-        if self.variables.get(range).is_some() {
+        if self.variables.contains_key(range) {
             return self.variables.get(range);
         }
 
-        match self.expressions.get(range) {
-            Some(ExpressionInfo::Variable(symbol_ref)) => {
-                if let Some(ref defined_at) = symbol_ref.defined_at {
-                    return self.variables.get(defined_at);
-                }
+        if let Some(ExpressionInfo::Variable(symbol_ref)) = self.expressions.get(range) {
+            if let Some(ref defined_at) = symbol_ref.defined_at {
+                return self.variables.get(defined_at);
             }
-            _ => {}
         }
 
         None

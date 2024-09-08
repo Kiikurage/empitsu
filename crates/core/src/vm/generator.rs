@@ -1,29 +1,19 @@
+use crate::analysis::expression_info::ExpressionInfo;
 use crate::analysis::type_::Type;
 use crate::analysis::Analysis;
 use crate::analyze::analyze_program;
+use crate::ast::function::Function;
 use crate::ast::get_range::GetRange;
 use crate::ast::node::Node;
 use crate::ast::program::Program;
 use crate::error::Error;
 use crate::position::Position;
 use crate::punctuation_kind::PunctuationKind;
-use crate::util::AsU8Slice;
 use crate::vm::bytecode::ByteCode;
 use crate::vm::bytecode_like::{ByteCodeLike, Label, LabelId};
+use crate::vm::Value;
 use std::collections::HashMap;
 use std::ops::{Deref, Range};
-
-impl Type {
-    fn size(&self) -> usize {
-        match self {
-            Type::Number => size_of::<f64>(),
-            Type::Bool => size_of::<bool>(),
-            Type::Ref => size_of::<usize>(),
-            Type::Void => 0,
-            _ => unreachable!("Unsupported type: {:?}", self),
-        }
-    }
-}
 
 struct Scope {
     /// Range of the node that produces this stack frame
@@ -50,9 +40,13 @@ impl Scope {
     }
 }
 
+struct StackItem {
+    offset: usize,
+}
+
 struct StackFrame {
     scopes: Vec<Scope>,
-    variable_offset: HashMap<Range<Position>, usize>,
+    offsets: HashMap<Range<Position>, StackItem>,
     stack_size: usize,
 }
 
@@ -60,7 +54,7 @@ impl StackFrame {
     fn new() -> Self {
         Self {
             scopes: vec![],
-            variable_offset: HashMap::new(),
+            offsets: HashMap::new(),
             stack_size: 0,
         }
     }
@@ -70,7 +64,6 @@ pub struct Generator {
     labels: HashMap<usize, Label>,
     opcodes: Vec<ByteCodeLike>,
     frames: Vec<StackFrame>,
-    literals: Vec<Vec<u8>>,
     analysis: Analysis,
 }
 
@@ -83,7 +76,7 @@ pub struct Generator {
 ///
 
 impl Generator {
-    pub fn generate(program: &Program) -> Result<Vec<u8>, Error> {
+    pub fn generate(program: &Program) -> Result<Vec<ByteCode>, Error> {
         let analysis = analyze_program(program);
         if !analysis.errors.is_empty() {
             return Err(analysis.errors.first().unwrap().clone());
@@ -94,7 +87,6 @@ impl Generator {
         let frames = vec![frame];
 
         let mut generator = Self {
-            literals: vec![],
             opcodes: vec![],
             frames,
             analysis,
@@ -105,10 +97,14 @@ impl Generator {
         Ok(generator.emit_codes())
     }
 
-    fn generate_program(&mut self, program: &Program) {
-        for statement in program.statements.iter() {
-            self.generate_node(statement);
+    fn generate_nodes(&mut self, nodes: &[Node]) {
+        for node in nodes.iter() {
+            self.generate_node(node);
         }
+    }
+
+    fn generate_program(&mut self, program: &Program) {
+        self.generate_nodes(&program.statements);
     }
 
     fn generate_node(&mut self, node: &Node) {
@@ -148,14 +144,14 @@ impl Generator {
                 self.enter_scope(for_.range(), Some(label_end_for));
                 {
                     // initializer
-                    self.push_constant_number(0.0);
-                    self.allocate_variable_in_stack(&for_.variable.range());
+                    self.push_constant(Value::Number(0.0));
+                    self.allocate_symbol_in_stack(for_.variable.range());
 
                     // condition
                     self.insert_label(label_main_loop);
 
                     self.load(&for_.variable.range());
-                    self.push_constant_number(5.0);
+                    self.push_constant(Value::Number(5.0));
                     self.less_than();
                     self.jump_if_false(label_end_for);
 
@@ -164,7 +160,7 @@ impl Generator {
 
                     // update
                     self.load(&for_.variable.range());
-                    self.push_constant_number(1.0);
+                    self.push_constant(Value::Number(1.0));
                     self.add();
                     self.store(&for_.variable.range());
 
@@ -183,19 +179,16 @@ impl Generator {
                     Some(initializer) => self.generate_node(initializer),
                     None => {
                         match variable.type_ {
-                            Type::Number => self.push_constant_number(0.0),
-                            Type::Bool => self.push_constant_bool(false),
+                            Type::Number => self.push_constant(Value::Number(0.0)),
+                            Type::Bool => self.push_constant(Value::Bool(false)),
                             _ => unreachable!("Expected primitive type"),
                         }
                     }
                 }
 
-                self.allocate_variable_in_stack(&variable_declaration.range());
+                self.allocate_symbol_in_stack(variable_declaration.range());
             }
-            Node::FunctionDeclaration(_function) => {
-                // 関数本体
-                // 戻り値をスタックフレームの一番下に配置
-            }
+            Node::FunctionDeclaration(function) => self.define_function(function),
             Node::StructDeclaration(_) => unreachable!("StructDeclaration"),
             Node::InterfaceDeclaration(_) => unreachable!("InterfaceDeclaration"),
             Node::ImplStatement(_) => unreachable!("ImplStatement"),
@@ -204,7 +197,7 @@ impl Generator {
                 let label = self.get_current_loop_label();
                 self.jump(label);
             }
-            Node::FunctionExpression(_) => unreachable!("FunctionExpression"),
+            Node::FunctionExpression(function) => self.define_function(function),
             Node::IfExpression(if_expression) => {
                 let label_false_branch = self.create_label();
                 let label_end_if = self.create_label();
@@ -231,13 +224,10 @@ impl Generator {
                 let scope = self.get_current_scope();
                 let stack_offset = scope.stack_offset;
                 let type_ = self.analysis.get_expression_type(&block.range()).unwrap_or(&Type::Void);
-                let flush_dest = stack_offset + type_.size();
+                let flush_dest = stack_offset + 1;
 
-                match type_ {
-                    Type::Number => self.store_number(stack_offset),
-                    Type::Bool => self.store_bool(stack_offset),
-                    Type::Void => (),
-                    _ => unreachable!("Expected primitive type"),
+                if type_ != &Type::Void {
+                    self.opcodes.push(ByteCodeLike::Store(stack_offset));
                 }
 
                 self.exit_scope(flush_dest);
@@ -279,62 +269,43 @@ impl Generator {
                     _ => unreachable!("Unsupported unary operator: {:?}", expression.operator),
                 }
             }
-            Node::CallExpression(_expression) => {
-                // Analyzerに必要な機能
-                // - function type
-                //      - 引数の順番を正規化したうえで、すべての引数及び戻り値が同じ変数は同じ型とみなす
-                // - function declaration
-                //      - 引数の順番を正規化する
-                //
-                // f(x:number, z:number=1, y:number=2)
-                //
-                // f(arg: { x:number, z:number, y:number })
-                // f(arg: (number, number, number))
-                //
-                // f(x=3, y=true, z=4)  // O: 正規の順番、名前あり
-                // f(3, true, 1)        // O: 正規の順番、名前なし
-                // f(x=3, y=true, 1)    // X: 正規の順番、一部名前なし、名前なしが後に位置する
-                // f(1, x=3)            // O: 正規の順番、一部名前なし、名前なしが前に位置する
-                // f(x=3, z=4, y=true)  // O: 異なる順番、名前あり
-                // f(3, 1, true)        // O: 異なる順番、名前なし (型エラー)
-                // f(y=true, x=3, 1)    // X: 異なる順番、一部名前なし、名前なしが後に位置する
-                // f(1, z=3, y=true)    // O: 異なる順番、一部名前なし、名前なしが前に位置する
-                //
-                // 名前付きは引数リストの後ろ側になければいけない
-                //
-                // 解析: - 呼び出し時に与えたパラメータを順番に解析する
-                //   　　- 名前なし引数は、関数宣言の引数リストの順番に従って解析する
+            Node::CallExpression(expression) => {
+                let stack_address = self.get_current_frame().stack_size;
 
-                // どうやってスタックに配置する順番を特定するか
-                // - 関数宣言の引数の順番を正規化する
+                // calleeの評価
+                self.generate_node(expression.callee.deref());
 
-                // TODO: 期待されている引数の順番
-                // let expected_parameter_names = vec![];
-                //
-                // for name in expected_parameter_names.iter() {
-                //     expression.parameters.iter()
-                //         .find(|parameter| parameter.name == *name)
-                //     for parameter in .iter() {
-                //         self.generate_node(parameter.value.deref());
-                //     }
-                // }
+                // 引数をスタックに積む
+                for parameter in expression.parameters.iter() {
+                    self.generate_node(parameter.value.deref());
+                }
 
-                // 残りをクリーンアップ
-                // ipを呼び出し元へ戻す
+                self.call(stack_address);
+
+                // fn_addr
+                // - 関数本体
+                // - 戻り先ip
+                // - スタックのオフセット
+
+                // CALL(fn_addr)
+                // - 関数本体へジャンプ
+                // - 変数の解決時は、関数のスタックフレームを参照する
+                // - 戻り値をスタックの一番下に配置
+                // - スタックをクリーンアップ
+                // - 元の場所へジャンプ
             }
             Node::MemberExpression(_expression) => unreachable!("MemberExpression"),
             Node::Identifier(name) => {
                 self.load(&name.range());
             }
             Node::NumberLiteral(value) => {
-                self.push_constant_number(value.value);
+                self.push_constant(Value::Number(value.value));
             }
             Node::BoolLiteral(value) => {
-                self.push_constant_bool(value.value);
+                self.push_constant(Value::Bool(value.value));
             }
-            Node::StringLiteral(string_literal) => {
-                // unreachable!("TypeExpression")
-                self.load_literal(string_literal.value.as_bytes().to_vec());
+            Node::StringLiteral(_string_literal) => {
+                unreachable!("StringLiteral")
             }
             Node::TypeExpression(_) => unreachable!("TypeExpression"),
         }
@@ -342,90 +313,38 @@ impl Generator {
 
     // Push codes into buffer
 
-    fn pop(&mut self, type_: Type) {
-        self.get_current_frame_mut().stack_size -= type_.size();
+    fn push_constant(&mut self, value: Value) {
+        self.opcodes.push(ByteCodeLike::Constant(value));
+        self.get_current_frame_mut().stack_size += 1;
     }
 
-    fn push(&mut self, type_: Type) {
-        self.get_current_frame_mut().stack_size += type_.size();
-    }
-
-    fn push_constant_number(&mut self, value: f64) {
-        self.opcodes.push(ByteCodeLike::ConstantNumber(value));
-        self.push(Type::Number);
-    }
-
-    fn push_constant_bool(&mut self, value: bool) {
-        self.opcodes.push(ByteCodeLike::ConstantBool(value));
-        self.push(Type::Bool);
-    }
-
-    fn store_number(&mut self, offset: usize) {
-        self.opcodes.push(ByteCodeLike::StoreNumber(offset));
-    }
-
-    fn store_bool(&mut self, offset: usize) {
-        self.opcodes.push(ByteCodeLike::StoreBool(offset));
-    }
-
-    fn store(&mut self, token_range: &Range<Position>) {
+    fn store(&mut self, range: &Range<Position>) {
         let variable = self.analysis
-            .get_variable_info(token_range).unwrap();
+            .get_variable_info(range).unwrap();
 
-        let name = variable.name.clone();
         let range = variable.range();
-        let type_ = variable.type_.clone();
-
         let frame = self.get_current_frame();
-        if let Some(offset) = frame.variable_offset.get(&range) {
-            let offset = *offset;
-            match type_ {
-                Type::Number => self.store_number(offset),
-                Type::Bool => self.store_bool(offset),
-                _ => unreachable!("Expected primitive type"),
-            }
+        if let Some(stack_item) = frame.offsets.get(&range) {
+            let offset = stack_item.offset;
+            self.opcodes.push(ByteCodeLike::Store(offset));
             return;
         }
 
-        unreachable!("Variable {} is not declared", name)
+        unreachable!("Variable is not declared")
     }
 
-    fn load_number(&mut self, offset: usize) {
-        self.opcodes.push(ByteCodeLike::LoadNumber(offset));
-        self.push(Type::Number);
-    }
+    fn load(&mut self, range: &Range<Position>) {
+        let defined_at = match self.analysis.get_expression_info(range) {
+            Some(ExpressionInfo::Function(symbol_ref)) => symbol_ref.defined_at.clone().unwrap(),
+            Some(ExpressionInfo::Variable(symbol_ref)) => symbol_ref.defined_at.clone().unwrap(),
+            _ => unreachable!("Expected function or variable"),
+        };
 
-    fn load_bool(&mut self, offset: usize) {
-        self.opcodes.push(ByteCodeLike::LoadBool(offset));
-        self.push(Type::Bool);
-    }
+        let stack_item = self.get_current_frame().offsets.get(&defined_at).unwrap();
+        let offset = stack_item.offset;
 
-    fn load_literal(&mut self, value: Vec<u8>) {
-        // unimplemented!()
-        let literal_id = self.literals.len() as u32;
-        self.literals.push(value);
-        self.opcodes.push(ByteCodeLike::LoadLiteral(literal_id));
-        self.push(Type::Ref);
-    }
-
-    fn load(&mut self, token_range: &Range<Position>) {
-        let variable = self.analysis
-            .get_variable_info(token_range).unwrap();
-
-        let range = variable.range();
-        let type_ = variable.type_.clone();
-        let name = variable.name.clone();
-
-        if let Some(offset) = self.get_current_frame().variable_offset.get(&range) {
-            let offset = *offset;
-            match type_ {
-                Type::Number => self.load_number(offset),
-                Type::Bool => self.load_bool(offset),
-                _ => unreachable!("Expected primitive type"),
-            }
-            return;
-        }
-        unreachable!("Variable {} is not declared", name);
+        self.opcodes.push(ByteCodeLike::Load(offset));
+        self.get_current_frame_mut().stack_size += 1;
     }
 
     fn jump(&mut self, label_id: LabelId) {
@@ -433,104 +352,99 @@ impl Generator {
     }
 
     fn jump_if_false(&mut self, label_id: LabelId) {
-        self.pop(Type::Bool);
+        self.get_current_frame_mut().stack_size -= 1;
         self.opcodes.push(ByteCodeLike::JumpIfFalse(label_id));
     }
 
+    fn define_function(&mut self, function: &Function) {
+        let opcodes_start = self.opcodes.len();
+
+        self.frames.push(StackFrame::new());
+        for parameter in function.interface.parameters.iter() {
+            self.get_current_frame_mut().stack_size += 1;
+            self.allocate_symbol_in_stack(parameter.range());
+        }
+        self.generate_nodes(&function.body);
+        self.opcodes.push(ByteCodeLike::PopCallStack);
+        self.frames.pop();
+
+        let body_size = self.opcodes.len() - opcodes_start;
+
+        self.opcodes.insert(opcodes_start, ByteCodeLike::DefineFunction(body_size));
+        self.get_current_frame_mut().stack_size += 1;
+        self.allocate_symbol_in_stack(function.range());
+    }
+
+    fn call(&mut self, stack_address: usize) {
+        self.opcodes.push(ByteCodeLike::Call(stack_address));
+    }
+
     fn add(&mut self) {
-        self.pop(Type::Number);
-        self.pop(Type::Number);
+        self.get_current_frame_mut().stack_size -= 1;
         self.opcodes.push(ByteCodeLike::Add);
-        self.push(Type::Number);
     }
 
     fn subtract(&mut self) {
-        self.pop(Type::Number);
-        self.pop(Type::Number);
+        self.get_current_frame_mut().stack_size -= 1;
         self.opcodes.push(ByteCodeLike::Subtract);
-        self.push(Type::Number);
     }
 
     fn multiply(&mut self) {
-        self.pop(Type::Number);
-        self.pop(Type::Number);
+        self.get_current_frame_mut().stack_size -= 1;
         self.opcodes.push(ByteCodeLike::Multiply);
-        self.push(Type::Number);
     }
 
     fn divide(&mut self) {
-        self.pop(Type::Number);
-        self.pop(Type::Number);
+        self.get_current_frame_mut().stack_size -= 1;
         self.opcodes.push(ByteCodeLike::Divide);
-        self.push(Type::Number);
     }
 
     fn logical_and(&mut self) {
-        self.pop(Type::Bool);
-        self.pop(Type::Bool);
+        self.get_current_frame_mut().stack_size -= 1;
         self.opcodes.push(ByteCodeLike::LogicalAnd);
-        self.push(Type::Bool);
     }
 
     fn logical_or(&mut self) {
-        self.pop(Type::Bool);
-        self.pop(Type::Bool);
+        self.get_current_frame_mut().stack_size -= 1;
         self.opcodes.push(ByteCodeLike::LogicalOr);
-        self.push(Type::Bool);
     }
 
     fn less_than(&mut self) {
-        self.pop(Type::Number);
-        self.pop(Type::Number);
+        self.get_current_frame_mut().stack_size -= 1;
         self.opcodes.push(ByteCodeLike::LessThan);
-        self.push(Type::Bool);
     }
 
     fn less_than_or_equal(&mut self) {
-        self.pop(Type::Number);
-        self.pop(Type::Number);
+        self.get_current_frame_mut().stack_size -= 1;
         self.opcodes.push(ByteCodeLike::LessThanOrEqual);
-        self.push(Type::Bool);
     }
 
     fn greater_than(&mut self) {
-        self.pop(Type::Number);
-        self.pop(Type::Number);
+        self.get_current_frame_mut().stack_size -= 1;
         self.opcodes.push(ByteCodeLike::GreaterThan);
-        self.push(Type::Bool);
     }
 
     fn greater_than_or_equal(&mut self) {
-        self.pop(Type::Number);
-        self.pop(Type::Number);
+        self.get_current_frame_mut().stack_size -= 1;
         self.opcodes.push(ByteCodeLike::GreaterThanOrEqual);
-        self.push(Type::Bool);
     }
 
     fn equal(&mut self) {
-        self.pop(Type::Number);
-        self.pop(Type::Number);
+        self.get_current_frame_mut().stack_size -= 1;
         self.opcodes.push(ByteCodeLike::Equal);
-        self.push(Type::Bool);
     }
 
     fn not_equal(&mut self) {
-        self.pop(Type::Number);
-        self.pop(Type::Number);
+        self.get_current_frame_mut().stack_size -= 1;
         self.opcodes.push(ByteCodeLike::NotEqual);
-        self.push(Type::Bool);
     }
 
     fn negative(&mut self) {
-        self.pop(Type::Number);
         self.opcodes.push(ByteCodeLike::Negative);
-        self.push(Type::Number);
     }
 
     fn logical_not(&mut self) {
-        self.pop(Type::Bool);
         self.opcodes.push(ByteCodeLike::LogicalNot);
-        self.push(Type::Bool);
     }
 
     fn create_label(&mut self) -> LabelId {
@@ -544,15 +458,10 @@ impl Generator {
         self.opcodes.push(ByteCodeLike::Label(label_id));
     }
 
-    /// Declare a new variable. Current stack top value is used as the initial value.
-    fn allocate_variable_in_stack(&mut self, range: &Range<Position>) {
-        let variable = self.analysis
-            .get_variable_info(range).unwrap();
-        let range = variable.range();
-        let type_ = variable.type_.clone();
-
+    fn allocate_symbol_in_stack(&mut self, defined_at: Range<Position>) {
         let frame = self.get_current_frame_mut();
-        frame.variable_offset.insert(range, frame.stack_size - type_.size());
+        let offset = frame.stack_size - 1;
+        frame.offsets.insert(defined_at, StackItem { offset });
     }
 
     fn get_current_frame(&self) -> &StackFrame {
@@ -595,136 +504,99 @@ impl Generator {
 
     // Emit codes
 
-    fn emit_codes(&mut self) -> Vec<u8> {
+    fn emit_codes(&mut self) -> Vec<ByteCode> {
         let mut buffer = vec![];
 
-        buffer.extend((self.literals.len() as u32).as_u8_slice());
-        let mut offset = 0;
-
-        for i in 0..self.literals.len() {
-            let binary = &self.literals[i];
-
-            buffer.extend(offset.as_u8_slice());
-            buffer.extend(binary.len().as_u8_slice());
-
-            offset += binary.len();
-        }
-
-        for i in 0..self.literals.len() {
-            buffer.extend(&self.literals[i]);
-        }
-
         let opcodes = self.opcodes.clone();
-        let mut buffer_opcodes = vec![];
+
+        let label_to_ip = {
+            let mut label_to_ip = HashMap::new();
+            let mut ip = 0;
+            for code in opcodes.iter() {
+                if let ByteCodeLike::Label(label_id) = code {
+                    label_to_ip.insert(*label_id, ip);
+                } else {
+                    ip += 1;
+                }
+            }
+            label_to_ip
+        };
+
         for code in opcodes.iter() {
             match code {
-                ByteCodeLike::ConstantNumber(value) => {
-                    buffer_opcodes.extend_from_slice(ByteCode::ConstantNumber.as_u8_slice());
-                    buffer_opcodes.extend_from_slice(value.as_u8_slice());
+                ByteCodeLike::Constant(value) => {
+                    buffer.push(ByteCode::Constant(value.clone()));
                 }
-                ByteCodeLike::ConstantBool(value) => {
-                    buffer_opcodes.extend_from_slice(ByteCode::ConstantBool.as_u8_slice());
-                    buffer_opcodes.extend_from_slice(value.as_u8_slice());
+                ByteCodeLike::Load(address) => {
+                    buffer.push(ByteCode::Load(*address));
                 }
-                ByteCodeLike::LoadNumber(address) => {
-                    buffer_opcodes.extend_from_slice(ByteCode::LoadNumber.as_u8_slice());
-                    buffer_opcodes.extend_from_slice(address.as_u8_slice());
-                }
-                ByteCodeLike::LoadBool(address) => {
-                    buffer_opcodes.extend_from_slice(ByteCode::LoadBool.as_u8_slice());
-                    buffer_opcodes.extend_from_slice(address.as_u8_slice());
-                }
-                ByteCodeLike::StoreNumber(address) => {
-                    buffer_opcodes.extend_from_slice(ByteCode::StoreNumber.as_u8_slice());
-                    buffer_opcodes.extend_from_slice(address.as_u8_slice());
-                }
-                ByteCodeLike::StoreBool(address) => {
-                    buffer_opcodes.extend_from_slice(ByteCode::StoreNumber.as_u8_slice());
-                    buffer_opcodes.extend_from_slice(address.as_u8_slice());
-                }
-                ByteCodeLike::LoadLiteral(index) => {
-                    buffer_opcodes.extend_from_slice(ByteCode::LoadLiteral.as_u8_slice());
-                    buffer_opcodes.extend_from_slice(index.as_u8_slice());
+                ByteCodeLike::Store(address) => {
+                    buffer.push(ByteCode::Store(*address));
                 }
                 ByteCodeLike::Jump(label_id) => {
-                    buffer_opcodes.extend_from_slice(ByteCode::Jump.as_u8_slice());
-                    self.emit_label(&mut buffer_opcodes, label_id);
+                    buffer.push(ByteCode::Jump(label_to_ip[label_id]));
                 }
                 ByteCodeLike::JumpIfFalse(label_id) => {
-                    buffer_opcodes.extend_from_slice(ByteCode::JumpIfFalse.as_u8_slice());
-                    self.emit_label(&mut buffer_opcodes, label_id);
+                    buffer.push(ByteCode::JumpIfFalse(label_to_ip[label_id]));
                 }
                 ByteCodeLike::Flush(size) => {
-                    buffer_opcodes.extend_from_slice(ByteCode::Flush.as_u8_slice());
-                    buffer_opcodes.extend_from_slice(size.as_u8_slice());
+                    buffer.push(ByteCode::Flush(*size));
+                }
+                ByteCodeLike::DefineFunction(size) => {
+                    buffer.push(ByteCode::DefineFunction(*size));
+                }
+                ByteCodeLike::Call(stack_address) => {
+                    buffer.push(ByteCode::Call(*stack_address));
+                }
+                ByteCodeLike::PopCallStack => {
+                    buffer.push(ByteCode::PopCallStack);
                 }
                 ByteCodeLike::Add => {
-                    buffer_opcodes.extend_from_slice(ByteCode::Add.as_u8_slice());
+                    buffer.push(ByteCode::Add);
                 }
                 ByteCodeLike::Subtract => {
-                    buffer_opcodes.extend_from_slice(ByteCode::Subtract.as_u8_slice());
+                    buffer.push(ByteCode::Subtract);
                 }
                 ByteCodeLike::Multiply => {
-                    buffer_opcodes.extend_from_slice(ByteCode::Multiply.as_u8_slice());
+                    buffer.push(ByteCode::Multiply);
                 }
                 ByteCodeLike::Divide => {
-                    buffer_opcodes.extend_from_slice(ByteCode::Divide.as_u8_slice());
+                    buffer.push(ByteCode::Divide);
                 }
                 ByteCodeLike::LogicalAnd => {
-                    buffer_opcodes.extend_from_slice(ByteCode::LogicalAnd.as_u8_slice());
+                    buffer.push(ByteCode::LogicalAnd);
                 }
                 ByteCodeLike::LogicalOr => {
-                    buffer_opcodes.extend_from_slice(ByteCode::LogicalOr.as_u8_slice());
+                    buffer.push(ByteCode::LogicalOr);
                 }
                 ByteCodeLike::LessThan => {
-                    buffer_opcodes.extend_from_slice(ByteCode::LessThan.as_u8_slice());
+                    buffer.push(ByteCode::LessThan);
                 }
                 ByteCodeLike::LessThanOrEqual => {
-                    buffer_opcodes.extend_from_slice(ByteCode::LessThanOrEqual.as_u8_slice());
+                    buffer.push(ByteCode::LessThanOrEqual);
                 }
                 ByteCodeLike::GreaterThan => {
-                    buffer_opcodes.extend_from_slice(ByteCode::GreaterThan.as_u8_slice());
+                    buffer.push(ByteCode::GreaterThan);
                 }
                 ByteCodeLike::GreaterThanOrEqual => {
-                    buffer_opcodes.extend_from_slice(ByteCode::GreaterThanOrEqual.as_u8_slice());
+                    buffer.push(ByteCode::GreaterThanOrEqual);
                 }
                 ByteCodeLike::Equal => {
-                    buffer_opcodes.extend_from_slice(ByteCode::Equal.as_u8_slice());
+                    buffer.push(ByteCode::Equal);
                 }
                 ByteCodeLike::NotEqual => {
-                    buffer_opcodes.extend_from_slice(ByteCode::NotEqual.as_u8_slice());
+                    buffer.push(ByteCode::NotEqual);
                 }
                 ByteCodeLike::Negative => {
-                    buffer_opcodes.extend_from_slice(ByteCode::Negative.as_u8_slice());
+                    buffer.push(ByteCode::Negative);
                 }
                 ByteCodeLike::LogicalNot => {
-                    buffer_opcodes.extend_from_slice(ByteCode::LogicalNot.as_u8_slice());
+                    buffer.push(ByteCode::LogicalNot);
                 }
-                ByteCodeLike::Label(label_id) => {
-                    let address = buffer_opcodes.len();
-                    let label = self.labels.get_mut(label_id).unwrap();
-                    label.address = Some(address);
-                    for pending in label.pending.iter() {
-                        buffer_opcodes[*pending..*pending + size_of::<usize>()].copy_from_slice(address.as_u8_slice());
-                    }
-                }
+                ByteCodeLike::Label(..) => {}
             };
         }
 
-        buffer.extend(&buffer_opcodes);
         buffer
-    }
-
-    fn emit_label(&mut self, buffer: &mut Vec<u8>, label_id: &LabelId) {
-        let label = self.labels.get_mut(label_id).unwrap();
-        match label.address {
-            Some(address) => {
-                buffer.extend_from_slice(address.as_u8_slice());
-            }
-            None => {
-                label.pending.push(buffer.len());
-                buffer.extend(/* dummy */ 0usize.as_u8_slice());
-            }
-        }
     }
 }

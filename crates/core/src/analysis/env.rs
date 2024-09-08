@@ -119,12 +119,7 @@ impl Env {
     }
 
     pub fn get_symbol_by_name(&self, name: &str) -> Option<&Symbol> {
-        for symbol in self.symbols.iter().rev() {
-            if symbol.name == name {
-                return Some(&symbol);
-            }
-        }
-        None
+        self.symbols.iter().rev().find(|&symbol| symbol.name == name)
     }
 
     pub fn is_symbol_defined(&self, defined_at: &Range<Position>) -> bool {

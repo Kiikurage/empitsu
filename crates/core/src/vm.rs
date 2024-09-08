@@ -4,31 +4,93 @@ mod bytecode_like;
 
 use crate::error::Error;
 use crate::parser::parse;
-use crate::util::{AsU8Slice, ParseAs};
-use crate::vm::bytecode::{ByteCode, EMBool, EMNumber};
+use crate::vm::bytecode::ByteCode;
 use crate::vm::generator::Generator;
 use std::collections::HashMap;
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct EMObject {
-    memory: Vec<u8>,
-    type_: String,
+enum EMObject {
+    String(EMString),
+    UserFunction(EMUserFunction),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EMString {
+    value: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EMUserFunction {
+    body_ip: usize,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Value {
+    Number(f64),
+    Bool(bool),
+    Ref(usize),
+}
+
+impl Value {
+    pub fn number(&self) -> f64 {
+        match self {
+            Value::Number(value) => *value,
+            _ => panic!("Value is not a number"),
+        }
+    }
+
+    pub fn bool(&self) -> bool {
+        match self {
+            Value::Bool(value) => *value,
+            _ => panic!("Value is not a bool"),
+        }
+    }
+
+    pub fn ref_(&self) -> usize {
+        match self {
+            Value::Ref(value) => *value,
+            _ => panic!("Value is not a ref"),
+        }
+    }
+}
+
+impl Display for Value {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Value::Number(value) => write!(f, "{}", value),
+            Value::Bool(value) => write!(f, "{}", value),
+            Value::Ref(value) => write!(f, "{}", value),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct StackFrame {
+    stack_offset: usize,
+    return_ip: usize,
 }
 
 pub struct VM {
     heap: HashMap<usize, EMObject>,
-    stack: Vec<u8>,
+    stack: Vec<Value>,
+    call_stack: Vec<StackFrame>,
     ip: usize,
-    codes: Vec<u8>,
+    codes: Vec<ByteCode>,
 }
 
 impl VM {
     pub fn new() -> Self {
-        Self { heap: HashMap::new(), stack: vec![], ip: 0, codes: vec![] }
+        Self {
+            heap: HashMap::new(),
+            stack: vec![],
+            ip: 0,
+            codes: vec![],
+            call_stack: vec![],
+        }
     }
 
-    pub fn eval(&mut self, program: &str) -> Result<&f64, Error> {
+    pub fn eval(&mut self, program: &str) -> Result<&Value, Error> {
         let parse_result = parse(program);
         if !parse_result.errors.is_empty() {
             return Err(parse_result.errors[0].clone());
@@ -36,191 +98,180 @@ impl VM {
 
         let codes = Generator::generate(&parse_result.program)?;
         self.eval_codes(&codes)?;
-        Ok(self.stack.parse_as::<EMNumber>(self.stack.len() - size_of::<EMNumber>()))
+
+        Ok(self.stack.last().unwrap())
     }
 
-    fn push<T: Debug>(&mut self, value: T) {
-        self.stack.extend(value.as_u8_slice());
-    }
-
-    fn pop<T: Clone>(&mut self) -> T {
-        let len = self.stack.len();
-        // TODO: clone消したい
-        let value = self.stack.parse_as::<T>(len - size_of::<T>()).clone();
-        self.stack.truncate(len - size_of::<T>());
-
-        value
-    }
-
-    fn read<T: Clone>(&mut self) -> &T {
-        let value = self.codes.parse_as::<T>(self.ip);
-        self.ip += size_of::<T>();
-        value
-    }
-
-    fn read_stack<T>(&mut self, index: usize) -> &T {
-        self.stack.parse_as::<T>(index)
-    }
-
-    fn eval_codes(&mut self, codes: &[u8]) -> Result<(), Error> {
+    fn eval_codes(&mut self, codes: &[ByteCode]) -> Result<(), Error> {
         self.codes = codes.to_vec();
         self.ip = 0;
-
-        let num_literals = *self.read::<u32>();
-        let mut literal_index = Vec::new();
-        for _ in 0..num_literals {
-            let offset = *self.read::<usize>();
-            let size = *self.read::<usize>();
-            literal_index.push((offset, size));
-        }
-
-        let literal_table_offset = self.ip;
-        let (last_literal_offset, last_literal_size) = literal_index.last().unwrap_or(&(0, 0));
-        for (offset, size) in literal_index.iter() {
-            let binary = codes[literal_table_offset + offset..literal_table_offset + offset + size]
-                .to_vec();
-
-            self.heap.insert(self.heap.len(), EMObject { memory: binary, type_: "Literal".to_string() });
-        }
-
-        let op_code_offset = literal_table_offset + last_literal_offset + last_literal_size;
-
-        self.codes = self.codes[op_code_offset..].to_vec();
-        self.ip = 0;
+        self.call_stack.clear();
+        self.call_stack.push(StackFrame {
+            stack_offset: 0,
+            return_ip: 0,
+        });
 
         self.eval_op_codes()?;
 
         Ok(())
     }
 
+    fn push(&mut self, value: Value) {
+        self.stack.push(value);
+    }
+
+    fn pop(&mut self) -> Value {
+        self.stack.pop().unwrap()
+    }
+
+    fn truncate(&mut self, size: usize) {
+        self.stack.truncate(size);
+    }
+
+    fn load(&mut self, index: usize) {
+        let stack_frame = self.call_stack.last().unwrap();
+        let value = self.stack[stack_frame.stack_offset + index].clone();
+        self.push(value);
+    }
+
+    fn store(&mut self, index: usize) {
+        let value = self.stack.last().unwrap().clone();
+        let stack_frame = self.call_stack.last_mut().unwrap();
+        self.stack[stack_frame.stack_offset + index] = value;
+    }
+
     fn eval_op_codes(&mut self) -> Result<(), Error> {
         while self.ip < self.codes.len() {
-            let code = self.read::<ByteCode>();
+            let code = &self.codes[self.ip];
+            self.ip += 1;
             match code {
-                ByteCode::ConstantNumber => {
-                    let values = *self.read::<[u8; 8]>();
-                    self.stack.extend(values);
+                ByteCode::Constant(value) => {
+                    self.push(value.clone())
                 }
-                ByteCode::ConstantBool => {
-                    let values = *self.read::<[u8; 1]>();
-                    self.stack.extend(values);
+                ByteCode::Load(index) => {
+                    self.load(*index);
                 }
-                ByteCode::LoadNumber => {
-                    let index = *self.read::<usize>();
-                    let value = *self.read_stack::<EMNumber>(index);
-                    self.stack.extend(value.as_u8_slice());
+                ByteCode::Store(index) => {
+                    self.store(*index);
                 }
-                ByteCode::LoadBool => {
-                    let index = *self.read::<usize>();
-                    let value = *self.read_stack::<EMBool>(index);
-                    self.stack.extend(value.as_u8_slice());
+                ByteCode::Jump(address) => {
+                    self.ip = *address;
                 }
-                ByteCode::StoreNumber => {
-                    let index = *self.read::<usize>();
-                    let len = self.stack.len();
-                    for i in 0..size_of::<EMNumber>() {
-                        let value = self.stack[len - size_of::<EMNumber>() + i];
-                        self.stack[index + i] = value;
+                ByteCode::JumpIfFalse(address) => {
+                    let address = *address;
+                    let flag = self.pop().bool();
+                    if !flag {
+                        self.ip = address
                     }
                 }
-                ByteCode::StoreBool => {
-                    let index = *self.read::<usize>();
-                    let len = self.stack.len();
-                    for i in 0..size_of::<EMBool>() {
-                        let value = self.stack[len - size_of::<EMNumber>() + i];
-                        self.stack[index + i] = value;
-                    }
+                ByteCode::DefineFunction(body_size) => {
+                    let function = EMObject::UserFunction(EMUserFunction {
+                        body_ip: self.ip
+                    });
+                    self.ip += body_size;
+                    let ref_ = self.heap.len();
+                    self.heap.insert(ref_, function);
+                    self.push(Value::Ref(ref_));
                 }
-                ByteCode::Jump => {
-                    let ip = *self.read::<usize>();
-                    self.ip = ip;
+                ByteCode::Call(stack_address_of_fn_address) => {
+                    let stack_offset = self.call_stack.last().unwrap().stack_offset;
+                    let fn_address = self.stack[stack_offset + stack_address_of_fn_address].ref_();
+                    let function = match self.heap.get(&fn_address).unwrap() {
+                        EMObject::UserFunction(function) => function,
+                        _ => panic!("Not a function"),
+                    };
+
+                    self.call_stack.push(StackFrame {
+                        stack_offset: stack_offset + stack_address_of_fn_address + 1,
+                        return_ip: self.ip,
+                    });
+                    self.ip = function.body_ip;
                 }
-                ByteCode::JumpIfFalse => {
-                    let flag = self.pop::<EMBool>();
-                    if flag {
-                        // Skip the jump address
-                        self.ip += size_of::<usize>();
+                ByteCode::PopCallStack => {
+                    let frame = self.call_stack.pop().unwrap();
+                    let ret_value = if self.stack.len() > frame.stack_offset {
+                        Some(self.stack.last().unwrap().clone())
                     } else {
-                        let ip = *self.read::<usize>();
-                        self.ip = ip;
+                        None
+                    };
+
+                    self.ip = frame.return_ip;
+                    self.truncate(frame.stack_offset - 1); // -1 for function address
+
+                    if let Some(ret_value) = ret_value {
+                        self.push(ret_value.clone());
                     }
                 }
-                ByteCode::LoadLiteral => {
-                    let index = *self.read::<u32>() as usize;
-                    let ref_ = index;
-                    self.push(ref_);
-                }
-                ByteCode::Flush => {
-                    let length = *self.read::<usize>();
-                    self.stack.truncate(length);
+                ByteCode::Flush(size) => {
+                    self.truncate(*size);
                 }
                 ByteCode::Add => {
-                    let rhs = self.pop::<EMNumber>();
-                    let lhs = self.pop::<EMNumber>();
-                    self.push(lhs + rhs);
+                    let rhs = self.pop().number();
+                    let lhs = self.pop().number();
+                    self.push(Value::Number(lhs + rhs));
                 }
                 ByteCode::Subtract => {
-                    let rhs = self.pop::<EMNumber>();
-                    let lhs = self.pop::<EMNumber>();
-                    self.push(lhs - rhs);
+                    let rhs = self.pop().number();
+                    let lhs = self.pop().number();
+                    self.push(Value::Number(lhs - rhs));
                 }
                 ByteCode::Multiply => {
-                    let rhs = self.pop::<EMNumber>();
-                    let lhs = self.pop::<EMNumber>();
-                    self.push(lhs * rhs);
+                    let rhs = self.pop().number();
+                    let lhs = self.pop().number();
+                    self.push(Value::Number(lhs * rhs));
                 }
                 ByteCode::Divide => {
-                    let rhs = self.pop::<EMNumber>();
-                    let lhs = self.pop::<EMNumber>();
-                    self.push(lhs / rhs);
+                    let rhs = self.pop().number();
+                    let lhs = self.pop().number();
+                    self.push(Value::Number(lhs / rhs));
                 }
                 ByteCode::LogicalAnd => {
-                    let rhs = self.pop::<EMBool>();
-                    let lhs = self.pop::<EMBool>();
-                    self.push(lhs && rhs);
+                    let rhs = self.pop().bool();
+                    let lhs = self.pop().bool();
+                    self.push(Value::Bool(lhs && rhs));
                 }
                 ByteCode::LogicalOr => {
-                    let rhs = self.pop::<EMBool>();
-                    let lhs = self.pop::<EMBool>();
-                    self.push(lhs || rhs);
+                    let rhs = self.pop().bool();
+                    let lhs = self.pop().bool();
+                    self.push(Value::Bool(lhs || rhs));
                 }
                 ByteCode::LessThan => {
-                    let rhs = self.pop::<EMNumber>();
-                    let lhs = self.pop::<EMNumber>();
-                    self.push(lhs < rhs);
+                    let rhs = self.pop().number();
+                    let lhs = self.pop().number();
+                    self.push(Value::Bool(lhs < rhs));
                 }
                 ByteCode::LessThanOrEqual => {
-                    let rhs = self.pop::<EMNumber>();
-                    let lhs = self.pop::<EMNumber>();
-                    self.push(lhs <= rhs);
+                    let rhs = self.pop().number();
+                    let lhs = self.pop().number();
+                    self.push(Value::Bool(lhs <= rhs));
                 }
                 ByteCode::GreaterThan => {
-                    let rhs = self.pop::<EMNumber>();
-                    let lhs = self.pop::<EMNumber>();
-                    self.push(lhs > rhs);
+                    let rhs = self.pop().number();
+                    let lhs = self.pop().number();
+                    self.push(Value::Bool(lhs > rhs));
                 }
                 ByteCode::GreaterThanOrEqual => {
-                    let rhs = self.pop::<EMNumber>();
-                    let lhs = self.pop::<EMNumber>();
-                    self.push(lhs >= rhs);
+                    let rhs = self.pop().number();
+                    let lhs = self.pop().number();
+                    self.push(Value::Bool(lhs >= rhs));
                 }
                 ByteCode::Equal => {
-                    let rhs = self.pop::<EMNumber>();
-                    let lhs = self.pop::<EMNumber>();
-                    self.push(lhs == rhs);
+                    let rhs = self.pop().number();
+                    let lhs = self.pop().number();
+                    self.push(Value::Bool(lhs == rhs));
                 }
                 ByteCode::NotEqual => {
-                    let rhs = self.pop::<EMNumber>();
-                    let lhs = self.pop::<EMNumber>();
-                    self.push(lhs != rhs);
+                    let rhs = self.pop().number();
+                    let lhs = self.pop().number();
+                    self.push(Value::Bool(lhs != rhs));
                 }
                 ByteCode::Negative => {
-                    let operand = self.pop::<EMNumber>();
-                    self.push(-operand);
+                    let operand = self.pop().number();
+                    self.push(Value::Number(-operand));
                 }
                 ByteCode::LogicalNot => {
-                    let operand = self.pop::<EMBool>();
-                    self.push(!operand);
+                    let operand = self.pop().bool();
+                    self.push(Value::Bool(!operand));
                 }
             }
         }
@@ -232,11 +283,10 @@ impl VM {
 #[cfg(test)]
 mod tests {
     use crate::parser::parse;
-    use crate::vm::Generator;
     use crate::vm::VM;
-    use std::fmt::Debug;
+    use crate::vm::{Generator, Value};
 
-    fn test<T: Clone + PartialEq + Debug>(program: &str, expected: T) {
+    fn test(program: &str, expected: Value) {
         let mut vm = VM::new();
         let result = parse(program);
         assert_eq!(result.errors, vec![]);
@@ -245,172 +295,172 @@ mod tests {
 
         vm.eval_codes(&codes).unwrap();
 
-        assert_eq!(vm.pop::<T>(), expected);
+        assert_eq!(vm.stack.pop().unwrap(), expected);
     }
 
     #[test]
     fn constant_f64() {
-        test("1", 1.0f64);
+        test("1", Value::Number(1.0f64));
     }
 
     #[test]
     fn constant_true() {
-        test("true", true);
+        test("true", Value::Bool(true));
     }
 
     #[test]
     fn constant_false() {
-        test("false", false);
+        test("false", Value::Bool(false));
     }
 
     #[test]
     fn multiple_constants() {
-        test("1; 2", 2.0f64);
+        test("1; 2", Value::Number(2.0f64));
     }
 
     #[test]
     fn add() {
-        test("1+2", 3.0f64);
+        test("1+2", Value::Number(3.0f64));
     }
 
     #[test]
     fn sub() {
-        test("3-2", 1.0);
+        test("3-2", Value::Number(1.0));
     }
 
     #[test]
     fn mul() {
-        test("3*2", 6.0);
+        test("3*2", Value::Number(6.0));
     }
 
     #[test]
     fn div() {
-        test("8/2", 4.0);
+        test("8/2", Value::Number(4.0));
     }
 
     #[test]
     fn compound_binary_operation() {
-        test("2*(3+4)/(1+6)", 2.0);
+        test("2*(3+4)/(1+6)", Value::Number(2.0));
     }
 
     #[test]
     fn logical_and() {
-        test("true && true", true);
-        test("true && false", false);
-        test("false && true", false);
-        test("false && false", false);
+        test("true && true", Value::Bool(true));
+        test("true && false", Value::Bool(false));
+        test("false && true", Value::Bool(false));
+        test("false && false", Value::Bool(false));
     }
 
     #[test]
     fn logical_or() {
-        test("true || true", true);
-        test("true || false", true);
-        test("false || true", true);
-        test("false || false", false);
+        test("true || true", Value::Bool(true));
+        test("true || false", Value::Bool(true));
+        test("false || true", Value::Bool(true));
+        test("false || false", Value::Bool(false));
     }
 
     #[test]
     fn less_than() {
-        test("1 < 2", true);
-        test("2 < 1", false);
-        test("1 < 1", false);
+        test("1 < 2", Value::Bool(true));
+        test("2 < 1", Value::Bool(false));
+        test("1 < 1", Value::Bool(false));
     }
 
     #[test]
     fn less_than_or_equal() {
-        test("1 <= 2", true);
-        test("2 <= 1", false);
-        test("1 <= 1", true);
+        test("1 <= 2", Value::Bool(true));
+        test("2 <= 1", Value::Bool(false));
+        test("1 <= 1", Value::Bool(true));
     }
 
     #[test]
     fn greater_than() {
-        test("1 > 2", false);
-        test("2 > 1", true);
-        test("1 > 1", false);
+        test("1 > 2", Value::Bool(false));
+        test("2 > 1", Value::Bool(true));
+        test("1 > 1", Value::Bool(false));
     }
 
     #[test]
     fn greater_than_or_equal() {
-        test("1 >= 2", false);
-        test("2 >= 1", true);
-        test("1 >= 1", true);
+        test("1 >= 2", Value::Bool(false));
+        test("2 >= 1", Value::Bool(true));
+        test("1 >= 1", Value::Bool(true));
     }
 
     #[test]
     fn negative() {
-        test("-1", -1.0);
+        test("-1", Value::Number(-1.0));
     }
 
     #[test]
     fn logical_not() {
-        test("!true", false);
-        test("!false", true);
+        test("!true", Value::Bool(false));
+        test("!false", Value::Bool(true));
     }
 
     #[test]
     fn block() {
-        test("let x=1 {1+1}", 2.0);
+        test("let x=1 {1+1}", Value::Number(2.0));
     }
 
     #[test]
     fn block_scope() {
-        test("let x=1 { let x = 2 { x = 10 } }", 10.0);
+        test("let x=1 { let x = 2 { x = 10 } }", Value::Number(10.0));
     }
 
     #[test]
     fn nested_block() {
-        test("let x = 0 {1 { 1+1 } 2+1 }", 3.0);
+        test("let x = 0 {1 { 1+1 } 2+1 }", Value::Number(3.0));
     }
 
     #[test]
     fn declare_variable_with_initializer() {
-        test("let x = 1", 1.0);
+        test("let x = 1", Value::Number(1.0));
     }
 
     #[test]
     fn read_variable() {
-        test("let x = 1; x", 1.0);
+        test("let x = 1; x", Value::Number(1.0));
     }
 
     #[test]
     fn read_variable_in_complex_expression() {
-        test("let x = 1; x*(2+x)", 3.0);
+        test("let x = 1; x*(2+x)", Value::Number(3.0));
     }
 
     #[test]
     fn assignment() {
-        test("let x=1; let y=2; x=3", 3.0);
+        test("let x=1; let y=2; x=3", Value::Number(3.0));
     }
 
     #[test]
     fn assignment_in_expression() {
-        test("let x=1; (x=2)*3", 6.0);
+        test("let x=1; (x=2)*3", Value::Number(6.0));
     }
 
     #[test]
     fn declare_and_initialize_later() {
-        test("let x: number; 1+2; x=10", 10.0);
+        test("let x: number; 1+2; x=10", Value::Number(10.0));
     }
 
     #[test]
     fn scope() {
-        test("let x=1 { let x:number; x=2 } x=3", 3.0);
+        test("let x=1 { let x:number; x=2 } x=3", Value::Number(3.0));
     }
 
     #[test]
     fn for_loop() {
-        test("let x=0; for (i in range(0,5)) { x = x + i } x", 10.0);
+        test("let x=0; for (i in range(0,5)) { x = x + i } x", Value::Number(10.0));
     }
 
     #[test]
     fn if_expression_true_branch() {
-        test("let x=0; x = if(true) 10 else 20", 10.0);
+        test("let x=0; x = if(true) 10 else 20", Value::Number(10.0));
     }
 
     #[test]
     fn if_expression_false_branch() {
-        test("let x=0; x = if(false) 10 else 20", 20.0);
+        test("let x=0; x = if(false) 10 else 20", Value::Number(20.0));
     }
 
     #[test]
@@ -449,12 +499,12 @@ mod tests {
 
     #[test]
     fn if_statement_true_branch() {
-        test("let x = 0; if (true) { x = 1 } else { x = 2 }", 1.0);
+        test("let x = 0; if (true) { x = 1 } else { x = 2 }", Value::Number(1.0));
     }
 
     #[test]
     fn if_statement_false_branch() {
-        test("let x = 0; if (false) { x = 1 } else { x = 2 }", 2.0);
+        test("let x = 0; if (false) { x = 1 } else { x = 2 }", Value::Number(2.0));
     }
 
     #[test]
@@ -468,19 +518,8 @@ mod tests {
                     }
                 }
             "#,
-             106.0,
+             Value::Number(106.0),
         );
-    }
-
-    #[test]
-    fn string_literal() {
-        let mut vm = VM::new();
-        vm.eval(r#"
-            "Hello"
-            "World"
-        "#).unwrap();
-
-        assert_eq!(vm.heap.len(), 2);
     }
 
     #[test]
@@ -492,7 +531,7 @@ mod tests {
         3
     }
     x
-"#, 3f64);
+"#, Value::Number(3f64));
     }
 
     #[test]
@@ -500,7 +539,7 @@ mod tests {
         test(r#"
     let x = if (true) { 1 } else { 2 }
     x
-"#, 1f64);
+"#, Value::Number(1f64));
     }
 
     #[test]
@@ -513,7 +552,7 @@ mod tests {
         x = 2
     }
     x
-"#, 1f64);
+"#, Value::Number(1f64));
     }
 
     #[test]
@@ -522,7 +561,7 @@ mod tests {
     let x = true;
     let x = 123;
     x
-"#, 123f64);
+"#, Value::Number(123f64));
     }
 
     #[test]
@@ -531,6 +570,59 @@ mod tests {
     let x = 123;
     let x = x + 100;
     x
-"#, 223f64);
+"#, Value::Number(223f64));
+    }
+
+    #[cfg(test)]
+    mod function {
+        use crate::vm::tests::test;
+        use crate::vm::Value;
+
+        #[test]
+        fn call_static_function() {
+            test(r#"
+                fn double(x: number): number { x*2 }
+
+                double(5)
+            "#, Value::Number(10f64));
+        }
+
+        #[test]
+        fn call_function_object() {
+            test(r#"
+                let double = fn(x: number): number { x*2 }
+
+                double(5)
+            "#, Value::Number(10f64));
+        }
+
+        #[test]
+        fn call_function_twice() {
+            test(r#"
+                let double = fn(x: number): number { x*2 }
+                double(double(5))
+            "#, Value::Number(20f64));
+        }
+
+        #[test]
+        fn call_function_immediately() {
+            test(r#"
+                (fn(x: number): number { x*2 })(5)
+            "#, Value::Number(10f64));
+        }
+
+
+        #[test]
+        fn call_inner_function() {
+            test(r#"
+                fn triple_double(x: number): number {
+                    fn double(x: number): number { x*2 }
+
+                    double(x*3)
+                }
+
+                triple_double(5)
+            "#, Value::Number(30f64));
+        }
     }
 }

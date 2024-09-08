@@ -11,7 +11,6 @@ pub enum Type {
     Void,
     Number,
     Bool,
-    Ref,
     Function(Vec<Type>, Box<Type>),  // parameters, return type
 }
 
@@ -23,7 +22,6 @@ impl Display for Type {
             Type::Void => write!(f, "void"),
             Type::Number => write!(f, "number"),
             Type::Bool => write!(f, "bool"),
-            Type::Ref => write!(f, "ref"),
             Type::Function(params, return_type) => {
                 write!(f, "fn(")?;
                 for (i, param) in params.iter().enumerate() {
