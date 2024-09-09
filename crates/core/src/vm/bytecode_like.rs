@@ -70,6 +70,10 @@ pub enum ByteCodeLike {
     /// put it in heap, and push the address to the stack
     DefineFunction(usize),
 
+    /// Load next (usize) bytes from bytecode as static members of struct,
+    /// put it in heap, and push the address to the stack
+    DefineStruct(usize),
+
     /// Load function address from ((stack.size) - (usize) - size_of(usize)),
     /// push new call stack entry, and execute the function
     Call(usize),
@@ -79,6 +83,15 @@ pub enum ByteCodeLike {
     /// push the last value in the function env to the stack,
     /// and change instruction pointer to the return address
     Return,
+
+    /// Pop an item from stack as reference to object, read the property
+    /// by the given index, and push the value to the stack
+    LoadProperty(usize),
+
+    /// Pop an item from stack as reference to object, read the property
+    /// by the given index, peak a value from stack, and push the value
+    /// to the property
+    StoreProperty(usize),
 
     /// Pop next 2 elements in appropriate byte size from stack, and
     /// push the result of operation to the stack

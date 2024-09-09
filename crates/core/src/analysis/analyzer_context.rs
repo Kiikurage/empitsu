@@ -7,6 +7,7 @@ use crate::error::Error;
 use crate::position::Position;
 use std::ops::Range;
 use crate::analysis::function_info::FunctionInfo;
+use crate::analysis::struct_info::StructInfo;
 
 pub struct AnalyzerContext {
     envs: Vec<Env>,
@@ -35,6 +36,7 @@ impl AnalyzerContext {
             env.type_expressions,
             env.functions,
             env.returns,
+            env.structs,
             self.errors,
         )
     }
@@ -80,6 +82,19 @@ impl AnalyzerContext {
 
     pub fn add_return(&mut self, range: Range<Position>, return_value_type: Type) {
         self.current_env_mut().add_return(range, return_value_type);
+    }
+
+    pub fn add_struct(&mut self, info: StructInfo) {
+        self.current_env_mut().add_struct(info);
+    }
+
+    pub fn get_struct(&self, range: &Range<Position>) -> Option<&StructInfo> {
+        for env in self.envs.iter().rev() {
+            if let Some(info) = env.get_struct(range) {
+                return Some(info);
+            }
+        }
+        None
     }
 
     pub fn returns(&self) -> &Vec<Range<Position>> {

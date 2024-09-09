@@ -11,6 +11,11 @@ pub struct Error {
 
 impl Error {
     #[inline(always)]
+    pub fn undefined_property(range: Range<Position>, object: impl Into<String>, property: impl Into<String>) -> Error {
+        Error { range, message: format!("\"{}\" does not have a property named \"{}\"", object.into(), property.into()) }
+    }
+
+    #[inline(always)]
     pub fn invalid_syntax(range: Range<Position>, message: impl Into<String>) -> Error {
         Error { range, message: message.into() }
     }

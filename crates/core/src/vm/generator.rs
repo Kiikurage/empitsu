@@ -2,10 +2,12 @@ use crate::analysis::expression_info::ExpressionInfo;
 use crate::analysis::type_::Type;
 use crate::analysis::Analysis;
 use crate::analyze::analyze_program;
+use crate::ast::call_expression::CallExpression;
 use crate::ast::function::Function;
 use crate::ast::get_range::GetRange;
 use crate::ast::node::Node;
 use crate::ast::program::Program;
+use crate::ast::struct_declaration::StructDeclaration;
 use crate::error::Error;
 use crate::position::Position;
 use crate::punctuation_kind::PunctuationKind;
@@ -197,7 +199,7 @@ impl Generator {
                 }
             }
             Node::FunctionDeclaration(function) => self.define_function(function),
-            Node::StructDeclaration(_) => unreachable!("StructDeclaration"),
+            Node::StructDeclaration(struct_) => self.define_struct(struct_),
             Node::InterfaceDeclaration(_) => unreachable!("InterfaceDeclaration"),
             Node::ImplStatement(_) => unreachable!("ImplStatement"),
             Node::Return(return_) => {
@@ -251,6 +253,22 @@ impl Generator {
                         self.generate_node(&expression.rhs);
                         self.store(&name.range())
                     }
+                    Node::MemberExpression(member_expression) => {
+                        self.generate_node(&expression.rhs);
+                        self.generate_node(member_expression.object.deref());
+
+                        let type_ = self.analysis.get_expression_type(&member_expression.object.range()).unwrap();
+
+                        match type_ {
+                            Type::Struct(struct_) => {
+                                let property_index = struct_.properties.iter()
+                                    .position(|(name, ..)| name == &member_expression.member.name)
+                                    .unwrap();
+                                self.opcodes.push(ByteCodeLike::StoreProperty(property_index));
+                            }
+                            _ => unreachable!("Expected struct"),
+                        }
+                    }
                     _ => unreachable!("Assign to complex target is not supported")
                 }
             }
@@ -283,21 +301,23 @@ impl Generator {
                 }
             }
             Node::CallExpression(expression) => {
-                let stack_address = self.get_current_frame().stack_size;
-
-                self.generate_node(expression.callee.deref());
-
-                // 引数をスタックに積む
-                for parameter in expression.parameters.iter() {
-                    self.generate_node(parameter.value.deref());
-                }
-
-                self.call(stack_address);
-
-                // +1 for return value
-                self.get_current_frame_mut().stack_size = stack_address + 1;
+                self.call(&expression);
             }
-            Node::MemberExpression(_expression) => unreachable!("MemberExpression"),
+            Node::MemberExpression(expression) => {
+                self.generate_node(expression.object.deref());
+
+                let type_ = self.analysis.get_expression_type(&expression.object.range()).unwrap();
+
+                match type_ {
+                    Type::Struct(struct_) => {
+                        let property_index = struct_.properties.iter()
+                            .position(|(name, ..)| name == &expression.member.name)
+                            .unwrap();
+                        self.opcodes.push(ByteCodeLike::LoadProperty(property_index));
+                    }
+                    _ => unreachable!("Expected struct"),
+                }
+            }
             Node::Identifier(name) => {
                 self.load(&name.range());
             }
@@ -379,6 +399,11 @@ impl Generator {
                 let _function = self.analysis.get_function_info(&defined_at).unwrap();
                 (false, defined_at)  // TODO
             }
+            Some(ExpressionInfo::Struct(symbol_ref)) => {
+                let defined_at = symbol_ref.defined_at.clone().unwrap();
+                let _struct = self.analysis.get_struct_info(&defined_at).unwrap();
+                (false, defined_at)  // TODO
+            }
             _ => unreachable!("Expected function or variable"),
         };
 
@@ -437,8 +462,32 @@ impl Generator {
         self.allocate_stack_item(function.range());
     }
 
-    fn call(&mut self, stack_address: usize) {
+    fn define_struct(&mut self, struct_: &StructDeclaration) {
+        let opcodes_start = self.opcodes.len();
+
+        // TODO: encode static members
+
+        let size = self.opcodes.len() - opcodes_start;
+
+        self.opcodes.insert(opcodes_start, ByteCodeLike::DefineStruct(size));
+        self.get_current_frame_mut().stack_size += 1;
+        self.allocate_stack_item(struct_.range());
+    }
+
+    fn call(&mut self, expression: &CallExpression) {
+        let stack_address = self.get_current_frame().stack_size;
+
+        self.generate_node(expression.callee.deref());
+
+        // 引数をスタックに積む
+        for parameter in expression.parameters.iter() {
+            self.generate_node(parameter.value.deref());
+        }
+
         self.opcodes.push(ByteCodeLike::Call(stack_address));
+
+        // +1 for return value
+        self.get_current_frame_mut().stack_size = stack_address + 1;
     }
 
     fn add(&mut self) {
@@ -520,6 +569,7 @@ impl Generator {
         self.opcodes.push(ByteCodeLike::Label(label_id));
     }
 
+    /// Pin stack top item with symbol
     fn allocate_stack_item(&mut self, defined_at: Range<Position>) {
         let frame = self.get_current_frame_mut();
         let offset = frame.stack_size - 1;
@@ -619,6 +669,12 @@ impl Generator {
                 ByteCodeLike::LoadHeap(address) => {
                     buffer.push(ByteCode::LoadHeap(*address));
                 }
+                ByteCodeLike::LoadProperty(index) => {
+                    buffer.push(ByteCode::LoadProperty(*index));
+                }
+                ByteCodeLike::StoreProperty(index) => {
+                    buffer.push(ByteCode::StoreProperty(*index));
+                }
                 ByteCodeLike::StoreHeap(address) => {
                     buffer.push(ByteCode::StoreHeap(*address));
                 }
@@ -633,6 +689,9 @@ impl Generator {
                 }
                 ByteCodeLike::DefineFunction(size) => {
                     buffer.push(ByteCode::DefineFunction(*size));
+                }
+                ByteCodeLike::DefineStruct(size) => {
+                    buffer.push(ByteCode::DefineStruct(*size));
                 }
                 ByteCodeLike::Call(stack_address) => {
                     buffer.push(ByteCode::Call(*stack_address));

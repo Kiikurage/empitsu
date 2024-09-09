@@ -2,6 +2,7 @@ use crate::analysis::break_info::BreakInfo;
 use crate::analysis::expression_info::ExpressionInfo;
 use crate::analysis::function_info::FunctionInfo;
 use crate::analysis::return_info::ReturnInfo;
+use crate::analysis::struct_info::StructInfo;
 use crate::analysis::type_::Type;
 use crate::analysis::type_expression_info::TypeExpressionInfo;
 use crate::analysis::variable_info::VariableInfo;
@@ -21,6 +22,7 @@ pub enum ExitReason {
 pub enum SymbolKind {
     Variable,
     Function,
+    Struct,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,6 +50,7 @@ pub struct Env {
     pub breaks: HashMap<Range<Position>, BreakInfo>,
     pub type_expressions: HashMap<Range<Position>, TypeExpressionInfo>,
     pub returns: HashMap<Range<Position>, ReturnInfo>,
+    pub structs: HashMap<Range<Position>, StructInfo>,
 }
 
 impl Env {
@@ -73,6 +76,7 @@ impl Env {
             type_expressions: HashMap::new(),
             functions: HashMap::new(),
             returns: HashMap::new(),
+            structs: HashMap::new(),
         }
     }
 
@@ -92,6 +96,7 @@ impl Env {
         self.type_expressions.extend(child_env.type_expressions);
         self.functions.extend(child_env.functions);
         self.returns.extend(child_env.returns);
+        self.structs.extend(child_env.structs);
     }
 
     /// Encapsulate local symbols so that they are not accessible from the outer scope.
@@ -100,6 +105,7 @@ impl Env {
         for symbol in self.symbols.iter() {
             match symbol.kind {
                 SymbolKind::Function => {}
+                SymbolKind::Struct => {}
                 SymbolKind::Variable => {
                     let type_ = self.variable_types.get(&symbol.defined_at).unwrap_or(&Type::Unknown).clone();
                     let captured = self.variables_captured.contains(&symbol.defined_at);
@@ -187,6 +193,16 @@ impl Env {
         self.returns.get(range)
     }
 
+    pub fn add_struct(&mut self, info: StructInfo) {
+        self.define_symbol(info.range().clone(), info.name.clone(), SymbolKind::Struct);
+        self.add_expression(ExpressionInfo::struct_(info.range(), Some(info.range())));
+        self.structs.insert(info.range(), info);
+    }
+
+    pub fn get_struct(&self, range: &Range<Position>) -> Option<&StructInfo> {
+        self.structs.get(range)
+    }
+
     pub fn add_expression(&mut self, info: ExpressionInfo) {
         self.expressions.insert(info.range(), info);
     }
@@ -206,8 +222,8 @@ impl Env {
     pub fn add_function(&mut self, range: Range<Position>, name: impl Into<String>, type_: Type) {
         let name = name.into();
         self.define_symbol(range.clone(), name.clone(), SymbolKind::Function);
-        self.functions.insert(range.clone(), FunctionInfo::new(range.clone(), name, type_));
         self.add_expression(ExpressionInfo::function(range.clone(), Some(range.clone())));
+        self.functions.insert(range.clone(), FunctionInfo::new(range.clone(), name, type_));
     }
 
     pub fn get_function(&self, range: &Range<Position>) -> Option<&FunctionInfo> {

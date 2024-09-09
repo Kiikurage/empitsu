@@ -1,7 +1,8 @@
 use crate::analysis::analyzer_context::AnalyzerContext;
 use crate::analysis::env::{Env, ExitReason, SymbolKind};
 use crate::analysis::expression_info::ExpressionInfo;
-use crate::analysis::type_::Type;
+use crate::analysis::struct_info::StructInfo;
+use crate::analysis::type_::{StructType, Type};
 use crate::analysis::Analysis;
 use crate::ast::assignment_expression::AssignmentExpression;
 use crate::ast::binary_expression::BinaryExpression;
@@ -232,8 +233,18 @@ fn analyze_function(ctx: &mut AnalyzerContext, function: &Function) {
     }
 }
 
-fn analyze_struct_declaration(_ctx: &mut AnalyzerContext, _struct_: &StructDeclaration) {
-    unimplemented!("Struct analysis is not implemented yet");
+fn analyze_struct_declaration(ctx: &mut AnalyzerContext, struct_: &StructDeclaration) {
+    let name = struct_.name.name.clone();
+
+    let mut properties = vec![];
+    for property in struct_.properties.iter() {
+        analyze_type_expression(ctx, &property.type_);
+        let type_ = ctx.get_type_expression_type(&property.type_.range());
+
+        properties.push((property.name.name.clone(), type_));
+    }
+
+    ctx.add_struct(StructInfo::new(struct_.range(), name, properties));
 }
 
 fn analyze_interface(_ctx: &mut AnalyzerContext, _interface: &InterfaceDeclaration) {
@@ -322,52 +333,94 @@ fn analyze_block(ctx: &mut AnalyzerContext, block: &Block) {
     ctx.add_expression(ExpressionInfo::temp_value(block.range(), block_type.clone()));
 }
 
-fn analyze_assignment_expression(ctx: &mut AnalyzerContext, assignment_expression: &AssignmentExpression) {
-    analyze_node(ctx, &assignment_expression.rhs);
-    let rhs_type = ctx.get_expression_type(&assignment_expression.rhs.range()).unwrap_or(Type::Unknown);
+fn analyze_assignment_expression(ctx: &mut AnalyzerContext, expression: &AssignmentExpression) {
+    analyze_node(ctx, &expression.rhs);
+    let rhs_type = ctx.get_expression_type(&expression.rhs.range()).unwrap_or(Type::Unknown);
 
-    match assignment_expression.lhs.deref() {
+    let lhs_type = match expression.lhs.deref() {
         Node::Identifier(identifier) => {
             match ctx.get_symbol_by_name(&identifier.name) {
                 Some(symbol) => {
                     match symbol.kind {
+                        SymbolKind::Struct => {
+                            ctx.add_error(Error::assign_to_non_variable(
+                                expression.lhs.range(),
+                                "struct type",
+                            ));
+
+                            Type::Unknown
+                        }
                         SymbolKind::Function => {
                             ctx.add_error(Error::assign_to_non_variable(
-                                assignment_expression.lhs.range(),
+                                expression.lhs.range(),
                                 "function",
                             ));
+
+                            Type::Unknown
                         }
                         SymbolKind::Variable => {
                             let defined_at = symbol.defined_at.clone();
-                            ctx.add_expression(ExpressionInfo::variable(assignment_expression.lhs.range(), Some(defined_at.clone())));
+                            ctx.add_expression(ExpressionInfo::variable(expression.lhs.range(), Some(defined_at.clone())));
 
                             let lhs_type = ctx.get_variable_type(&defined_at);
-                            ctx.assert_assignable(&rhs_type, &lhs_type, &assignment_expression.rhs.range());
+                            ctx.assert_assignable(&rhs_type, &lhs_type, &expression.rhs.range());
 
                             if !ctx.is_variable_initialized(defined_at.clone()) {
-                                ctx.set_variable_initialized(defined_at.clone(), assignment_expression.range());
+                                ctx.set_variable_initialized(defined_at.clone(), expression.range());
                                 ctx.set_variable_type(defined_at.clone(), rhs_type.clone());
                             }
+
+                            lhs_type
                         }
                     }
                 }
                 None => {
                     ctx.add_error(Error::undefined_symbol(identifier.range(), identifier.name.clone()));
                     ctx.define_symbol(identifier.range(), identifier.name.clone(), SymbolKind::Variable);
-                    ctx.set_variable_initialized(identifier.range(), assignment_expression.range());
+                    ctx.set_variable_initialized(identifier.range(), expression.range());
                     ctx.set_variable_type(identifier.range(), rhs_type.clone());
+
+                    Type::Unknown
+                }
+            }
+        }
+        Node::MemberExpression(member_expression) => {
+            analyze_node(ctx, member_expression.object.deref());
+            match ctx.get_expression_type(&member_expression.object.range()) {
+                Some(Type::Struct(struct_type)) => {
+                    match struct_type.properties.iter()
+                        .position(|(name, _)| name == &member_expression.member.name) {
+                        Some(position) => {
+                            let (_, type_) = struct_type.properties.get(position).unwrap();
+                            type_.clone()
+                        },
+                        None => {
+                            ctx.add_error(Error::undefined_property(member_expression.member.range(), struct_type.name, member_expression.member.name.clone()));
+                            Type::Unknown
+                        }
+                    }
+                }
+                _ => {
+                    ctx.add_error(Error::invalid_syntax(
+                        member_expression.object.range(),
+                        "Member access is only allowed on struct types",
+                    ));
+
+                    Type::Unknown
                 }
             }
         }
         _ => {
             ctx.add_error(Error::invalid_syntax(
-                assignment_expression.range(),
+                expression.range(),
                 "Left-hand side of an assignment must be a variable",
             ));
-        }
-    }
 
-    ctx.add_expression(ExpressionInfo::temp_value(assignment_expression.range(), rhs_type.clone()));
+            Type::Unknown
+        }
+    };
+
+    ctx.add_expression(ExpressionInfo::temp_value(expression.range(), lhs_type));
 }
 
 fn analyze_binary_expression(ctx: &mut AnalyzerContext, binary_expression: &BinaryExpression) {
@@ -418,13 +471,33 @@ fn analyze_unary_expression(ctx: &mut AnalyzerContext, unary_expression: &UnaryE
 
 fn analyze_call_expression(ctx: &mut AnalyzerContext, call_expression: &CallExpression) {
     analyze_node(ctx, &call_expression.callee);
-    let function_type_ = match ctx.get_expression(&call_expression.callee.range()) {
+    let callee_type = match ctx.get_expression(&call_expression.callee.range()) {
         Some(ExpressionInfo::Function(ref symbol_ref)) => {
             match symbol_ref.defined_at {
                 Some(ref defined_at) => {
                     let defined_at = defined_at.clone();
                     let function_info = ctx.get_function(&defined_at).unwrap();
                     function_info.type_.clone()
+                }
+                None => Type::Unknown,
+            }
+        }
+        Some(ExpressionInfo::Struct(ref symbol_ref)) => {
+            match symbol_ref.defined_at {
+                Some(ref defined_at) => {
+                    let defined_at = defined_at.clone();
+                    let struct_info = ctx.get_struct(&defined_at).unwrap();
+
+                    let mut properties = vec![];
+                    for (name, type_) in struct_info.properties.iter() {
+                        properties.push((name.clone(), type_.clone()));
+                    }
+                    let struct_type = StructType { name: struct_info.name.clone(), properties };
+
+                    Type::Function(
+                        struct_type.properties.iter().map(|(_, type_)| type_.clone()).collect(),
+                        Box::new(Type::Struct(struct_type)),
+                    )
                 }
                 None => Type::Unknown,
             }
@@ -441,9 +514,9 @@ fn analyze_call_expression(ctx: &mut AnalyzerContext, call_expression: &CallExpr
         None => panic!("Callee is not found")
     };
 
-    ctx.assert_callable(&function_type_, &call_expression.callee.range());
+    ctx.assert_callable(&callee_type, &call_expression.callee.range());
 
-    if let Type::Function(parameter_types, return_type) = function_type_ {
+    if let Type::Function(parameter_types, return_type) = callee_type {
         if call_expression.parameters.len() != parameter_types.len() {
             ctx.add_error(Error::invalid_parameter_count(
                 call_expression.range(),
@@ -465,8 +538,28 @@ fn analyze_call_expression(ctx: &mut AnalyzerContext, call_expression: &CallExpr
     };
 }
 
-fn analyze_member_expression(_ctx: &mut AnalyzerContext, _member_expression: &MemberExpression) {
-    unimplemented!("Member analysis is not implemented yet");
+fn analyze_member_expression(ctx: &mut AnalyzerContext, expression: &MemberExpression) {
+    analyze_node(ctx, expression.object.deref());
+    match ctx.get_expression_type(&expression.object.range()) {
+        Some(Type::Struct(struct_type)) => {
+            let position = struct_type.properties.iter()
+                .position(|(name, _)| name == &expression.member.name);
+
+            match position {
+                Some(index) => {
+                    let (_, type_) = struct_type.properties.get(index).unwrap();
+                    ctx.add_expression(ExpressionInfo::temp_value(expression.range(), type_.clone()));
+                }
+                None => {
+                    ctx.add_error(Error::undefined_property(expression.member.range(), struct_type.name, expression.member.name.clone()));
+                    ctx.add_expression(ExpressionInfo::temp_value(expression.range(), Type::Unknown));
+                }
+            }
+        }
+        _ => {
+            ctx.add_error(Error::invalid_syntax(expression.object.range(), "Member access is only allowed on struct types"));
+        }
+    };
 }
 
 fn analyze_identifier(ctx: &mut AnalyzerContext, identifier: &Identifier) {
@@ -486,6 +579,9 @@ fn analyze_identifier(ctx: &mut AnalyzerContext, identifier: &Identifier) {
                 }
                 SymbolKind::Function => {
                     ctx.add_expression(ExpressionInfo::function(identifier.range(), Some(defined_at.clone())));
+                }
+                SymbolKind::Struct => {
+                    ctx.add_expression(ExpressionInfo::struct_(identifier.range(), Some(defined_at.clone())));
                 }
             }
         }

@@ -13,14 +13,18 @@ use std::rc::Rc;
 
 #[derive(Debug, Clone, PartialEq)]
 enum EMObject {
-    String(EMString),
     Box(EMBox),
+    StructDefinition(EMStructDefinition),
+    Struct(EMStruct),
     UserFunction(EMUserFunction),
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct EMString {
-    value: String,
+pub struct EMStructDefinition {}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EMStruct {
+    properties: Vec<Value>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -249,23 +253,40 @@ impl VM {
                     self.heap.insert(ref_, function);
                     self.push(Value::Ref(ref_));
                 }
+                ByteCode::DefineStruct(body_size) => {
+                    let struct_definition = EMObject::StructDefinition(EMStructDefinition {});
+                    self.ip += body_size;
+                    let ref_ = self.heap.len();
+                    self.heap.insert(ref_, struct_definition);
+                    self.push(Value::Ref(ref_));
+                }
                 ByteCode::Call(stack_address_of_fn_address) => {
                     let stack_offset = self.call_stack.last().unwrap().stack_offset;
-                    let fn_address = self.stack[stack_offset + stack_address_of_fn_address].ref_();
-                    let function = match self.heap.get(&fn_address).unwrap() {
-                        EMObject::UserFunction(function) => function,
-                        _ => panic!("Not a function"),
+                    let callee_address = self.stack[stack_offset + stack_address_of_fn_address].ref_();
+                    match self.heap.get(&callee_address).unwrap() {
+                        EMObject::UserFunction(function) => {
+                            self.call_stack.push(StackFrame {
+                                stack_offset: stack_offset + stack_address_of_fn_address + 1,
+                                return_ip: self.ip,
+                                closure: Rc::new(RefCell::new(Closure {
+                                    captured_variables: HashMap::new(),
+                                    parent: function.parent_closure.clone(),
+                                })),
+                            });
+                            self.ip = function.body_ip;
+                        }
+                        EMObject::StructDefinition(..) => {
+                            let properties = self.stack[stack_offset + stack_address_of_fn_address + 1..].to_vec();
+                            let struct_ = EMObject::Struct(EMStruct {
+                                properties
+                            });
+                            let ref_ = self.heap.len();
+                            self.heap.insert(ref_, struct_);
+                            self.truncate(stack_offset + stack_address_of_fn_address);
+                            self.push(Value::Ref(ref_));
+                        }
+                        _ => panic!("Not a callable"),
                     };
-
-                    self.call_stack.push(StackFrame {
-                        stack_offset: stack_offset + stack_address_of_fn_address + 1,
-                        return_ip: self.ip,
-                        closure: Rc::new(RefCell::new(Closure {
-                            captured_variables: HashMap::new(),
-                            parent: function.parent_closure.clone(),
-                        }))
-                    });
-                    self.ip = function.body_ip;
                 }
                 ByteCode::Return => {
                     let frame = self.call_stack.pop().unwrap();
@@ -279,10 +300,28 @@ impl VM {
                     }
 
                     self.ip = frame.return_ip;
-                },
+                }
                 ByteCode::Flush(size) => {
                     let stack_offset = self.call_stack.last().unwrap().stack_offset;
                     self.truncate(stack_offset + *size);
+                }
+                ByteCode::LoadProperty(index) => {
+                    let struct_ref = self.stack.pop().unwrap().ref_();
+                    if let EMObject::Struct(struct_) = self.heap.get(&struct_ref).unwrap() {
+                        let value = struct_.properties[*index].clone();
+                        self.push(value);
+                    } else {
+                        panic!("Not a struct");
+                    }
+                }
+                ByteCode::StoreProperty(index) => {
+                    let struct_ref = self.stack.pop().unwrap().ref_();
+
+                    if let EMObject::Struct(ref mut struct_) = self.heap.get_mut(&struct_ref).unwrap() {
+                        struct_.properties[*index] = self.stack.last().unwrap().clone();
+                    } else {
+                        panic!("Not a struct");
+                    }
                 }
                 ByteCode::Add => {
                     let rhs = self.pop().number();
@@ -355,6 +394,7 @@ impl VM {
                 ByteCode::NoOp => {}
             }
             // println!("{:?}", self.stack);
+            // println!("{:?}", self.heap);
         }
 
         Ok(())
@@ -804,4 +844,55 @@ mod tests {
         }
     }
 
+    #[cfg(test)]
+    mod struct_ {
+        use crate::vm::tests::test;
+        use crate::vm::Value;
+
+        #[test]
+        fn declare_struct() {
+            test(r#"
+                struct Point (x: number, y: number)
+
+                let p = Point(1, 2)
+                (p.x==1 && p.y==2)
+            "#, Value::Bool(true));
+        }
+
+        #[test]
+        fn get_and_set_struct_property() {
+            test(r#"
+                struct Point (x: number, y: number)
+
+                let p = Point(1, 2)
+                p.x = 3;
+                (p.x==3 && p.y==2)
+            "#, Value::Bool(true));
+        }
+
+        // #[test]
+        // fn get_nested_ref() {
+        //     test(r#"
+        //         struct T (u: U)
+        //         struct U (v: number)
+        // 
+        //         let obj = T(U(10))
+        //         obj.u.v
+        //     "#, Value::Number(10f64));
+        // }
+        // 
+        // #[test]
+        // fn set_nested_ref() {
+        //     test(r#"
+        //         struct T (u: U)
+        //         struct U (v: number)
+        // 
+        //         let obj = T(U(10))
+        //         obj.u.v = 5
+        //         obj.u.v
+        //     "#, Value::Number(5f64));
+        // }
+        
+        // TODO: test circular reference
+    }
 }

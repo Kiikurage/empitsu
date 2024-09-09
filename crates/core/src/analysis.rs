@@ -9,6 +9,7 @@ pub mod return_info;
 pub mod analyzer_context;
 pub mod env;
 pub mod expression_info;
+pub mod struct_info;
 
 use crate::analysis::break_info::BreakInfo;
 use crate::analysis::expression_info::ExpressionInfo;
@@ -21,6 +22,7 @@ use crate::error::Error;
 use crate::position::Position;
 use std::collections::HashMap;
 use std::ops::Range;
+use crate::analysis::struct_info::StructInfo;
 
 ///
 /// AnalyzeResultへのクエリ
@@ -45,6 +47,7 @@ pub struct Analysis {
     type_expressions: HashMap<Range<Position>, TypeExpressionInfo>,
     functions: HashMap<Range<Position>, FunctionInfo>,
     returns: HashMap<Range<Position>, ReturnInfo>,
+    structs: HashMap<Range<Position>, StructInfo>,
     pub errors: Vec<Error>,
 }
 
@@ -56,6 +59,7 @@ impl Analysis {
         type_expressions: HashMap<Range<Position>, TypeExpressionInfo>,
         functions: HashMap<Range<Position>, FunctionInfo>,
         returns: HashMap<Range<Position>, ReturnInfo>,
+        structs: HashMap<Range<Position>, StructInfo>,
         errors: Vec<Error>,
     ) -> Self {
         Self {
@@ -66,6 +70,7 @@ impl Analysis {
             functions,
             returns,
             errors,
+            structs
         }
     }
 
@@ -108,5 +113,9 @@ impl Analysis {
             }
             _ => None,
         }
+    }
+
+    pub fn get_struct_info(&self, range: &Range<Position>) -> Option<&StructInfo> {
+        self.structs.get(range)
     }
 }

@@ -14,7 +14,14 @@ pub enum Type {
     Void,
     Number,
     Bool,
+    Struct(StructType),  // properties
     Function(Vec<Type>, Box<Type>),  // parameters, return type
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct StructType {
+    pub name: String,
+    pub properties: Vec<(String, Type)>,
 }
 
 impl Display for Type {
@@ -26,6 +33,9 @@ impl Display for Type {
             Type::Void => write!(f, "void"),
             Type::Number => write!(f, "number"),
             Type::Bool => write!(f, "bool"),
+            Type::Struct(struct_) => {
+                write!(f, "{}", struct_.name)
+            }
             Type::Function(params, return_type) => {
                 write!(f, "fn(")?;
                 for (i, param) in params.iter().enumerate() {
