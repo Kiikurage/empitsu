@@ -285,12 +285,19 @@ fn analyze_if_expression(ctx: &mut AnalyzerContext, if_expression: &IfExpression
     let false_branch_type_ = ctx.get_expression_type(&if_expression.false_branch.range()).unwrap_or(Type::Void);
     let false_env = ctx.exit_env_without_merge();
 
-    ctx.assert_assignable(&true_branch_type_, &false_branch_type_, &if_expression.range());
+    let type_ = match (&true_branch_type_, &false_branch_type_) {
+        (Type::Never, _) => &false_branch_type_,
+        (_, Type::Never) => &true_branch_type_,
+        _ => {
+            ctx.assert_assignable(&true_branch_type_, &false_branch_type_, &if_expression.range());
+            &true_branch_type_
+        }
+    };
 
     let child_env = ctx.reconcile_branched_envs(true_env, false_env);
     ctx.merge_env(child_env);
 
-    ctx.add_expression(ExpressionInfo::temp_value(if_expression.range(), true_branch_type_.clone()));
+    ctx.add_expression(ExpressionInfo::temp_value(if_expression.range(), type_.clone()));
 }
 
 fn analyze_block(ctx: &mut AnalyzerContext, block: &Block) {
@@ -305,7 +312,7 @@ fn analyze_block(ctx: &mut AnalyzerContext, block: &Block) {
     };
 
     let block_type = if !matches!(exit_reason, ExitReason::Normal) {
-        Type::Void
+        Type::Never
     } else {
         match block.nodes.last() {
             Some(node) => ctx.get_expression_type(&node.range()).unwrap_or(Type::Void),
@@ -507,12 +514,27 @@ fn analyze_string_literal(ctx: &mut AnalyzerContext, string_literal: &StringLite
 }
 
 fn analyze_type_expression(ctx: &mut AnalyzerContext, type_expression: &TypeExpression) {
-    let type_ = match type_expression.name.as_str() {
-        "number" => Type::Number,
-        "bool" => Type::Bool,
-        "any" => Type::Any,
-        _ => {
-            unimplemented!("Type analysis for identifier is not implemented yet");
+    let type_ = match type_expression {
+        TypeExpression::Identifier(identifier) => {
+            match identifier.name.as_str() {
+                "number" => Type::Number,
+                "bool" => Type::Bool,
+                "any" => Type::Any,
+                _ => {
+                    unimplemented!("Type analysis for identifier is not implemented yet");
+                }
+            }
+        }
+        TypeExpression::Function(function) => {
+            let mut parameter_types = vec![];
+            for parameter in &function.parameters {
+                analyze_type_expression(ctx, parameter);
+                parameter_types.push(ctx.get_type_expression_type(&parameter.range()));
+            }
+            analyze_type_expression(ctx, function.return_.deref());
+            let return_type = ctx.get_type_expression_type(&function.return_.range());
+
+            Type::Function(parameter_types, Box::new(return_type))
         }
     };
 

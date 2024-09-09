@@ -2,11 +2,11 @@ pub mod bytecode;
 pub mod generator;
 mod bytecode_like;
 
-use std::cell::RefCell;
 use crate::error::Error;
 use crate::parser::parse;
 use crate::vm::bytecode::ByteCode;
 use crate::vm::generator::Generator;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display};
 use std::rc::Rc;
@@ -167,6 +167,7 @@ impl VM {
     fn eval_op_codes(&mut self) -> Result<(), Error> {
         while self.ip < self.codes.len() {
             let code = &self.codes[self.ip];
+            // println!("{code:?}");
             self.ip += 1;
             match code {
                 ByteCode::Constant(value) => {
@@ -266,23 +267,22 @@ impl VM {
                     });
                     self.ip = function.body_ip;
                 }
-                ByteCode::PopCallStack => {
+                ByteCode::Return => {
                     let frame = self.call_stack.pop().unwrap();
-                    let ret_value = if self.stack.len() > frame.stack_offset {
-                        Some(self.stack.last().unwrap().clone())
+
+                    if self.stack.len() > frame.stack_offset {
+                        let ret_value = self.stack.last().unwrap().clone();
+                        self.truncate(frame.stack_offset - 1); // -1 for function address
+                        self.push(ret_value);
                     } else {
-                        None
-                    };
+                        self.truncate(frame.stack_offset - 1); // -1 for function address
+                    }
 
                     self.ip = frame.return_ip;
-                    self.truncate(frame.stack_offset - 1); // -1 for function address
-
-                    if let Some(ret_value) = ret_value {
-                        self.push(ret_value.clone());
-                    }
-                }
+                },
                 ByteCode::Flush(size) => {
-                    self.truncate(*size);
+                    let stack_offset = self.call_stack.last().unwrap().stack_offset;
+                    self.truncate(stack_offset + *size);
                 }
                 ByteCode::Add => {
                     let rhs = self.pop().number();
@@ -352,7 +352,9 @@ impl VM {
                     let operand = self.pop().bool();
                     self.push(Value::Bool(!operand));
                 }
+                ByteCode::NoOp => {}
             }
+            // println!("{:?}", self.stack);
         }
 
         Ok(())
@@ -667,6 +669,15 @@ mod tests {
         }
 
         #[test]
+        fn with_return_expression() {
+            test(r#"
+                fn double(x: number): number { return x*2 }
+
+                double(5)
+            "#, Value::Number(10f64));
+        }
+
+        #[test]
         fn call_function_object() {
             test(r#"
                 let double = fn(x: number): number { x*2 }
@@ -707,15 +718,15 @@ mod tests {
         #[test]
         fn closure() {
             test(r#"
-                fn builder(): any {
+                fn builder(): () => number {
                     let x = 10
                     fn inc(): number { x = x + 1 }
                     inc
                 }
 
                 let inc1 = builder(); let inc2 = builder()
-                let v1:any = inc1(); v1 = inc1(); v1 = inc1()
-                let v2:any = inc2()
+                let v1 = inc1(); v1 = inc1(); v1 = inc1()
+                let v2 = inc2()
 
                 v1 == 13 && v2 == 11
             "#, Value::Bool(true));
@@ -724,18 +735,73 @@ mod tests {
         #[test]
         fn closure_with_parameter() {
             test(r#"
-                fn builder(initialValue: number): any {
+                fn builder(initialValue: number): (number) => number {
                     let x = initialValue
-                    fn inc(): number { x = x + 1 }
+                    fn inc(v: number): number { x = x + v }
                     inc
                 }
 
                 let inc1 = builder(10); let inc2 = builder(100)
-                let v1:any = inc1(); v1 = inc1(); v1 = inc1()
-                let v2:any = inc2()
+                let v1 = inc1(1); v1 = inc1(2); v1 = inc1(3)
+                let v2 = inc2(10)
 
-                v1 == 13 && v2 == 101
+                v1 == 16 && v2 == 110
+            "#, Value::Bool(true));
+        }
+
+        #[test]
+        fn return_expression() {
+            test(r#"
+                fn f(): number {
+                    return 1
+                }
+
+                f()
+            "#, Value::Number(1f64));
+        }
+
+        #[test]
+        fn return_expression_in_if_true_branch() {
+            test(r#"
+                fn f(): number {
+                    if (true) {
+                        return 1
+                    }
+                    let z = 3;
+                    3
+                }
+
+                f()
+            "#, Value::Number(1f64));
+        }
+
+        #[test]
+        fn return_expression_in_if_false_branch() {
+            test(r#"
+                fn f(): number {
+                    if (false) {
+                        let x = 0;
+                    } else {
+                        return 1
+                    }
+
+                    2
+                }
+
+                f()
+            "#, Value::Number(1f64));
+        }
+
+        #[test]
+        fn return_expression_in_expression() {
+            test(r#"
+                fn f(value: number): number {
+                    (if (value > 5) { return 1 } else { 2 })
+                }
+
+                f(3)==2 && f(7)==1
             "#, Value::Bool(true));
         }
     }
+
 }

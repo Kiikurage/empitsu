@@ -200,7 +200,12 @@ impl Generator {
             Node::StructDeclaration(_) => unreachable!("StructDeclaration"),
             Node::InterfaceDeclaration(_) => unreachable!("InterfaceDeclaration"),
             Node::ImplStatement(_) => unreachable!("ImplStatement"),
-            Node::Return(_) => unreachable!("Return"),
+            Node::Return(return_) => {
+                if let Some(ref value) = return_.value {
+                    self.generate_node(value);
+                }
+                self.opcodes.push(ByteCodeLike::Return);
+            }
             Node::Break(_break_) => {
                 let label = self.get_current_loop_label();
                 self.jump(label);
@@ -317,7 +322,6 @@ impl Generator {
     }
 
     fn store(&mut self, range: &Range<Position>) {
-        println!("store {:?}", range);
         let (captured, defined_at) = match self.analysis.get_expression_info(range) {
             Some(ExpressionInfo::Variable(ref symbol_ref)) => {
                 let defined_at = symbol_ref.defined_at.clone().unwrap();
@@ -423,7 +427,7 @@ impl Generator {
             self.allocate_stack_item(parameter.range());
         }
         self.generate_nodes(&function.body);
-        self.opcodes.push(ByteCodeLike::PopCallStack);
+        self.opcodes.push(ByteCodeLike::Return);
         self.frames.pop();
 
         let body_size = self.opcodes.len() - opcodes_start;
@@ -588,15 +592,11 @@ impl Generator {
         let mut buffer = vec![];
 
         let opcodes = self.opcodes.clone();
-
         let label_to_ip = {
             let mut label_to_ip = HashMap::new();
-            let mut ip = 0;
-            for code in opcodes.iter() {
+            for (ip, code) in opcodes.iter().enumerate() {
                 if let ByteCodeLike::Label(label_id) = code {
                     label_to_ip.insert(*label_id, ip);
-                } else {
-                    ip += 1;
                 }
             }
             label_to_ip
@@ -637,8 +637,8 @@ impl Generator {
                 ByteCodeLike::Call(stack_address) => {
                     buffer.push(ByteCode::Call(*stack_address));
                 }
-                ByteCodeLike::PopCallStack => {
-                    buffer.push(ByteCode::PopCallStack);
+                ByteCodeLike::Return => {
+                    buffer.push(ByteCode::Return);
                 }
                 ByteCodeLike::Add => {
                     buffer.push(ByteCode::Add);
@@ -682,7 +682,9 @@ impl Generator {
                 ByteCodeLike::LogicalNot => {
                     buffer.push(ByteCode::LogicalNot);
                 }
-                ByteCodeLike::Label(..) => {}
+                ByteCodeLike::Label(..) => {
+                    buffer.push(ByteCode::NoOp);
+                }
             };
         }
 

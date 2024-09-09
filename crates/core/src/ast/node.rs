@@ -169,8 +169,12 @@ impl Node {
         Node::StringLiteral(StringLiteral::new(range, value))
     }
 
-    pub fn type_expression(range: Range<Position>, name: impl Into<String>) -> Node {
-        Node::TypeExpression(TypeExpression::new(range, name))
+    pub fn type_identifier(range: Range<Position>, name: impl Into<String>) -> Node {
+        Node::TypeExpression(TypeExpression::identifier(range, name))
+    }
+
+    pub fn function_type(range: Range<Position>, parameters: Vec<TypeExpression>, output: TypeExpression) -> Node {
+        Node::TypeExpression(TypeExpression::function(range, parameters, output))
     }
 }
 

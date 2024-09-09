@@ -73,7 +73,7 @@ function evaluate(input: string): string {
 
 export const App = () => {
 	const { model, output, save, run } = useModel();
-	const [showManual, setShowManual] = useState(true);
+	const [showManual, setShowManual] = useState(false);
 
 	return (
 		<div

@@ -12,7 +12,7 @@ pub enum ByteCode {
     JumpIfFalse(usize),
     DefineFunction(usize),
     Call(usize),
-    PopCallStack,
+    Return,
     Flush(usize),
     Add,
     Subtract,
@@ -28,4 +28,5 @@ pub enum ByteCode {
     NotEqual,
     Negative,
     LogicalNot,
+    NoOp
 }

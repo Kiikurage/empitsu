@@ -267,7 +267,7 @@ fn parse_function_interface(tokens: &mut TokenIterator) -> Result<FunctionInterf
     while assert_punctuation!(tokens.peek(), RightParen).is_err() {
         let name = assert_non_reserved_identifier(tokens.next())?;
         let parameter = if name.name == "self" {
-            ParameterDeclaration::new(name.clone(), TypeExpression::new(name.range(), "self"))
+            ParameterDeclaration::new(name.clone(), TypeExpression::identifier(name.range(), "self"))
         } else {
             assert_punctuation!(tokens.next(), Colon)?;
             let type_ = parse_type_expression(tokens)?;
@@ -720,7 +720,10 @@ fn parse_primary_expression(tokens: &mut TokenIterator) -> Result<Node, Error> {
 // Type
 
 fn parse_type_expression(tokens: &mut TokenIterator) -> Result<TypeExpression, Error> {
-    parse_primary_type(tokens)
+    parse_one_of(tokens, vec![
+        parse_function_type,
+        parse_primary_type,
+    ], "type")
 }
 
 fn parse_primary_type(tokens: &mut TokenIterator) -> Result<TypeExpression, Error> {
@@ -731,7 +734,7 @@ fn parse_primary_type(tokens: &mut TokenIterator) -> Result<TypeExpression, Erro
                     let range = identifier.range().clone();
                     let name = identifier.text.clone();
                     tokens.next();
-                    Ok(TypeExpression::new(range, name))
+                    Ok(TypeExpression::identifier(range, name))
                 }
                 _ => {
                     if is_reserved(&identifier.text) {
@@ -740,7 +743,7 @@ fn parse_primary_type(tokens: &mut TokenIterator) -> Result<TypeExpression, Erro
                         let range = identifier.range().clone();
                         let name = identifier.text.clone();
                         tokens.next();
-                        Ok(TypeExpression::new(range, name))
+                        Ok(TypeExpression::identifier(range, name))
                     }
                 }
             }
@@ -749,6 +752,34 @@ fn parse_primary_type(tokens: &mut TokenIterator) -> Result<TypeExpression, Erro
         Err(err) => Err(err.clone()),
     }
 }
+
+fn parse_function_type(tokens: &mut TokenIterator) -> Result<TypeExpression, Error> {
+    let left_paren = assert_punctuation!(tokens.next(), LeftParen)?.clone();
+    
+    let mut parameters = vec![];
+    while assert_punctuation!(tokens.peek(), RightParen).is_err() {
+        parameters.push(parse_type_expression(tokens)?);
+
+        if assert_punctuation!(tokens.peek(), Comma).is_ok() {
+            tokens.next();
+        } else {
+            break;
+        }
+    }
+    let _right_paren = assert_punctuation!(tokens.next(), RightParen)?;
+
+    let _equal = assert_punctuation!(tokens.next(), Equal)?;
+    let _right_chevron = assert_punctuation!(tokens.next(), RightChevron)?;
+
+    let return_type = parse_type_expression(tokens)?;
+    
+    Ok(TypeExpression::function(
+        left_paren.start()..return_type.end(),
+        parameters,
+        return_type,
+    ))
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -864,7 +895,7 @@ mod tests {
                     Node::variable_declaration(
                         pos(0, 0)..pos(0, 16),
                         Identifier::new(pos(0, 4)..pos(0, 5), "x"),
-                        Some(TypeExpression::new(pos(0, 6)..pos(0, 12), "number")),
+                        Some(TypeExpression::identifier(pos(0, 6)..pos(0, 12), "number")),
                         Some(Node::number_literal(pos(0, 15)..pos(0, 16), 0f64)),
                     )
                 ])
@@ -894,7 +925,7 @@ mod tests {
                     Node::variable_declaration(
                         pos(0, 0)..pos(0, 17),
                         Identifier::new(pos(0, 4)..pos(0, 5), "x"),
-                        Some(TypeExpression::new(pos(0, 7)..pos(0, 13), "number")),
+                        Some(TypeExpression::identifier(pos(0, 7)..pos(0, 13), "number")),
                         Some(Node::number_literal(pos(0, 16)..pos(0, 17), 1.0f64)),
                     ),
                 ])
@@ -1019,11 +1050,11 @@ mod tests {
                         vec![
                             PropertyDeclaration::new(
                                 Identifier::new(pos(0, 12)..pos(0, 16), "name"),
-                                TypeExpression::new(pos(0, 18)..pos(0, 24), "string")
+                                TypeExpression::identifier(pos(0, 18)..pos(0, 24), "string")
                             ),
                             PropertyDeclaration::new(
                                 Identifier::new(pos(0, 26)..pos(0, 28), "id"),
-                                TypeExpression::new(pos(0, 30)..pos(0, 36), "number")
+                                TypeExpression::identifier(pos(0, 30)..pos(0, 36), "number")
                             ),
                         ],
                         vec![],
@@ -1085,10 +1116,10 @@ mod tests {
                                 vec![
                                     ParameterDeclaration::new(
                                         Identifier::new(pos(0, 33)..pos(0, 37), "self"),
-                                        TypeExpression::new(pos(0, 33)..pos(0, 37), "self")
+                                        TypeExpression::identifier(pos(0, 33)..pos(0, 37), "self")
                                     ),
                                 ],
-                                TypeExpression::new(pos(0, 40)..pos(0, 46), "string"),
+                                TypeExpression::identifier(pos(0, 40)..pos(0, 46), "string"),
                             ),
                         ],
                     ),
@@ -1131,10 +1162,10 @@ mod tests {
                                     vec![
                                         ParameterDeclaration::new(
                                             Identifier::new(pos(2, 32)..pos(2, 36), "self"),
-                                            TypeExpression::new(pos(2, 32)..pos(2, 36), "self"),
+                                            TypeExpression::identifier(pos(2, 32)..pos(2, 36), "self"),
                                         ),
                                     ],
-                                    TypeExpression::new(pos(2, 39)..pos(2, 45), "string"),
+                                    TypeExpression::identifier(pos(2, 39)..pos(2, 45), "string"),
                                 ),
                                 vec![
                                     Node::return_(
@@ -1244,10 +1275,10 @@ mod tests {
                                 vec![
                                     ParameterDeclaration::new(
                                         Identifier::new(pos(0, 11)..pos(0, 12), "y"),
-                                        TypeExpression::new(pos(0, 14)..pos(0, 20), "number"),
+                                        TypeExpression::identifier(pos(0, 14)..pos(0, 20), "number"),
                                     ),
                                 ],
-                                TypeExpression::new(pos(0, 23)..pos(0, 29), "number"),
+                                TypeExpression::identifier(pos(0, 23)..pos(0, 29), "number"),
                             ),
                             vec![
                                 Node::binary_expression(
@@ -2139,11 +2170,11 @@ mod tests {
                         vec![
                             PropertyDeclaration::new(
                                 Identifier::new(pos(0, 11)..pos(0, 12), "x"),
-                                TypeExpression::new(pos(0, 14)..pos(0, 20), "number"),
+                                TypeExpression::identifier(pos(0, 14)..pos(0, 20), "number"),
                             ),
                             PropertyDeclaration::new(
                                 Identifier::new(pos(0, 22)..pos(0, 23), "y"),
-                                TypeExpression::new(pos(0, 25)..pos(0, 31), "string"),
+                                TypeExpression::identifier(pos(0, 25)..pos(0, 31), "string"),
                             ),
                         ],
                         vec![],
@@ -2182,11 +2213,11 @@ mod tests {
                         vec![
                             PropertyDeclaration::new(
                                 Identifier::new(pos(1, 32)..pos(1, 33), "x"),
-                                TypeExpression::new(pos(1, 35)..pos(1, 39), "Obj2"),
+                                TypeExpression::identifier(pos(1, 35)..pos(1, 39), "Obj2"),
                             ),
                             PropertyDeclaration::new(
                                 Identifier::new(pos(1, 41)..pos(1, 42), "z"),
-                                TypeExpression::new(pos(1, 44)..pos(1, 50), "string"),
+                                TypeExpression::identifier(pos(1, 44)..pos(1, 50), "string"),
                             ),
                         ],
                         vec![],
@@ -2198,7 +2229,7 @@ mod tests {
                         vec![
                             PropertyDeclaration::new(
                                 Identifier::new(pos(2, 32)..pos(2, 33), "y"),
-                                TypeExpression::new(pos(2, 35)..pos(2, 41), "number"),
+                                TypeExpression::identifier(pos(2, 35)..pos(2, 41), "number"),
                             ),
                         ],
                         vec![],
@@ -2242,7 +2273,7 @@ mod tests {
                         vec![
                             PropertyDeclaration::new(
                                 Identifier::new(pos(0, 11)..pos(0, 12), "y"),
-                                TypeExpression::new(pos(0, 14)..pos(0, 20), "number"),
+                                TypeExpression::identifier(pos(0, 14)..pos(0, 20), "number"),
                             ),
                         ],
                         vec![],
@@ -2282,7 +2313,7 @@ mod tests {
                     Node::variable_declaration(
                         pos(0, 0)..pos(0, 7),
                         Identifier::new(pos(0, 4)..pos(0, 5), "x"),
-                        Some(TypeExpression::new(pos(0, 6)..pos(0, 7), "T")),
+                        Some(TypeExpression::identifier(pos(0, 6)..pos(0, 7), "T")),
                         None::<Node>,
                     ),
                 ])

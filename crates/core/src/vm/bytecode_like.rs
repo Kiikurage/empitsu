@@ -73,7 +73,12 @@ pub enum ByteCodeLike {
     /// Load function address from ((stack.size) - (usize) - size_of(usize)),
     /// push new call stack entry, and execute the function
     Call(usize),
-    PopCallStack,
+
+    /// Escape from the current function with a return value; pop the
+    /// current call stack entry, clean up local values from stack,
+    /// push the last value in the function env to the stack,
+    /// and change instruction pointer to the return address
+    Return,
 
     /// Pop next 2 elements in appropriate byte size from stack, and
     /// push the result of operation to the stack

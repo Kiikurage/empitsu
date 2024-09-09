@@ -26,3 +26,5 @@ pub mod number_literal;
 pub mod bool_literal;
 pub mod string_literal;
 pub mod assignment_expression;
+pub mod type_identifier;
+pub mod function_type;
