@@ -68,11 +68,11 @@ pub enum ByteCodeLike {
 
     /// Load next (usize) bytes from bytecode as function body,
     /// put it in heap, and push the address to the stack
-    DefineFunction(usize),
+    DefineFunction(usize, String), // size, name
 
     /// Load next (usize) bytes from bytecode as static members of struct,
     /// put it in heap, and push the address to the stack
-    DefineStruct(usize),
+    DefineStruct(usize, String, Vec<String>), // size, name, members
 
     /// Load function address from ((stack.size) - (usize) - size_of(usize)),
     /// push new call stack entry, and execute the function

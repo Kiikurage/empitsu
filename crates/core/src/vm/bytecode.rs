@@ -10,8 +10,8 @@ pub enum ByteCode {
     StoreHeap(usize),
     Jump(usize),
     JumpIfFalse(usize),
-    DefineFunction(usize),
-    DefineStruct(usize),
+    DefineFunction(usize, String), // size, name
+    DefineStruct(usize, String, Vec<String>), // size, name, members
     Call(usize),
     Return,
     Flush(usize),

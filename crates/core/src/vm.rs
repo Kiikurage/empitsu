@@ -12,7 +12,7 @@ use std::fmt::{Debug, Display};
 use std::rc::Rc;
 
 #[derive(Debug, Clone, PartialEq)]
-enum EMObject {
+pub enum EMObject {
     Box(EMBox),
     StructDefinition(EMStructDefinition),
     Struct(EMStruct),
@@ -20,20 +20,26 @@ enum EMObject {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct EMStructDefinition {}
+pub struct EMStructDefinition {
+    pub name: String,
+    pub properties: Vec<String>,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct EMStruct {
-    properties: Vec<Value>,
+    pub name: String,
+    pub property_names: Vec<String>,
+    pub properties: Vec<Value>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct EMBox {
-    value: Value,
+    pub value: Value,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct EMUserFunction {
+    pub name: String,
     body_ip: usize,
     parent_closure: Option<Rc<RefCell<Closure>>>,
 }
@@ -92,7 +98,7 @@ struct StackFrame {
 }
 
 pub struct VM {
-    heap: HashMap<usize, EMObject>,
+    pub heap: HashMap<usize, EMObject>,
     stack: Vec<Value>,
     call_stack: Vec<StackFrame>,
     ip: usize,
@@ -243,8 +249,9 @@ impl VM {
                         self.ip = address
                     }
                 }
-                ByteCode::DefineFunction(body_size) => {
+                ByteCode::DefineFunction(body_size, name) => {
                     let function = EMObject::UserFunction(EMUserFunction {
+                        name: name.clone(),
                         body_ip: self.ip,
                         parent_closure: Some(self.call_stack.last().unwrap().closure.clone()),
                     });
@@ -253,8 +260,11 @@ impl VM {
                     self.heap.insert(ref_, function);
                     self.push(Value::Ref(ref_));
                 }
-                ByteCode::DefineStruct(body_size) => {
-                    let struct_definition = EMObject::StructDefinition(EMStructDefinition {});
+                ByteCode::DefineStruct(body_size, name, properties) => {
+                    let struct_definition = EMObject::StructDefinition(EMStructDefinition {
+                        name: name.clone(),
+                        properties: properties.clone(),
+                    });
                     self.ip += body_size;
                     let ref_ = self.heap.len();
                     self.heap.insert(ref_, struct_definition);
@@ -275,9 +285,11 @@ impl VM {
                             });
                             self.ip = function.body_ip;
                         }
-                        EMObject::StructDefinition(..) => {
+                        EMObject::StructDefinition(struct_definition) => {
                             let properties = self.stack[stack_offset + stack_address_of_fn_address + 1..].to_vec();
                             let struct_ = EMObject::Struct(EMStruct {
+                                name: struct_definition.name.clone(),
+                                property_names: struct_definition.properties.clone(),
                                 properties
                             });
                             let ref_ = self.heap.len();

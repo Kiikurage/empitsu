@@ -1,3 +1,4 @@
+import type { ValueView } from "empitsu-core-wasm";
 import * as vm from "empitsu-core-wasm";
 import * as monaco from "monaco-editor";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
@@ -20,7 +21,7 @@ function useModel() {
 
 		return monaco.editor.createModel(savedCode);
 	});
-	const [output, setOutput] = useState("");
+	const [results, setResults] = useState<EvaluateResult[]>(() => []);
 
 	const save = useCallback(() => {
 		const value = model.getValue();
@@ -36,9 +37,7 @@ function useModel() {
 		const date = new Date();
 		const output = evaluate(input);
 
-		setOutput((oldOutput) =>
-			`${oldOutput}\n\n[${date.toISOString()}]\n${output}`.trim(),
-		);
+		setResults((results) => [...results, { evaluatedAt: date, input, output }]);
 	}, [model, save]);
 
 	useEffect(() => {
@@ -64,15 +63,15 @@ function useModel() {
 		]);
 	}, [save, run]);
 
-	return { model, output, save, run };
+	return { model, results, save, run };
 }
 
-function evaluate(input: string): string {
+function evaluate(input: string): ValueView {
 	return vm.evaluate(input);
 }
 
 export const App = () => {
-	const { model, output, save, run } = useModel();
+	const { model, results, save, run } = useModel();
 	const [showManual, setShowManual] = useState(false);
 
 	return (
@@ -81,6 +80,7 @@ export const App = () => {
 				position: "fixed",
 				inset: 0,
 				display: "grid",
+				columnGap: "16px",
 				gridTemplate: `"header header header" min-content
 			"editor output help" 1fr / 1fr 1fr min-content`,
 			}}
@@ -103,19 +103,12 @@ export const App = () => {
 				<MonacoEditor model={model} />
 			</div>
 			<div css={{ gridArea: "output", position: "relative", fontSize: 18 }}>
-				<pre
-					css={{
-						position: "absolute",
-						inset: 0,
-						padding: 16,
-						whiteSpace: "pre-wrap",
-						fontFamily: "monospace",
-						lineHeight: 1.5,
-						overflow: "auto",
-					}}
-				>
-					{output}
-				</pre>
+				{results.map((result) => (
+					<EvaluateResultView
+						key={result.evaluatedAt.toISOString()}
+						result={result}
+					/>
+				))}
 			</div>
 			<div css={{ gridArea: "help", overflow: "auto" }}>
 				{showManual && <Manual />}
@@ -348,4 +341,118 @@ function Code({ children }: { children?: ReactNode }) {
 			<pre css={{ margin: 0 }}>{children}</pre>
 		</code>
 	);
+}
+
+function EvaluateResultView({ result }: { result: EvaluateResult }) {
+	return (
+		<pre
+			css={{
+				"--value-view-primitive": "#00f",
+				"--value-view-error": "#f00",
+				"--value-view-keyword": "#9a009a",
+				"--value-view-secondary": "#888",
+				fontFamily: "monospace",
+				display: "flex",
+				alignItems: "flex-start",
+				justifyContent: "flex-start",
+				fontSize: "0.875em",
+			}}
+		>
+			<time css={{ color: "#888", marginRight: "1em" }}>
+				{format(result.evaluatedAt)}
+			</time>
+			<ValueViewView value={result.output} />
+		</pre>
+	);
+}
+
+function ValueViewView({ value }: { value: ValueView }) {
+	switch (value.type_) {
+		case "number": {
+			return (
+				<span css={{ color: "var(--value-view-primitive)" }}>
+					{value.value}
+				</span>
+			);
+		}
+		case "bool": {
+			return (
+				<span css={{ color: "var(--value-view-primitive)" }}>
+					{value.value}
+				</span>
+			);
+		}
+		case "Error": {
+			return (
+				<span css={{ color: "var(--value-view-error)" }}>{value.value}</span>
+			);
+		}
+		case "fn": {
+			return (
+				<span>
+					<span css={{ color: "var(--value-view-keyword)" }}>fn</span>{" "}
+					<span>{value.value}</span>()
+				</span>
+			);
+		}
+		case "struct": {
+			return (
+				<span>
+					<span css={{ color: "var(--value-view-keyword)" }}>struct</span>{" "}
+					<span>{value.value}</span>
+				</span>
+			);
+		}
+		default: {
+			const propertySummaries: ReactNode[] = [];
+			for (const [i, property] of value.properties.slice(0, 3).entries()) {
+				propertySummaries.push(
+					<span key={i.toString()}>
+						<span css={{ color: "var(--value-view-secondary)" }}>
+							{property.name}
+						</span>
+						: <ValueViewView value={property.value} />
+					</span>,
+				);
+			}
+			if (value.properties.length > propertySummaries.length) {
+				propertySummaries.push("...");
+			}
+			for (let i = propertySummaries.length - 1; i > 0; i--) {
+				propertySummaries.splice(i, 0, ", ");
+			}
+			// insert commas
+
+			return (
+				<details css={{ display: "inline-block" }}>
+					<summary>
+						{value.type_} {"{"} {propertySummaries} {"}"}
+					</summary>
+					<ul css={{ margin: 0, listStyle: "none", paddingLeft: "2em" }}>
+						{value.properties.map((property, i) => (
+							<li key={i.toString()}>
+								<span css={{ color: "var(--value-view-keyword)" }}>
+									{property.name}
+								</span>
+								: <ValueViewView value={property.value} />
+							</li>
+						))}
+					</ul>
+				</details>
+			);
+		}
+	}
+}
+
+interface EvaluateResult {
+	evaluatedAt: Date;
+	input: string;
+	output: ValueView;
+}
+
+function format(date: Date) {
+	const hh = date.getHours().toString().padStart(2, "0");
+	const mm = date.getMinutes().toString().padStart(2, "0");
+	const ss = date.getSeconds().toString().padStart(2, "0");
+	return `${hh}:${mm}:${ss}`;
 }

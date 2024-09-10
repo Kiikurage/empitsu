@@ -457,7 +457,8 @@ impl Generator {
 
         let body_size = self.opcodes.len() - opcodes_start;
 
-        self.opcodes.insert(opcodes_start, ByteCodeLike::DefineFunction(body_size));
+        let name = function.interface.name.clone().map(|i| i.name).unwrap_or("(anonymous)".to_string());
+        self.opcodes.insert(opcodes_start, ByteCodeLike::DefineFunction(body_size, name));
         self.get_current_frame_mut().stack_size += 1;
         self.allocate_stack_item(function.range());
     }
@@ -468,8 +469,10 @@ impl Generator {
         // TODO: encode static members
 
         let size = self.opcodes.len() - opcodes_start;
+        let name = struct_.name.name.clone();
+        let properties = struct_.properties.iter().map(|p| p.name.name.clone()).collect::<Vec<_>>();
 
-        self.opcodes.insert(opcodes_start, ByteCodeLike::DefineStruct(size));
+        self.opcodes.insert(opcodes_start, ByteCodeLike::DefineStruct(size, name, properties));
         self.get_current_frame_mut().stack_size += 1;
         self.allocate_stack_item(struct_.range());
     }
@@ -687,11 +690,11 @@ impl Generator {
                 ByteCodeLike::Flush(size) => {
                     buffer.push(ByteCode::Flush(*size));
                 }
-                ByteCodeLike::DefineFunction(size) => {
-                    buffer.push(ByteCode::DefineFunction(*size));
+                ByteCodeLike::DefineFunction(size, name) => {
+                    buffer.push(ByteCode::DefineFunction(*size, name.clone()));
                 }
-                ByteCodeLike::DefineStruct(size) => {
-                    buffer.push(ByteCode::DefineStruct(*size));
+                ByteCodeLike::DefineStruct(size, name, properties) => {
+                    buffer.push(ByteCode::DefineStruct(*size, name.clone(), properties.clone()));
                 }
                 ByteCodeLike::Call(stack_address) => {
                     buffer.push(ByteCode::Call(*stack_address));
