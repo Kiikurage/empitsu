@@ -882,17 +882,17 @@ mod tests {
             "#, Value::Bool(true));
         }
 
-        // #[test]
-        // fn get_nested_ref() {
-        //     test(r#"
-        //         struct T (u: U)
-        //         struct U (v: number)
-        // 
-        //         let obj = T(U(10))
-        //         obj.u.v
-        //     "#, Value::Number(10f64));
-        // }
-        // 
+        #[test]
+        fn get_nested_ref() {
+            test(r#"
+                struct U (v: number)
+                struct T (u: U)
+
+                let obj = T(U(10))
+                obj.u.v
+            "#, Value::Number(10f64));
+        }
+
         // #[test]
         // fn set_nested_ref() {
         //     test(r#"

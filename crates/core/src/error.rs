@@ -85,6 +85,11 @@ impl Error {
     pub fn undefined_symbol(range: Range<Position>, symbol: impl Into<String>) -> Error {
         Error { range, message: format!("\"{}\" is not defined", symbol.into()) }
     }
+    
+    #[inline(always)]
+    pub fn non_struct_symbol_in_type_name(range: Range<Position>, symbol: impl Into<String>) -> Error {
+        Error { range, message: format!("\"{}\" is not a struct", symbol.into()) }
+    }
 
     #[inline(always)]
     pub fn uninitialized_variable(range: Range<Position>, name: impl Into<String>) -> Error {

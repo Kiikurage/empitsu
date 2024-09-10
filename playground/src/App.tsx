@@ -80,9 +80,19 @@ export const App = () => {
 				position: "fixed",
 				inset: 0,
 				display: "grid",
-				columnGap: "16px",
 				gridTemplate: `"header header header" min-content
 			"editor output help" 1fr / 1fr 1fr min-content`,
+
+				"@media (max-width: 960px)": {
+					gridTemplate: `"header" min-content
+			"editor" 1fr 
+			"output" 1fr 
+			"help" min-content / 1fr`,
+
+					".sm-hide": {
+						display: "none",
+					},
+				},
 			}}
 		>
 			<div css={{ gridArea: "header" }}>
@@ -102,7 +112,16 @@ export const App = () => {
 			>
 				<MonacoEditor model={model} />
 			</div>
-			<div css={{ gridArea: "output", position: "relative", fontSize: 18 }}>
+			<div
+				css={{
+					gridArea: "output",
+					position: "relative",
+					fontSize: 18,
+					overflow: "auto",
+					padding: 16,
+					background: "#f0f0f0",
+				}}
+			>
 				{results.map((result) => (
 					<EvaluateResultView
 						key={result.evaluatedAt.toISOString()}
@@ -366,7 +385,10 @@ function EvaluateResultView({ result }: { result: EvaluateResult }) {
 	);
 }
 
-function ValueViewView({ value }: { value: ValueView }) {
+function ValueViewView({
+	value,
+	hideInnerObjectProperty = false,
+}: { value: ValueView; hideInnerObjectProperty?: boolean }) {
 	switch (value.type_) {
 		case "number": {
 			return (
@@ -404,15 +426,27 @@ function ValueViewView({ value }: { value: ValueView }) {
 			);
 		}
 		default: {
+			if (hideInnerObjectProperty) {
+				return <span>{value.type_}</span>;
+			}
+
 			const propertySummaries: ReactNode[] = [];
 			for (const [i, property] of value.properties.slice(0, 3).entries()) {
 				propertySummaries.push(
-					<span key={i.toString()}>
+					<div
+						key={i.toString()}
+						css={{
+							display: "inline-flex",
+							flexDirection: "row",
+							alignItems: "flex-start",
+							justifyContent: "flex-start",
+						}}
+					>
 						<span css={{ color: "var(--value-view-secondary)" }}>
 							{property.name}
 						</span>
-						: <ValueViewView value={property.value} />
-					</span>,
+						: <ValueViewView value={property.value} hideInnerObjectProperty />
+					</div>,
 				);
 			}
 			if (value.properties.length > propertySummaries.length) {
@@ -430,7 +464,15 @@ function ValueViewView({ value }: { value: ValueView }) {
 					</summary>
 					<ul css={{ margin: 0, listStyle: "none", paddingLeft: "2em" }}>
 						{value.properties.map((property, i) => (
-							<li key={i.toString()}>
+							<li
+								key={i.toString()}
+								css={{
+									display: "flex",
+									flexDirection: "row",
+									alignItems: "flex-start",
+									justifyContent: "flex-start",
+								}}
+							>
 								<span css={{ color: "var(--value-view-keyword)" }}>
 									{property.name}
 								</span>

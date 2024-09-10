@@ -1,13 +1,13 @@
 use crate::analysis::env::{Env, ExitReason, Symbol, SymbolKind};
 use crate::analysis::expression_info::ExpressionInfo;
+use crate::analysis::function_info::FunctionInfo;
 use crate::analysis::return_info::ReturnInfo;
+use crate::analysis::struct_info::StructInfo;
 use crate::analysis::type_::Type;
 use crate::analysis::Analysis;
 use crate::error::Error;
 use crate::position::Position;
 use std::ops::Range;
-use crate::analysis::function_info::FunctionInfo;
-use crate::analysis::struct_info::StructInfo;
 
 pub struct AnalyzerContext {
     envs: Vec<Env>,
@@ -321,6 +321,7 @@ impl AnalyzerContext {
             // Normal type checking
             (Type::Number, Type::Number) => true,
             (Type::Bool, Type::Bool) => true,
+            (Type::Struct(struct1), Type::Struct(struct2)) => struct1 == struct2,
             (Type::Function(params1, ret1), Type::Function(params2, ret2)) => {
                 if params1.len() != params2.len() {
                     return false;

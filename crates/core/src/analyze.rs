@@ -616,8 +616,27 @@ fn analyze_type_expression(ctx: &mut AnalyzerContext, type_expression: &TypeExpr
                 "number" => Type::Number,
                 "bool" => Type::Bool,
                 "any" => Type::Any,
-                _ => {
-                    unimplemented!("Type analysis for identifier is not implemented yet");
+                name => {
+                    match ctx.get_symbol_by_name(name) {
+                        Some(symbol) => {
+                            if matches!(symbol.kind, SymbolKind::Struct) {
+                                let struct_info = ctx.get_struct(&symbol.defined_at).unwrap();
+                                Type::Struct(StructType {
+                                    name: struct_info.name.clone(),
+                                    properties: struct_info.properties.iter()
+                                        .map(|(name, type_)| (name.clone(), type_.clone()))
+                                        .collect(),
+                                })
+                            } else {
+                                ctx.add_error(Error::non_struct_symbol_in_type_name(identifier.range(), name.to_string()));
+                                Type::Unknown
+                            }
+                        }
+                        None => {
+                            ctx.add_error(Error::undefined_symbol(identifier.range(), name.to_string()));
+                            Type::Unknown
+                        }
+                    }
                 }
             }
         }

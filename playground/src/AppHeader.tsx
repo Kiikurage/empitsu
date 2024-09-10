@@ -30,7 +30,16 @@ export function AppHeader({
 					gap: 16,
 				}}
 			>
-				<h1 css={{ padding: 0, fontSize: "1.5rem", color: "#fff" }}>
+				<h1
+					css={{
+						padding: 0,
+						fontSize: "1.25rem",
+						color: "#fff",
+						whiteSpace: "nowrap",
+						overflow: "hidden",
+						textOverflow: "ellipsis",
+					}}
+				>
 					Empitsu Playground
 				</h1>
 				<AppHeaderButtonLink
@@ -42,7 +51,7 @@ export function AppHeader({
 						alt="GitHub"
 						width={26}
 					/>
-					GitHub
+					<span className="sm-hide">GitHub</span>
 				</AppHeaderButtonLink>
 			</div>
 			<div
@@ -55,15 +64,15 @@ export function AppHeader({
 			>
 				<AppHeaderButton onClick={onRunButtonClick}>
 					<span className="material-symbols-outlined">play_arrow</span>
-					Run
+					<span className="sm-hide">Run</span>
 				</AppHeaderButton>
 				<AppHeaderButton onClick={onSaveButtonClick}>
 					<span className="material-symbols-outlined">save</span>
-					Save
+					<span className="sm-hide">Save</span>
 				</AppHeaderButton>
 				<AppHeaderButton onClick={onHelpButtonClick}>
 					<span className="material-symbols-outlined">help</span>
-					Help
+					<span className="sm-hide">Help</span>
 				</AppHeaderButton>
 			</div>
 		</header>
