@@ -70,8 +70,13 @@ impl ValueView {
         match object {
             EMObject::Box(boxed) => ValueView::from_value(vm, &boxed.value),
             EMObject::Struct(struct_) => {
+                let definition = match vm.heap.get(&struct_.definition) {
+                    Some(EMObject::StructDefinition(definition)) => definition,
+                    _ => panic!("Invalid struct definition"),
+                };
+
                 let mut properties = vec![];
-                for (name, value) in struct_.property_names.iter().zip(struct_.properties.iter()) {
+                for (name, value) in definition.properties.iter().zip(struct_.properties.iter()) {
                     properties.push(PropertyView {
                         name: name.clone(),
                         value: ValueView::from_value(vm, value),
@@ -79,7 +84,7 @@ impl ValueView {
                 }
 
                 ValueView {
-                    type_: struct_.name.clone(),
+                    type_: definition.name.clone(),
                     value: "".to_string(),
                     properties,
                 }
