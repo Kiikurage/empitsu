@@ -1,6 +1,7 @@
 #![allow(clippy::new_without_default)]
 #![allow(clippy::only_used_in_recursion)]
 #![allow(clippy::manual_map)]
+#![allow(clippy::too_many_arguments)]
 #![allow(dead_code)]
 pub mod lexer;
 pub mod punctuation_kind;

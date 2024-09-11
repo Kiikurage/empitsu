@@ -70,8 +70,9 @@ pub enum ByteCodeLike {
     /// put it in heap, and push the address to the stack
     DefineFunction(usize, String), // size, name
 
-    /// Load next (usize) bytes from bytecode as static members of struct,
-    /// put it in heap, and push the address to the stack
+    /// Pop (usize) items from stack as static members (first pop item
+    /// to the first member) of struct, put it in heap, and push the 
+    /// address to the stack
     DefineStruct(usize, String, Vec<String>), // size, name, members
 
     /// Load function address from ((stack.size) - (usize) - size_of(usize)),
@@ -87,7 +88,8 @@ pub enum ByteCodeLike {
     /// Pop an item from stack as reference to object, read the property
     /// by the given index, and push the value to the stack
     LoadProperty(usize),
-
+    LoadMethod(usize),
+    
     /// Pop an item from stack as reference to object, read the property
     /// by the given index, peak a value from stack, and push the value
     /// to the property

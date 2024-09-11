@@ -1,8 +1,9 @@
 use crate::analysis::analyzer_context::AnalyzerContext;
 use crate::analysis::env::{Env, ExitReason, SymbolKind};
 use crate::analysis::expression_info::ExpressionInfo;
+use crate::analysis::function_info::FunctionInfo;
 use crate::analysis::struct_info::StructInfo;
-use crate::analysis::type_::{StructType, Type};
+use crate::analysis::type_::Type;
 use crate::analysis::Analysis;
 use crate::ast::assignment_expression::AssignmentExpression;
 use crate::ast::binary_expression::BinaryExpression;
@@ -51,13 +52,13 @@ fn analyze_node(ctx: &mut AnalyzerContext, node: &Node) {
         Node::IfStatement(if_statement) => analyze_if_statement(ctx, if_statement),
         Node::ForStatement(for_statement) => analyze_for_statement(ctx, for_statement),
         Node::VariableDeclaration(variable_declaration) => analyze_variable_declaration(ctx, variable_declaration),
-        Node::FunctionDeclaration(function) => analyze_function(ctx, function),
+        Node::FunctionDeclaration(function) => analyze_function(ctx, function, None),
         Node::StructDeclaration(struct_) => analyze_struct_declaration(ctx, struct_),
         Node::InterfaceDeclaration(interface) => analyze_interface(ctx, interface),
         Node::ImplStatement(impl_statement) => analyze_impl_statement(ctx, impl_statement),
         Node::Return(return_) => analyze_return_(ctx, return_),
         Node::Break(break_) => analyze_break(ctx, break_),
-        Node::FunctionExpression(function) => analyze_function(ctx, function),
+        Node::FunctionExpression(function) => analyze_function(ctx, function, None),
         Node::IfExpression(if_expression) => analyze_if_expression(ctx, if_expression),
         Node::Block(block) => analyze_block(ctx, block),
         Node::AssignmentExpression(assignment_expression) => analyze_assignment_expression(ctx, assignment_expression),
@@ -149,7 +150,7 @@ fn analyze_variable_declaration(ctx: &mut AnalyzerContext, variable_declaration:
     }
 }
 
-fn analyze_function(ctx: &mut AnalyzerContext, function: &Function) {
+fn analyze_function(ctx: &mut AnalyzerContext, function: &Function, receiver_type: Option<Type>) {
     let name = function.interface.name.clone()
         .map(|id| id.name)
         .unwrap_or("anonymous".to_string())
@@ -157,23 +158,30 @@ fn analyze_function(ctx: &mut AnalyzerContext, function: &Function) {
 
     let mut parameter_types = vec![];
     for parameter in &function.interface.parameters {
-        analyze_type_expression(ctx, &parameter.type_);
-        let type_ = ctx.get_type_expression_type(&parameter.type_.range());
-        parameter_types.push(type_);
+        let parameter_type = {
+            if &parameter.name.name == "self" {
+                receiver_type.clone().unwrap_or(Type::Unknown)
+            } else {
+                analyze_type_expression(ctx, &parameter.type_);
+                ctx.get_type_expression_type(&parameter.type_.range())
+            }
+        };
+        parameter_types.push(parameter_type);
     }
 
     analyze_type_expression(ctx, function.interface.return_type.deref());
     let return_type = ctx.get_type_expression_type(&function.interface.return_type.range());
 
-    let function_type_ = Type::Function(parameter_types, Box::new(return_type.clone()));
-
-    ctx.add_function(function.range(), name, function_type_.clone());
-
     // Function body
     ctx.enter_env(Env::new(false, true));
     for parameter in &function.interface.parameters {
         ctx.define_symbol(parameter.range(), parameter.name.name.clone(), SymbolKind::Variable);
-        ctx.set_variable_type(parameter.range(), ctx.get_type_expression_type(&parameter.type_.range()));
+        let parameter_type = if &parameter.name.name == "self" {
+            receiver_type.clone().unwrap_or(Type::Unknown)
+        } else {
+            ctx.get_type_expression_type(&parameter.type_.range())
+        };
+        ctx.set_variable_type(parameter.range(), parameter_type);
         ctx.set_variable_initialized(parameter.range(), parameter.range());
     }
     analyze_nodes(ctx, &function.body);
@@ -231,6 +239,14 @@ fn analyze_function(ctx: &mut AnalyzerContext, function: &Function) {
             ctx.set_exit_reason(ExitReason::Normal);
         }
     }
+
+    ctx.add_function(FunctionInfo::new(
+        function.range(),
+        name,
+        parameter_types,
+        return_type,
+        receiver_type,
+    ));
 }
 
 fn analyze_struct_declaration(ctx: &mut AnalyzerContext, struct_: &StructDeclaration) {
@@ -244,7 +260,18 @@ fn analyze_struct_declaration(ctx: &mut AnalyzerContext, struct_: &StructDeclara
         properties.push((property.name.name.clone(), type_));
     }
 
-    ctx.add_struct(StructInfo::new(struct_.range(), name, properties));
+    // TODO
+    let dummy_info = StructInfo::new(struct_.range(), name.clone(), properties.clone(), vec![]);
+
+    let mut instance_methods = vec![];
+    for method in struct_.instance_methods.iter() {
+        analyze_function(ctx, method, Some(dummy_info.instance_type()));
+        let method_info = ctx.get_function(&method.range()).unwrap();
+
+        instance_methods.push((method_info.name.clone(), method_info.type_()));
+    }
+
+    ctx.add_struct(StructInfo::new(struct_.range(), name, properties, instance_methods));
 }
 
 fn analyze_interface(_ctx: &mut AnalyzerContext, _interface: &InterfaceDeclaration) {
@@ -388,14 +415,13 @@ fn analyze_assignment_expression(ctx: &mut AnalyzerContext, expression: &Assignm
             analyze_node(ctx, member_expression.object.deref());
             match ctx.get_expression_type(&member_expression.object.range()) {
                 Some(Type::Struct(struct_type)) => {
-                    match struct_type.properties.iter()
-                        .position(|(name, _)| name == &member_expression.member.name) {
+                    match struct_type.property_index(&member_expression.member.name) {
                         Some(position) => {
                             let (_, type_) = struct_type.properties.get(position).unwrap();
                             type_.clone()
-                        },
+                        }
                         None => {
-                            ctx.add_error(Error::undefined_property(member_expression.member.range(), struct_type.name, member_expression.member.name.clone()));
+                            ctx.add_error(Error::undefined_property(member_expression.member.range(), struct_type, member_expression.member.name.clone()));
                             Type::Unknown
                         }
                     }
@@ -477,7 +503,7 @@ fn analyze_call_expression(ctx: &mut AnalyzerContext, call_expression: &CallExpr
                 Some(ref defined_at) => {
                     let defined_at = defined_at.clone();
                     let function_info = ctx.get_function(&defined_at).unwrap();
-                    function_info.type_.clone()
+                    function_info.type_()
                 }
                 None => Type::Unknown,
             }
@@ -488,16 +514,7 @@ fn analyze_call_expression(ctx: &mut AnalyzerContext, call_expression: &CallExpr
                     let defined_at = defined_at.clone();
                     let struct_info = ctx.get_struct(&defined_at).unwrap();
 
-                    let mut properties = vec![];
-                    for (name, type_) in struct_info.properties.iter() {
-                        properties.push((name.clone(), type_.clone()));
-                    }
-                    let struct_type = StructType { name: struct_info.name.clone(), properties };
-
-                    Type::Function(
-                        struct_type.properties.iter().map(|(_, type_)| type_.clone()).collect(),
-                        Box::new(Type::Struct(struct_type)),
-                    )
+                    struct_info.constructor_type()
                 }
                 None => Type::Unknown,
             }
@@ -516,25 +533,29 @@ fn analyze_call_expression(ctx: &mut AnalyzerContext, call_expression: &CallExpr
 
     ctx.assert_callable(&callee_type, &call_expression.callee.range());
 
-    if let Type::Function(parameter_types, return_type) = callee_type {
-        if call_expression.parameters.len() != parameter_types.len() {
+    if let Type::Function(function_type) = callee_type {
+        let expected_parameter_types = if function_type.receiver_type.is_some() {
+            function_type.parameters.iter().skip(1).cloned().collect::<Vec<_>>()
+        } else {
+            function_type.parameters.clone()
+        };
+
+        if call_expression.parameters.len() != expected_parameter_types.len() {
             ctx.add_error(Error::invalid_parameter_count(
                 call_expression.range(),
-                parameter_types.len(),
+                function_type.parameters.len(),
                 call_expression.parameters.len(),
             ));
         }
 
-        for parameter in &call_expression.parameters {
+        for (parameter, expected_type) in call_expression.parameters.iter().zip(expected_parameter_types) {
             analyze_node(ctx, parameter.value.deref());
-        }
-        for (parameter, expected_type) in call_expression.parameters.iter().zip(parameter_types.iter()) {
             let actual_type = ctx.get_expression_type(&parameter.value.range()).unwrap_or(Type::Unknown);
 
-            ctx.assert_assignable(&actual_type, expected_type, &parameter.value.range());
+            ctx.assert_assignable(&actual_type, &expected_type, &parameter.value.range());
         }
 
-        ctx.add_expression(ExpressionInfo::temp_value(call_expression.range(), return_type.deref().clone()));
+        ctx.add_expression(ExpressionInfo::temp_value(call_expression.range(), function_type.return_type.deref().clone()));
     };
 }
 
@@ -542,18 +563,15 @@ fn analyze_member_expression(ctx: &mut AnalyzerContext, expression: &MemberExpre
     analyze_node(ctx, expression.object.deref());
     match ctx.get_expression_type(&expression.object.range()) {
         Some(Type::Struct(struct_type)) => {
-            let position = struct_type.properties.iter()
-                .position(|(name, _)| name == &expression.member.name);
-
-            match position {
-                Some(index) => {
-                    let (_, type_) = struct_type.properties.get(index).unwrap();
-                    ctx.add_expression(ExpressionInfo::temp_value(expression.range(), type_.clone()));
-                }
-                None => {
-                    ctx.add_error(Error::undefined_property(expression.member.range(), struct_type.name, expression.member.name.clone()));
-                    ctx.add_expression(ExpressionInfo::temp_value(expression.range(), Type::Unknown));
-                }
+            if let Some(index) = struct_type.property_index(&expression.member.name) {
+                let (_, type_) = struct_type.properties.get(index).unwrap();
+                ctx.add_expression(ExpressionInfo::temp_value(expression.range(), type_.clone()));
+            } else if let Some(index) = struct_type.method_index(&expression.member.name) {
+                let (_, type_) = struct_type.instance_methods.get(index).unwrap();
+                ctx.add_expression(ExpressionInfo::temp_value(expression.range(), type_.clone()));
+            } else {
+                ctx.add_error(Error::undefined_property(expression.member.range(), struct_type, &expression.member.name));
+                ctx.add_expression(ExpressionInfo::temp_value(expression.range(), Type::Unknown));
             }
         }
         _ => {
@@ -620,13 +638,7 @@ fn analyze_type_expression(ctx: &mut AnalyzerContext, type_expression: &TypeExpr
                     match ctx.get_symbol_by_name(name) {
                         Some(symbol) => {
                             if matches!(symbol.kind, SymbolKind::Struct) {
-                                let struct_info = ctx.get_struct(&symbol.defined_at).unwrap();
-                                Type::Struct(StructType {
-                                    name: struct_info.name.clone(),
-                                    properties: struct_info.properties.iter()
-                                        .map(|(name, type_)| (name.clone(), type_.clone()))
-                                        .collect(),
-                                })
+                                ctx.get_struct(&symbol.defined_at).unwrap().instance_type()
                             } else {
                                 ctx.add_error(Error::non_struct_symbol_in_type_name(identifier.range(), name.to_string()));
                                 Type::Unknown
@@ -641,15 +653,15 @@ fn analyze_type_expression(ctx: &mut AnalyzerContext, type_expression: &TypeExpr
             }
         }
         TypeExpression::Function(function) => {
-            let mut parameter_types = vec![];
+            let mut parameters = vec![];
             for parameter in &function.parameters {
                 analyze_type_expression(ctx, parameter);
-                parameter_types.push(ctx.get_type_expression_type(&parameter.range()));
+                parameters.push(ctx.get_type_expression_type(&parameter.range()));
             }
             analyze_type_expression(ctx, function.return_.deref());
             let return_type = ctx.get_type_expression_type(&function.return_.range());
 
-            Type::Function(parameter_types, Box::new(return_type))
+            Type::function(parameters, return_type, None)
         }
     };
 
@@ -980,8 +992,8 @@ mod test {
             "#).assert_errors(vec![
                 Error::unexpected_type(
                     pos(2, 16)..pos(2, 70),
-                    &Type::Function(vec![Type::Number, Type::Bool], Box::new(Type::Number)),
-                    &Type::Function(vec![Type::Number, Type::Bool, Type::Bool], Box::new(Type::Number))
+                    &Type::function(vec![Type::Number, Type::Bool], Type::Number, None),
+                    &Type::function(vec![Type::Number, Type::Bool, Type::Bool], Type::Number, None)
                 )
             ])
         }
@@ -994,8 +1006,8 @@ mod test {
             "#).assert_errors(vec![
                 Error::unexpected_type(
                     pos(2, 16)..pos(2, 50),
-                    &Type::Function(vec![Type::Number, Type::Bool], Box::new(Type::Number)),
-                    &Type::Function(vec![Type::Number], Box::new(Type::Number))
+                    &Type::function(vec![Type::Number, Type::Bool], Type::Number, None),
+                    &Type::function(vec![Type::Number], Type::Number, None)
                 )
             ])
         }
@@ -1008,8 +1020,8 @@ mod test {
             "#).assert_errors(vec![
                 Error::unexpected_type(
                     pos(2, 16)..pos(2, 62),
-                    &Type::Function(vec![Type::Number, Type::Bool], Box::new(Type::Number)),
-                    &Type::Function(vec![Type::Number, Type::Number], Box::new(Type::Number))
+                    &Type::function(vec![Type::Number, Type::Bool], Type::Number, None),
+                    &Type::function(vec![Type::Number, Type::Number], Type::Number, None)
                 )
             ])
         }
@@ -1022,8 +1034,8 @@ mod test {
             "#).assert_errors(vec![
                 Error::unexpected_type(
                     pos(2, 16)..pos(2, 61),
-                    &Type::Function(vec![Type::Number, Type::Bool], Box::new(Type::Number)),
-                    &Type::Function(vec![Type::Number, Type::Bool], Box::new(Type::Bool))
+                    &Type::function(vec![Type::Number, Type::Bool], Type::Number, None),
+                    &Type::function(vec![Type::Number, Type::Bool], Type::Bool, None)
                 )
             ])
         }

@@ -23,12 +23,12 @@ pub enum EMObject {
 pub struct EMStructDefinition {
     pub name: String,
     pub properties: Vec<String>,
+    pub methods: Vec<usize>, // address to function object
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct EMStruct {
-    pub name: String,
-    pub property_names: Vec<String>,
+    pub definition: usize, // address to definition object
     pub properties: Vec<Value>,
 }
 
@@ -42,6 +42,7 @@ pub struct EMUserFunction {
     pub name: String,
     body_ip: usize,
     parent_closure: Option<Rc<RefCell<Closure>>>,
+    receiver: Option<usize>, // address to receiver object
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -254,6 +255,7 @@ impl VM {
                         name: name.clone(),
                         body_ip: self.ip,
                         parent_closure: Some(self.call_stack.last().unwrap().closure.clone()),
+                        receiver: None,
                     });
                     self.ip += body_size;
                     let ref_ = self.heap.len();
@@ -261,36 +263,53 @@ impl VM {
                     self.push(Value::Ref(ref_));
                 }
                 ByteCode::DefineStruct(body_size, name, properties) => {
+                    let name = name.clone();
+                    let properties = properties.clone();
+
+                    let mut methods = vec![];
+                    for _ in 0..*body_size {
+                        let ref_ = self.pop().ref_();
+                        methods.push(ref_);
+                    }
+
                     let struct_definition = EMObject::StructDefinition(EMStructDefinition {
-                        name: name.clone(),
-                        properties: properties.clone(),
+                        name,
+                        properties,
+                        methods,
                     });
-                    self.ip += body_size;
+
                     let ref_ = self.heap.len();
                     self.heap.insert(ref_, struct_definition);
                     self.push(Value::Ref(ref_));
                 }
                 ByteCode::Call(stack_address_of_fn_address) => {
+                    let stack_address_of_fn_address = *stack_address_of_fn_address;
                     let stack_offset = self.call_stack.last().unwrap().stack_offset;
                     let callee_address = self.stack[stack_offset + stack_address_of_fn_address].ref_();
                     match self.heap.get(&callee_address).unwrap() {
                         EMObject::UserFunction(function) => {
+                            let function_body_ip = function.body_ip;
+                            let parent_closure = function.parent_closure.clone();
+
+                            if let Some(receiver) = function.receiver {
+                                self.push(Value::Ref(receiver));
+                            }
+
                             self.call_stack.push(StackFrame {
                                 stack_offset: stack_offset + stack_address_of_fn_address + 1,
                                 return_ip: self.ip,
                                 closure: Rc::new(RefCell::new(Closure {
                                     captured_variables: HashMap::new(),
-                                    parent: function.parent_closure.clone(),
+                                    parent: parent_closure,
                                 })),
                             });
-                            self.ip = function.body_ip;
+                            self.ip = function_body_ip;
                         }
-                        EMObject::StructDefinition(struct_definition) => {
+                        EMObject::StructDefinition(..) => {
                             let properties = self.stack[stack_offset + stack_address_of_fn_address + 1..].to_vec();
                             let struct_ = EMObject::Struct(EMStruct {
-                                name: struct_definition.name.clone(),
-                                property_names: struct_definition.properties.clone(),
-                                properties
+                                definition: callee_address,
+                                properties,
                             });
                             let ref_ = self.heap.len();
                             self.heap.insert(ref_, struct_);
@@ -319,12 +338,37 @@ impl VM {
                 }
                 ByteCode::LoadProperty(index) => {
                     let struct_ref = self.stack.pop().unwrap().ref_();
-                    if let EMObject::Struct(struct_) = self.heap.get(&struct_ref).unwrap() {
-                        let value = struct_.properties[*index].clone();
-                        self.push(value);
-                    } else {
-                        panic!("Not a struct");
-                    }
+                    let struct_ = match self.heap.get(&struct_ref).unwrap() {
+                        EMObject::Struct(struct_) => struct_,
+                        _ => panic!("Not a struct")
+                    };
+                    let value = struct_.properties[*index].clone();
+                    self.push(value);
+                }
+                ByteCode::LoadMethod(index) => {
+                    let struct_ref = self.stack.pop().unwrap().ref_();
+                    let struct_ = match self.heap.get(&struct_ref).unwrap() {
+                        EMObject::Struct(struct_) => struct_,
+                        _ => panic!("Not a struct")
+                    };
+                    let definition = match self.heap.get(&struct_.definition).unwrap() {
+                        EMObject::StructDefinition(definition) => definition,
+                        _ => panic!("Not a struct definition")
+                    };
+                    let method_ref = definition.methods[*index];
+                    let method = match self.heap.get(&method_ref).unwrap() {
+                        EMObject::UserFunction(method) => method,
+                        _ => panic!("Not a method")
+                    };
+
+                    let address = self.heap.len();
+                    self.heap.insert(address, EMObject::UserFunction(EMUserFunction {
+                        name: method.name.clone(),
+                        body_ip: method.body_ip,
+                        parent_closure: method.parent_closure.clone(),
+                        receiver: Some(struct_ref),
+                    }));
+                    self.push(Value::Ref(address));
                 }
                 ByteCode::StoreProperty(index) => {
                     let struct_ref = self.stack.pop().unwrap().ref_();
@@ -405,8 +449,8 @@ impl VM {
                 }
                 ByteCode::NoOp => {}
             }
-            // println!("{:?}", self.stack);
-            // println!("{:?}", self.heap);
+            // println!("stack: {:?}", self.stack);
+            // println!("heap: {:?}", self.heap);
         }
 
         Ok(())
@@ -893,18 +937,51 @@ mod tests {
             "#, Value::Number(10f64));
         }
 
-        // #[test]
-        // fn set_nested_ref() {
-        //     test(r#"
-        //         struct T (u: U)
-        //         struct U (v: number)
-        // 
-        //         let obj = T(U(10))
-        //         obj.u.v = 5
-        //         obj.u.v
-        //     "#, Value::Number(5f64));
-        // }
-        
-        // TODO: test circular reference
+        #[test]
+        fn set_nested_ref() {
+            test(r#"
+                struct U (v: number)
+                struct T (u: U)
+
+                let obj = T(U(10))
+                obj.u.v = 5
+                obj.u.v
+            "#, Value::Number(5f64));
+        }
+
+        #[test]
+        fn instance_method() {
+            test(r#"
+                struct Vec2(x:number, y:number) {
+                    fn norm2(self): number {
+                        self.x*self.x + self.y*self.y
+                    }
+                }
+    
+                let v1 = Vec2(1, 2)
+                let v2 = Vec2(3, 4)
+    
+                v1.norm2() == 5 && v2.norm2() == 25
+            "#, Value::Bool(true))
+        }
+
+        #[test]
+        fn instance_method_with_closed_value() {
+            test(r#"
+                let count = 0
+                
+                struct Vec2(x:number, y:number) {
+                    fn norm2(self): number {
+                        count = count + 1
+                        self.x*self.x + self.y*self.y
+                    }
+                }
+    
+                let v1 = Vec2(1, 2)
+                let v2 = Vec2(3, 4)
+    
+                v1.norm2() == 5 && v2.norm2() == 25 && count == 2
+            "#, Value::Bool(true))
+        }
     }
 }

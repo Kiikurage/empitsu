@@ -219,11 +219,10 @@ impl Env {
         self.type_expressions.get(range)
     }
 
-    pub fn add_function(&mut self, range: Range<Position>, name: impl Into<String>, type_: Type) {
-        let name = name.into();
-        self.define_symbol(range.clone(), name.clone(), SymbolKind::Function);
-        self.add_expression(ExpressionInfo::function(range.clone(), Some(range.clone())));
-        self.functions.insert(range.clone(), FunctionInfo::new(range.clone(), name, type_));
+    pub fn add_function(&mut self, function_info: FunctionInfo) {
+        self.define_symbol(function_info.range(), function_info.name.clone(), SymbolKind::Function);
+        self.add_expression(ExpressionInfo::function(function_info.range(), Some(function_info.range())));
+        self.functions.insert(function_info.range(), function_info);
     }
 
     pub fn get_function(&self, range: &Range<Position>) -> Option<&FunctionInfo> {

@@ -16,6 +16,7 @@ pub enum ByteCode {
     Return,
     Flush(usize),
     LoadProperty(usize),
+    LoadMethod(usize),
     StoreProperty(usize),
     Add,
     Subtract,

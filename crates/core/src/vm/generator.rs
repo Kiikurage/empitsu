@@ -260,10 +260,8 @@ impl Generator {
                         let type_ = self.analysis.get_expression_type(&member_expression.object.range()).unwrap();
 
                         match type_ {
-                            Type::Struct(struct_) => {
-                                let property_index = struct_.properties.iter()
-                                    .position(|(name, ..)| name == &member_expression.member.name)
-                                    .unwrap();
+                            Type::Struct(struct_type) => {
+                                let property_index = struct_type.property_index(&member_expression.member.name).unwrap();
                                 self.opcodes.push(ByteCodeLike::StoreProperty(property_index));
                             }
                             _ => unreachable!("Expected struct"),
@@ -301,7 +299,7 @@ impl Generator {
                 }
             }
             Node::CallExpression(expression) => {
-                self.call(&expression);
+                self.call(expression);
             }
             Node::MemberExpression(expression) => {
                 self.generate_node(expression.object.deref());
@@ -309,11 +307,14 @@ impl Generator {
                 let type_ = self.analysis.get_expression_type(&expression.object.range()).unwrap();
 
                 match type_ {
-                    Type::Struct(struct_) => {
-                        let property_index = struct_.properties.iter()
-                            .position(|(name, ..)| name == &expression.member.name)
-                            .unwrap();
-                        self.opcodes.push(ByteCodeLike::LoadProperty(property_index));
+                    Type::Struct(struct_type) => {
+                        if let Some(index) = struct_type.property_index(&expression.member.name) {
+                            self.opcodes.push(ByteCodeLike::LoadProperty(index));
+                        } else if let Some(index) = struct_type.method_index(&expression.member.name) {
+                            self.opcodes.push(ByteCodeLike::LoadMethod(index));
+                        } else {
+                            unreachable!("Expected property or method")
+                        }
                     }
                     _ => unreachable!("Expected struct"),
                 }
@@ -464,16 +465,16 @@ impl Generator {
     }
 
     fn define_struct(&mut self, struct_: &StructDeclaration) {
-        let opcodes_start = self.opcodes.len();
+        for method in struct_.instance_methods.iter() {
+            self.define_function(method);
+        }
 
-        // TODO: encode static members
-
-        let size = self.opcodes.len() - opcodes_start;
         let name = struct_.name.name.clone();
         let properties = struct_.properties.iter().map(|p| p.name.name.clone()).collect::<Vec<_>>();
 
-        self.opcodes.insert(opcodes_start, ByteCodeLike::DefineStruct(size, name, properties));
-        self.get_current_frame_mut().stack_size += 1;
+        self.opcodes.push(ByteCodeLike::DefineStruct(struct_.instance_methods.len(), name, properties));
+        self.get_current_frame_mut().stack_size -= struct_.instance_methods.len();
+        self.get_current_frame_mut().stack_size += 1; // ref(struct_definition)
         self.allocate_stack_item(struct_.range());
     }
 
@@ -674,6 +675,9 @@ impl Generator {
                 }
                 ByteCodeLike::LoadProperty(index) => {
                     buffer.push(ByteCode::LoadProperty(*index));
+                }
+                ByteCodeLike::LoadMethod(index) => {
+                    buffer.push(ByteCode::LoadMethod(*index));
                 }
                 ByteCodeLike::StoreProperty(index) => {
                     buffer.push(ByteCode::StoreProperty(*index));

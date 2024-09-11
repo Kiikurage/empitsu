@@ -262,7 +262,7 @@ impl AnalyzerContext {
                 Some(ExpressionInfo::Function(symbol_ref)) => {
                     if let Some(ref defined_at) = symbol_ref.defined_at {
                         if let Some(function) = env.get_function(defined_at) {
-                            return Some(function.type_.clone());
+                            return Some(function.type_());
                         }
                     }
                     return None;
@@ -273,8 +273,8 @@ impl AnalyzerContext {
         None
     }
 
-    pub fn add_function(&mut self, range: Range<Position>, name: impl Into<String>, type_: Type) {
-        self.current_env_mut().add_function(range, name, type_);
+    pub fn add_function(&mut self, function_info: FunctionInfo) {
+        self.current_env_mut().add_function(function_info);
     }
 
     pub fn get_function(&mut self, range: &Range<Position>) -> Option<&FunctionInfo> {
@@ -321,17 +321,17 @@ impl AnalyzerContext {
             // Normal type checking
             (Type::Number, Type::Number) => true,
             (Type::Bool, Type::Bool) => true,
-            (Type::Struct(struct1), Type::Struct(struct2)) => struct1 == struct2,
-            (Type::Function(params1, ret1), Type::Function(params2, ret2)) => {
-                if params1.len() != params2.len() {
+            (Type::Struct(defined_at1, ..), Type::Struct(defined_at2, ..)) => defined_at1 == defined_at2,
+            (Type::Function(function_type1), Type::Function(function_type2)) => {
+                if function_type1.parameters.len() != function_type2.parameters.len() {
                     return false;
                 }
-                for (param1, param2) in params1.iter().zip(params2.iter()) {
+                for (param1, param2) in function_type1.parameters.iter().zip(function_type2.parameters.iter()) {
                     if !self.is_assignable(param1, param2) {
                         return false;
                     }
                 }
-                self.is_assignable(ret1, ret2)
+                self.is_assignable(&function_type1.return_type, &function_type2.return_type)
             }
             _ => false,
         }
